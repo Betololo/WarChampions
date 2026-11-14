@@ -606,24 +606,75 @@ func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
 
 
 func _test_hero_visuals_camera_and_audio() -> void:
-	var torso0: ArrayMesh = HeroMeshBuilder.build_torso_mesh(0)
-	var torso1: ArrayMesh = HeroMeshBuilder.build_torso_mesh(1)
-	var torso2: ArrayMesh = HeroMeshBuilder.build_torso_mesh(2)
-	var head_m: ArrayMesh = HeroMeshBuilder.build_head_mesh()
-	_assert(
-		torso0.get_surface_count() > 0 and torso1.get_surface_count() > 0 and torso2.get_surface_count() > 0 and head_m.get_surface_count() > 0,
-		"HeroMeshBuilder constructs sculpted loft ArrayMeshes for all 3 classes and head"
-	)
+	var meshes_ok: bool = true
+	var builder_meshes: Array[ArrayMesh] = [
+		HeroMeshBuilder.build_torso_mesh(0),
+		HeroMeshBuilder.build_torso_mesh(1),
+		HeroMeshBuilder.build_torso_mesh(2),
+		HeroMeshBuilder.build_collar_lapels_mesh(0),
+		HeroMeshBuilder.build_collar_lapels_mesh(1),
+		HeroMeshBuilder.build_collar_lapels_mesh(2),
+		HeroMeshBuilder.build_backpack_mesh(0),
+		HeroMeshBuilder.build_backpack_mesh(1),
+		HeroMeshBuilder.build_backpack_mesh(2),
+		HeroMeshBuilder.build_belt_pouch_mesh(),
+		HeroMeshBuilder.build_head_mesh(),
+		HeroMeshBuilder.build_helmet_mesh(true),
+		HeroMeshBuilder.build_helmet_mesh(false),
+		HeroMeshBuilder.build_officer_cap_mesh(),
+		HeroMeshBuilder.build_hand_mesh(1.0),
+		HeroMeshBuilder.build_beard_mesh(),
+		HeroMeshBuilder.build_sunglasses_mesh(),
+		HeroMeshBuilder.build_arm_segment_mesh(0.088, 0.072, 0.30, true),
+		HeroMeshBuilder.build_arm_segment_mesh(0.068, 0.056, 0.28, false),
+	]
+	for bm in builder_meshes:
+		if bm == null or bm.get_surface_count() <= 0:
+			meshes_ok = false
+	_assert(meshes_ok, "HeroMeshBuilder constructs sculpted loft ArrayMeshes for torsos, collars, backpacks, headgear, faces, arms & hands")
 
 	var hero_tex_keys: Array[String] = [
 		"hero_jacket_royal", "hero_jacket_national", "hero_coat_commando",
-		"hero_gunner_vest", "hero_skin", "hero_pants_royal", "hero_pants_national", "hero_gun_wood"
+		"hero_gunner_vest", "hero_skin", "hero_pants_royal", "hero_pants_national",
+		"hero_gun_wood", "hero_arm_tattoo", "hero_rucksack", "hero_leather",
 	]
 	var tex_ok: bool = true
 	for tk in hero_tex_keys:
 		if CartoonAssets.get_texture(tk) == null:
 			tex_ok = false
-	_assert(tex_ok, "CartoonAssets provides hand-painted hero uniform, skin & rifle textures")
+	_assert(tex_ok, "CartoonAssets provides all 11 hand-painted hero uniform, tattoo, rucksack, leather, skin & rifle textures")
+
+	var all_rigs_rich: bool = true
+	var no_ball_joints: bool = true
+	var all_ik_accurate: bool = true
+	var max_ik_err: float = 0.0
+	var min_parts: int = 999
+	for t_id in [NetworkManager.TEAM_ROYAL, NetworkManager.TEAM_NATIONAL]:
+		for c_id in [NetworkManager.CLASS_SOLDIER, NetworkManager.CLASS_GUNNER, NetworkManager.CLASS_COMMANDO]:
+			var hero_v := HeroCharacter.new()
+			hero_v.setup_identity(650 + t_id * 10 + c_id, "RigCheck_%d_%d" % [t_id, c_id], t_id, c_id, 0, false, false)
+			add_child(hero_v)
+			hero_v._animate_character(0.016)
+			min_parts = mini(min_parts, hero_v._mesh_parts.size())
+			if hero_v._mesh_parts.size() < 18:
+				all_rigs_rich = false
+			for arm_piv in [hero_v._arm_l_pivot, hero_v._arm_r_pivot, hero_v._forearm_l_pivot, hero_v._forearm_r_pivot]:
+				for child in arm_piv.get_children():
+					if child is MeshInstance3D and (child as MeshInstance3D).mesh is SphereMesh:
+						no_ball_joints = false
+			var hr: Vector3 = hero_v._arm_r_pivot.transform * hero_v._forearm_r_pivot.transform * Vector3(0.0, -hero_v._forearm_len, 0.0)
+			var hl: Vector3 = hero_v._arm_l_pivot.transform * hero_v._forearm_l_pivot.transform * Vector3(0.0, -hero_v._forearm_len, 0.0)
+			var gr: Vector3 = hero_v._held_weapon_root.transform * hero_v._weapon_grip_local
+			var fl: Vector3 = hero_v._held_weapon_root.transform * hero_v._weapon_foregrip_local
+			var err_r: float = hr.distance_to(gr)
+			var err_l: float = hl.distance_to(fl)
+			max_ik_err = maxf(max_ik_err, maxf(err_r, err_l))
+			if err_r >= 0.025 or err_l >= 0.025:
+				all_ik_accurate = false
+			hero_v.free()
+
+	_assert(no_ball_joints, "Hero arm & forearm pivots contain zero standalone SphereMesh ball-joint protrusions")
+	_assert(all_rigs_rich and all_ik_accurate, "All 6 class/faction rigs build >=18 sculpted parts (min=%d) with IK error <0.025m (max=%.4fm)" % [min_parts, max_ik_err])
 
 	var w_root := Node3D.new()
 	HeroMeshBuilder.populate_weapon_root(w_root, 4)

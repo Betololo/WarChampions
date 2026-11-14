@@ -6,14 +6,98 @@ extends RefCounted
 ## matching classic Battlefield Heroes proportions instead of blocky primitives.
 
 
-static func make_loft(rings: Array[Dictionary], radial_seg: int = 16, cap_ends: bool = true) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_smooth_group(0)
+static func _emit_ring_strip(
+	st: SurfaceTool,
+	ring_pts: Array,
+	ring_cols: Array,
+	radial_seg: int,
+	cap_ends: bool,
+	bot_center: Vector3,
+	top_center: Vector3,
+	v_coords: PackedFloat32Array
+) -> void:
+	var n_rings: int = ring_pts.size()
+	for r_idx in range(n_rings - 1):
+		var p0: PackedVector3Array = ring_pts[r_idx]
+		var p1: PackedVector3Array = ring_pts[r_idx + 1]
+		var c0: PackedColorArray = ring_cols[r_idx]
+		var c1: PackedColorArray = ring_cols[r_idx + 1]
+		var v0: float = v_coords[r_idx]
+		var v1: float = v_coords[r_idx + 1]
 
+		for i in range(radial_seg):
+			var u0: float = float(i) / float(radial_seg)
+			var u1: float = float(i + 1) / float(radial_seg)
+
+			# Triangle A
+			st.set_color(c0[i])
+			st.set_uv(Vector2(u0, v0))
+			st.add_vertex(p0[i])
+			st.set_color(c0[i + 1])
+			st.set_uv(Vector2(u1, v0))
+			st.add_vertex(p0[i + 1])
+			st.set_color(c1[i + 1])
+			st.set_uv(Vector2(u1, v1))
+			st.add_vertex(p1[i + 1])
+
+			# Triangle B
+			st.set_color(c0[i])
+			st.set_uv(Vector2(u0, v0))
+			st.add_vertex(p0[i])
+			st.set_color(c1[i + 1])
+			st.set_uv(Vector2(u1, v1))
+			st.add_vertex(p1[i + 1])
+			st.set_color(c1[i])
+			st.set_uv(Vector2(u0, v1))
+			st.add_vertex(p1[i])
+
+	if cap_ends and n_rings >= 2:
+		var bot_pts: PackedVector3Array = ring_pts[0]
+		var bot_cols: PackedColorArray = ring_cols[0]
+		for i in range(radial_seg):
+			st.set_color(bot_cols[i])
+			st.set_uv(Vector2(0.5, v_coords[0]))
+			st.add_vertex(bot_center)
+			st.set_color(bot_cols[i + 1])
+			st.set_uv(Vector2(0.5, v_coords[0]))
+			st.add_vertex(bot_pts[i + 1])
+			st.set_color(bot_cols[i])
+			st.set_uv(Vector2(0.5, v_coords[0]))
+			st.add_vertex(bot_pts[i])
+
+		var top_pts: PackedVector3Array = ring_pts[n_rings - 1]
+		var top_cols: PackedColorArray = ring_cols[n_rings - 1]
+		for i in range(radial_seg):
+			st.set_color(top_cols[i])
+			st.set_uv(Vector2(0.5, v_coords[n_rings - 1]))
+			st.add_vertex(top_center)
+			st.set_color(top_cols[i])
+			st.set_uv(Vector2(0.5, v_coords[n_rings - 1]))
+			st.add_vertex(top_pts[i])
+			st.set_color(top_cols[i + 1])
+			st.set_uv(Vector2(0.5, v_coords[n_rings - 1]))
+			st.add_vertex(top_pts[i + 1])
+
+
+## Appends a superellipse loft into an existing SurfaceTool with optional transform and smooth group.
+static func add_loft_to_st(
+	st: SurfaceTool,
+	rings: Array,
+	radial_seg: int = 16,
+	cap_ends: bool = true,
+	xform: Transform3D = Transform3D.IDENTITY,
+	smooth_group: int = 0
+) -> void:
+	if rings.size() < 2:
+		return
+	st.set_smooth_group(smooth_group)
 	var ring_pts: Array = []
-	var ring_cols: Array[Color] = []
-	for r in rings:
+	var ring_cols: Array = []
+	var v_coords := PackedFloat32Array()
+	var n_rings: int = rings.size()
+
+	for r_idx in range(n_rings):
+		var r: Dictionary = rings[r_idx]
 		var ry: float = float(r.get("y", 0.0))
 		var rx_off: float = float(r.get("x", 0.0))
 		var rz_off: float = float(r.get("z", 0.0))
@@ -22,83 +106,102 @@ static func make_loft(rings: Array[Dictionary], radial_seg: int = 16, cap_ends: 
 		var p: float = maxf(1.5, float(r.get("p", 2.0)))
 		var exp_val: float = 2.0 / p
 		var col: Color = r.get("col", Color.WHITE)
-		ring_cols.append(col)
+		var side_ao: float = float(r.get("side_ao", 0.0))
+		var default_v: float = 1.0 - float(r_idx) / float(maxi(1, n_rings - 1))
+		v_coords.append(float(r.get("v", default_v)))
 
 		var pts := PackedVector3Array()
+		var cols := PackedColorArray()
 		for i in range(radial_seg + 1):
 			var a: float = (float(i) / float(radial_seg)) * TAU
 			var sx: float = sin(a)
 			var cz: float = -cos(a)
 			var px: float = rx_off + signf(sx) * pow(absf(sx), exp_val) * rx
 			var pz: float = rz_off + signf(cz) * pow(absf(cz), exp_val) * rz
-			pts.append(Vector3(px, ry, pz))
+			pts.append(xform * Vector3(px, ry, pz))
+			var v_col: Color = col.darkened(side_ao * sx * sx) if side_ao > 0.0 else col
+			cols.append(v_col)
 		ring_pts.append(pts)
+		ring_cols.append(cols)
 
-	var n_rings: int = ring_pts.size()
-	for r_idx in range(n_rings - 1):
-		var p0: PackedVector3Array = ring_pts[r_idx]
-		var p1: PackedVector3Array = ring_pts[r_idx + 1]
-		var c0: Color = ring_cols[r_idx]
-		var c1: Color = ring_cols[r_idx + 1]
-		var v0: float = float(r_idx) / float(maxi(1, n_rings - 1))
-		var v1: float = float(r_idx + 1) / float(maxi(1, n_rings - 1))
+	var r0: Dictionary = rings[0]
+	var r_last: Dictionary = rings[n_rings - 1]
+	var bot_c: Vector3 = xform * Vector3(float(r0.get("x", 0.0)), float(r0.get("y", 0.0)), float(r0.get("z", 0.0)))
+	var top_c: Vector3 = xform * Vector3(float(r_last.get("x", 0.0)), float(r_last.get("y", 0.0)), float(r_last.get("z", 0.0)))
+	_emit_ring_strip(st, ring_pts, ring_cols, radial_seg, cap_ends, bot_c, top_c, v_coords)
 
-		for i in range(radial_seg):
-			var u0: float = float(i) / float(radial_seg)
-			var u1: float = float(i + 1) / float(radial_seg)
 
-			# Triangle A
-			st.set_color(c0)
-			st.set_uv(Vector2(u0, v0))
-			st.add_vertex(p0[i])
-			st.set_color(c0)
-			st.set_uv(Vector2(u1, v0))
-			st.add_vertex(p0[i + 1])
-			st.set_color(c1)
-			st.set_uv(Vector2(u1, v1))
-			st.add_vertex(p1[i + 1])
+## Sweeps a rounded strap/bandolier ribbon along a 3D torso-hugging path into a SurfaceTool.
+static func add_ribbon_to_st(
+	st: SurfaceTool,
+	path_pts: PackedVector3Array,
+	half_w: float,
+	thickness: float,
+	col: Color,
+	smooth_group: int = 0
+) -> void:
+	var n_pts: int = path_pts.size()
+	if n_pts < 2:
+		return
+	st.set_smooth_group(smooth_group)
+	var segs: int = 8
+	var ring_pts: Array = []
+	var ring_cols: Array = []
+	var v_coords := PackedFloat32Array()
 
-			# Triangle B
-			st.set_color(c0)
-			st.set_uv(Vector2(u0, v0))
-			st.add_vertex(p0[i])
-			st.set_color(c1)
-			st.set_uv(Vector2(u1, v1))
-			st.add_vertex(p1[i + 1])
-			st.set_color(c1)
-			st.set_uv(Vector2(u0, v1))
-			st.add_vertex(p1[i])
+	for i in range(n_pts):
+		var p: Vector3 = path_pts[i]
+		var prev_p: Vector3 = path_pts[maxi(0, i - 1)]
+		var next_p: Vector3 = path_pts[mini(n_pts - 1, i + 1)]
+		var tan_v: Vector3 = (next_p - prev_p).normalized()
+		if tan_v.length_squared() < 0.0001:
+			tan_v = Vector3.UP
+		# Blend horizontal torso radial normal with upward shoulder normal above mid-chest
+		var out_n := Vector3(p.x, maxf(0.0, (p.y - 0.44) * 1.6), p.z).normalized()
+		if out_n.length_squared() < 0.0001:
+			out_n = Vector3.FORWARD
+		var side_v: Vector3 = tan_v.cross(out_n).normalized()
+		if side_v.length_squared() < 0.0001:
+			side_v = Vector3.RIGHT
+		var up_n: Vector3 = side_v.cross(tan_v).normalized()
 
-	if cap_ends and n_rings >= 2:
-		var bot_pts: PackedVector3Array = ring_pts[0]
-		var bot_c := Vector3(float(rings[0].get("x", 0.0)), float(rings[0].get("y", 0.0)), float(rings[0].get("z", 0.0)))
-		var bot_col: Color = ring_cols[0]
-		for i in range(radial_seg):
-			st.set_color(bot_col)
-			st.set_uv(Vector2(0.5, 1.0))
-			st.add_vertex(bot_c)
-			st.set_color(bot_col)
-			st.set_uv(Vector2(0.5, 1.0))
-			st.add_vertex(bot_pts[i + 1])
-			st.set_color(bot_col)
-			st.set_uv(Vector2(0.5, 1.0))
-			st.add_vertex(bot_pts[i])
+		var pts := PackedVector3Array()
+		var cols := PackedColorArray()
+		for j in range(segs + 1):
+			var a: float = (float(j) / float(segs)) * TAU
+			var ox: float = cos(a) * half_w
+			var oy: float = sin(a) * thickness
+			pts.append(p + side_v * ox + up_n * oy)
+			cols.append(col.darkened(0.14) if sin(a) < 0.0 else col)
+		ring_pts.append(pts)
+		ring_cols.append(cols)
+		v_coords.append(float(i) / float(n_pts - 1))
 
-		var top_pts: PackedVector3Array = ring_pts[n_rings - 1]
-		var top_r: Dictionary = rings[n_rings - 1]
-		var top_c := Vector3(float(top_r.get("x", 0.0)), float(top_r.get("y", 0.0)), float(top_r.get("z", 0.0)))
-		var top_col: Color = ring_cols[n_rings - 1]
-		for i in range(radial_seg):
-			st.set_color(top_col)
-			st.set_uv(Vector2(0.5, 0.0))
-			st.add_vertex(top_c)
-			st.set_color(top_col)
-			st.set_uv(Vector2(0.5, 0.0))
-			st.add_vertex(top_pts[i])
-			st.set_color(top_col)
-			st.set_uv(Vector2(0.5, 0.0))
-			st.add_vertex(top_pts[i + 1])
+	_emit_ring_strip(st, ring_pts, ring_cols, segs, true, path_pts[0], path_pts[n_pts - 1], v_coords)
 
+
+static func _commit_lofts(parts: Array) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for idx in range(parts.size()):
+		var spec: Dictionary = parts[idx]
+		var rings: Array = spec.get("rings", [])
+		var radial_seg: int = int(spec.get("seg", 14))
+		var cap: bool = bool(spec.get("cap", true))
+		var xform: Transform3D = spec.get("xform", Transform3D.IDENTITY)
+		add_loft_to_st(st, rings, radial_seg, cap, xform, idx)
+	st.generate_normals()
+	return st.commit()
+
+
+static func _xform(pos: Vector3, rot: Vector3 = Vector3.ZERO) -> Transform3D:
+	return Transform3D(Basis.from_euler(rot), pos)
+
+
+static func make_loft(rings: Array[Dictionary], radial_seg: int = 16, cap_ends: bool = true) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	add_loft_to_st(st, rings, radial_seg, cap_ends, Transform3D.IDENTITY, 0)
 	st.generate_normals()
 	return st.commit()
 
@@ -125,104 +228,689 @@ static func make_sculpted_mat(col: Color, tex_key: String = "", roughness: float
 	return mat
 
 
+## Shared torso sizing profile so coats, belts, collars, and bandoliers align flush per class.
+static func get_torso_profile(class_id: int) -> Dictionary:
+	if class_id == 1:
+		return {"waist_rx": 0.205, "waist_rz": 0.142, "chest_rx": 0.375, "chest_rz": 0.215, "hem_y": -0.10}
+	elif class_id == 2:
+		return {"waist_rx": 0.170, "waist_rz": 0.128, "chest_rx": 0.295, "chest_rz": 0.172, "hem_y": -0.32}
+	return {"waist_rx": 0.180, "waist_rz": 0.132, "chest_rx": 0.305, "chest_rz": 0.182, "hem_y": -0.18}
+
+
 static func build_torso_mesh(class_id: int) -> ArrayMesh:
-	var c_shade := Color(0.84, 0.84, 0.88)
-	var c_mid := Color(0.95, 0.95, 0.97)
+	var c_hem := Color(0.76, 0.77, 0.82)
+	var c_shade := Color(0.84, 0.85, 0.90)
+	var c_mid := Color(0.95, 0.95, 0.98)
 	var c_lit := Color.WHITE
-	if class_id == 1: # Gunner broad muscular V-chest
+	if class_id == 1: # Gunner broad barrel chest enveloping deltoid sockets
 		return make_loft([
-			{"y": -0.06, "rx": 0.21, "rz": 0.145, "p": 2.4, "col": c_shade},
-			{"y": 0.06, "rx": 0.195, "rz": 0.135, "p": 2.5, "col": c_mid},
-			{"y": 0.24, "rx": 0.27, "rz": 0.175, "p": 2.4, "col": c_lit},
-			{"y": 0.44, "rx": 0.355, "rz": 0.205, "p": 2.4, "col": c_lit},
-			{"y": 0.56, "rx": 0.33, "rz": 0.185, "p": 2.2, "col": c_lit},
-			{"y": 0.63, "rx": 0.17, "rz": 0.135, "p": 2.0, "col": c_mid},
-		], 18)
-	elif class_id == 2: # Commando tailored trenchcoat
+			{"y": -0.10, "rx": 0.225, "rz": 0.155, "p": 2.4, "col": c_hem, "side_ao": 0.08, "v": 1.00},
+			{"y": 0.05, "rx": 0.205, "rz": 0.142, "p": 2.5, "col": c_shade, "side_ao": 0.08, "v": 0.76},
+			{"y": 0.24, "rx": 0.295, "rz": 0.185, "p": 2.5, "col": c_mid, "side_ao": 0.12, "v": 0.52},
+			{"y": 0.46, "rx": 0.375, "rz": 0.215, "p": 2.4, "col": c_lit, "side_ao": 0.14, "v": 0.24},
+			{"y": 0.54, "rx": 0.365, "rz": 0.200, "p": 2.3, "col": c_lit, "side_ao": 0.08, "v": 0.13},
+			{"y": 0.60, "rx": 0.280, "rz": 0.165, "p": 2.1, "col": c_lit, "side_ao": 0.04, "v": 0.05},
+			{"y": 0.64, "rx": 0.175, "rz": 0.138, "p": 2.0, "col": c_mid, "v": 0.00},
+		], 20)
+	elif class_id == 2: # Commando sharp V-taper & dramatic long flared trenchcoat skirt
 		return make_loft([
-			{"y": -0.24, "rx": 0.26, "rz": 0.20, "p": 2.4, "col": c_shade},
-			{"y": -0.02, "rx": 0.195, "rz": 0.145, "p": 2.4, "col": c_mid},
-			{"y": 0.08, "rx": 0.175, "rz": 0.13, "p": 2.4, "col": c_shade},
-			{"y": 0.30, "rx": 0.225, "rz": 0.155, "p": 2.4, "col": c_lit},
-			{"y": 0.52, "rx": 0.28, "rz": 0.165, "p": 2.4, "col": c_lit},
-			{"y": 0.61, "rx": 0.175, "rz": 0.135, "p": 2.2, "col": c_mid},
-			{"y": 0.68, "rx": 0.145, "rz": 0.13, "p": 2.2, "col": c_shade},
-		], 18)
-	# Soldier iconic tailored jacket + hip skirt
+			{"y": -0.32, "z": 0.015, "rx": 0.295, "rz": 0.225, "p": 2.4, "col": c_hem, "side_ao": 0.10, "v": 1.00},
+			{"y": -0.14, "z": 0.008, "rx": 0.242, "rz": 0.182, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.87},
+			{"y": 0.06, "rx": 0.170, "rz": 0.128, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
+			{"y": 0.26, "rx": 0.225, "rz": 0.155, "p": 2.4, "col": c_mid, "side_ao": 0.10, "v": 0.48},
+			{"y": 0.48, "rx": 0.295, "rz": 0.172, "p": 2.4, "col": c_lit, "side_ao": 0.12, "v": 0.22},
+			{"y": 0.57, "rx": 0.265, "rz": 0.155, "p": 2.2, "col": c_lit, "side_ao": 0.05, "v": 0.10},
+			{"y": 0.65, "rx": 0.155, "rz": 0.130, "p": 2.1, "col": c_mid, "v": 0.00},
+		], 20)
+	# Soldier tailored WWII jacket with pinched waist & flared coat tail
 	return make_loft([
-		{"y": -0.14, "rx": 0.22, "rz": 0.16, "p": 2.4, "col": c_shade},
-		{"y": 0.04, "rx": 0.185, "rz": 0.135, "p": 2.4, "col": c_shade},
-		{"y": 0.22, "rx": 0.23, "rz": 0.16, "p": 2.5, "col": c_mid},
-		{"y": 0.44, "rx": 0.295, "rz": 0.18, "p": 2.5, "col": c_lit},
-		{"y": 0.57, "rx": 0.285, "rz": 0.165, "p": 2.2, "col": c_lit},
-		{"y": 0.64, "rx": 0.145, "rz": 0.125, "p": 2.0, "col": c_mid},
-	], 18)
+		{"y": -0.18, "z": 0.006, "rx": 0.235, "rz": 0.175, "p": 2.4, "col": c_hem, "side_ao": 0.08, "v": 1.00},
+		{"y": -0.04, "rx": 0.205, "rz": 0.150, "p": 2.4, "col": c_shade, "side_ao": 0.06, "v": 0.86},
+		{"y": 0.06, "rx": 0.180, "rz": 0.132, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
+		{"y": 0.22, "rx": 0.235, "rz": 0.162, "p": 2.5, "col": c_mid, "side_ao": 0.10, "v": 0.52},
+		{"y": 0.44, "rx": 0.300, "rz": 0.182, "p": 2.5, "col": c_lit, "side_ao": 0.12, "v": 0.24},
+		{"y": 0.52, "rx": 0.305, "rz": 0.178, "p": 2.4, "col": c_lit, "side_ao": 0.08, "v": 0.15},
+		{"y": 0.59, "rx": 0.255, "rz": 0.152, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.06},
+		{"y": 0.64, "rx": 0.145, "rz": 0.125, "p": 2.0, "col": c_mid, "v": 0.00},
+	], 20)
+
+
+## Builds sculpted neck collar rim and open front V-lapels sealing the neck-to-torso transition.
+static func build_collar_lapels_mesh(class_id: int) -> ArrayMesh:
+	var col_rim := Color(0.92, 0.92, 0.96)
+	var col_lapel := Color(0.98, 0.98, 1.0)
+	var collar_top_y: float = 0.745 if class_id == 2 else (0.665 if class_id == 1 else 0.680)
+	var collar_z: float = 0.022 if class_id == 2 else 0.012
+	var collar_rx: float = 0.188 if class_id == 1 else (0.176 if class_id == 2 else 0.166)
+	var collar_rz: float = 0.156 if class_id == 1 else (0.148 if class_id == 2 else 0.140)
+	var lapel_z: float = -0.198 if class_id == 1 else (-0.166 if class_id == 2 else -0.172)
+	var lapel_h: float = 0.19 if class_id == 1 else (0.28 if class_id == 2 else 0.22)
+
+	var parts: Array[Dictionary] = [
+		{
+			"seg": 18,
+			"rings": [
+				{"y": 0.590, "z": 0.004, "rx": collar_rx * 0.94, "rz": collar_rz * 0.94, "p": 2.1, "col": Color(0.78, 0.78, 0.82)},
+				{"y": (0.590 + collar_top_y) * 0.5, "z": collar_z * 0.6, "rx": collar_rx * 1.05, "rz": collar_rz * 1.04, "p": 2.1, "col": col_rim},
+				{"y": collar_top_y, "z": collar_z, "rx": collar_rx, "rz": collar_rz, "p": 2.1, "col": col_lapel},
+			],
+		},
+	]
+	for side_sign in [-1.0, 1.0]:
+		parts.append({
+			"seg": 10,
+			"xform": _xform(Vector3(side_sign * 0.072, 0.61 - lapel_h * 0.45, lapel_z), Vector3(0.18, 0.0, side_sign * -0.28)),
+			"rings": [
+				{"y": -lapel_h * 0.5, "rx": 0.018, "rz": 0.014, "p": 2.4, "col": Color(0.84, 0.84, 0.88)},
+				{"y": 0.0, "rx": 0.044, "rz": 0.018, "p": 2.6, "col": col_lapel},
+				{"y": lapel_h * 0.5, "rx": 0.036, "rz": 0.016, "p": 2.4, "col": col_lapel},
+			],
+		})
+	return _commit_lofts(parts)
+
+
+## Builds detailed 3D back gear per class (Soldier rucksack+bedroll, Gunner twin canisters, Commando satchel+coat flaps).
+static func build_backpack_mesh(class_id: int) -> ArrayMesh:
+	var c_pack := Color(0.95, 0.95, 0.92)
+	var c_flap := Color.WHITE
+	var c_strap := Color(0.30, 0.22, 0.16)
+	var c_brass := Color(0.88, 0.72, 0.28)
+	var parts: Array[Dictionary] = []
+
+	if class_id == 1: # Gunner: Heavy twin-canister ammo pack + canvas backing + top roll
+		parts.append({
+			"seg": 14,
+			"xform": _xform(Vector3(0.0, 0.32, 0.215)),
+			"rings": [
+				{"y": -0.16, "rx": 0.175, "rz": 0.060, "p": 2.6, "col": Color(0.60, 0.58, 0.52)},
+				{"y": 0.00, "rx": 0.188, "rz": 0.068, "p": 2.6, "col": Color(0.72, 0.70, 0.64)},
+				{"y": 0.16, "rx": 0.172, "rz": 0.060, "p": 2.5, "col": Color(0.68, 0.66, 0.60)},
+			],
+		})
+		for sx in [-0.105, 0.105]:
+			parts.append({
+				"seg": 14,
+				"xform": _xform(Vector3(sx, 0.30, 0.268)),
+				"rings": [
+					{"y": -0.15, "rx": 0.072, "rz": 0.072, "p": 2.1, "col": Color(0.42, 0.48, 0.38)},
+					{"y": -0.02, "rx": 0.076, "rz": 0.076, "p": 2.1, "col": Color(0.50, 0.56, 0.44)},
+					{"y": 0.08, "rx": 0.078, "rz": 0.078, "p": 2.1, "col": Color(0.32, 0.32, 0.34)},
+					{"y": 0.15, "rx": 0.068, "rz": 0.068, "p": 2.1, "col": Color(0.56, 0.60, 0.48)},
+				],
+			})
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, 0.50, 0.235), Vector3(0.0, 0.0, PI * 0.5)),
+			"rings": [
+				{"y": -0.17, "rx": 0.048, "rz": 0.048, "p": 2.0, "col": Color(0.74, 0.70, 0.58)},
+				{"y": 0.17, "rx": 0.048, "rz": 0.048, "p": 2.0, "col": Color(0.78, 0.74, 0.62)},
+			],
+		})
+	elif class_id == 2: # Commando: Hip courier satchel + rear coat seam vent flap
+		parts.append({
+			"seg": 14,
+			"xform": _xform(Vector3(-0.145, 0.08, 0.175), Vector3(0.08, -0.22, 0.14)),
+			"rings": [
+				{"y": -0.095, "rx": 0.105, "rz": 0.052, "p": 2.6, "col": Color(0.84, 0.80, 0.76)},
+				{"y": 0.030, "rx": 0.112, "rz": 0.058, "p": 2.6, "col": Color(0.94, 0.90, 0.86)},
+				{"y": 0.095, "rx": 0.102, "rz": 0.052, "p": 2.5, "col": Color.WHITE},
+			],
+		})
+		parts.append({
+			"seg": 8,
+			"xform": _xform(Vector3(-0.145, 0.06, 0.228), Vector3(0.08, -0.22, 0.14)),
+			"rings": [
+				{"y": -0.022, "rx": 0.022, "rz": 0.012, "p": 2.4, "col": Color(1.0, 0.88, 0.42)},
+				{"y": 0.022, "rx": 0.022, "rz": 0.012, "p": 2.4, "col": Color(1.0, 0.92, 0.50)},
+			],
+		})
+		# Rear trenchcoat overlapping center pleat flap
+		parts.append({
+			"seg": 10,
+			"xform": _xform(Vector3(0.0, -0.10, 0.190), Vector3(-0.14, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.20, "rx": 0.068, "rz": 0.016, "p": 2.5, "col": Color(0.84, 0.84, 0.88)},
+				{"y": 0.16, "rx": 0.042, "rz": 0.014, "p": 2.4, "col": Color(0.94, 0.94, 0.98)},
+			],
+		})
+	else: # Soldier: WWII field rucksack + top bedroll cylinder + leather straps
+		parts.append({
+			"seg": 14,
+			"xform": _xform(Vector3(0.0, 0.31, 0.205)),
+			"rings": [
+				{"y": -0.15, "rx": 0.142, "rz": 0.075, "p": 2.6, "col": Color(0.84, 0.84, 0.80)},
+				{"y": 0.04, "rx": 0.152, "rz": 0.085, "p": 2.6, "col": c_pack},
+				{"y": 0.15, "rx": 0.146, "rz": 0.080, "p": 2.5, "col": c_flap},
+			],
+		})
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, 0.41, 0.215)),
+			"rings": [
+				{"y": -0.055, "rx": 0.158, "rz": 0.088, "p": 2.6, "col": c_pack},
+				{"y": 0.055, "rx": 0.152, "rz": 0.086, "p": 2.5, "col": c_flap},
+			],
+		})
+		for sx in [-0.075, 0.075]:
+			parts.append({
+				"seg": 8,
+				"xform": _xform(Vector3(sx, 0.32, 0.292)),
+				"rings": [
+					{"y": -0.11, "rx": 0.020, "rz": 0.012, "p": 2.4, "col": c_strap},
+					{"y": -0.02, "rx": 0.022, "rz": 0.014, "p": 2.4, "col": c_brass},
+					{"y": 0.11, "rx": 0.020, "rz": 0.012, "p": 2.4, "col": c_strap},
+				],
+			})
+		parts.append({
+			"seg": 14,
+			"xform": _xform(Vector3(0.0, 0.515, 0.202), Vector3(0.0, 0.0, PI * 0.5)),
+			"rings": [
+				{"y": -0.175, "rx": 0.056, "rz": 0.056, "p": 2.0, "col": Color(0.74, 0.76, 0.66)},
+				{"y": 0.0, "rx": 0.060, "rz": 0.060, "p": 2.0, "col": Color(0.84, 0.86, 0.74)},
+				{"y": 0.175, "rx": 0.056, "rz": 0.056, "p": 2.0, "col": Color(0.74, 0.76, 0.66)},
+			],
+		})
+	return _commit_lofts(parts)
+
+
+## Builds a sculpted leather utility pouch with overhanging lid flap and brass stud.
+static func build_belt_pouch_mesh() -> ArrayMesh:
+	return _commit_lofts([
+		{
+			"seg": 12,
+			"rings": [
+				{"y": -0.055, "rx": 0.054, "rz": 0.036, "p": 2.6, "col": Color(0.82, 0.80, 0.78)},
+				{"y": 0.015, "rx": 0.058, "rz": 0.038, "p": 2.6, "col": Color(0.94, 0.92, 0.90)},
+				{"y": 0.055, "rx": 0.054, "rz": 0.035, "p": 2.5, "col": Color.WHITE},
+			],
+		},
+		{
+			"seg": 8,
+			"xform": _xform(Vector3(0.0, 0.006, -0.038)),
+			"rings": [
+				{"y": -0.012, "rx": 0.014, "rz": 0.008, "p": 2.2, "col": Color(0.92, 0.76, 0.28)},
+				{"y": 0.012, "rx": 0.014, "rz": 0.008, "p": 2.2, "col": Color(0.98, 0.84, 0.36)},
+			],
+		},
+	])
+
+
+## Builds a tailored waist belt matching each class's waist contour.
+static func build_waist_belt_mesh(class_id: int) -> ArrayMesh:
+	var prof: Dictionary = get_torso_profile(class_id)
+	var wrx: float = float(prof["waist_rx"]) + 0.012
+	var wrz: float = float(prof["waist_rz"]) + 0.012
+	return make_loft([
+		{"y": 0.045, "rx": wrx, "rz": wrz, "p": 2.4, "col": Color(0.84, 0.84, 0.86)},
+		{"y": 0.075, "rx": wrx + 0.004, "rz": wrz + 0.004, "p": 2.4, "col": Color.WHITE},
+		{"y": 0.105, "rx": wrx, "rz": wrz, "p": 2.4, "col": Color(0.90, 0.90, 0.92)},
+	], 20)
+
+
+## Builds a gleaming sculpted front belt buckle plate.
+static func build_buckle_mesh() -> ArrayMesh:
+	return make_loft([
+		{"y": -0.036, "rx": 0.048, "rz": 0.014, "p": 2.8, "col": Color(0.88, 0.88, 0.92)},
+		{"y": 0.000, "rx": 0.052, "rz": 0.016, "p": 2.8, "col": Color.WHITE},
+		{"y": 0.036, "rx": 0.048, "rz": 0.014, "p": 2.8, "col": Color.WHITE},
+	], 12)
+
+
+## Builds snug chest/back leather Y-suspenders (Soldier) or diagonal ammo bandolier (Gunner/Commando).
+static func build_bandolier_mesh(class_id: int) -> ArrayMesh:
+	var prof: Dictionary = get_torso_profile(class_id)
+	var crx: float = float(prof["chest_rx"])
+	var crz: float = float(prof["chest_rz"])
+	var wrx: float = float(prof["waist_rx"])
+	var wrz: float = float(prof["waist_rz"])
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	if class_id == 0: # Soldier Y-suspenders over left & right shoulders (front to back)
+		for sx in [-1.0, 1.0]:
+			var pts := PackedVector3Array([
+				Vector3(sx * wrx * 0.56, 0.09, -(wrz + 0.010)),
+				Vector3(sx * crx * 0.42, 0.32, -(crz * 0.94 + 0.012)),
+				Vector3(sx * crx * 0.46, 0.51, -(crz * 0.76 + 0.014)),
+				Vector3(sx * crx * 0.48, 0.595, 0.0),
+				Vector3(sx * crx * 0.46, 0.51, crz * 0.76 + 0.014),
+				Vector3(sx * crx * 0.32, 0.32, crz * 0.92 + 0.014),
+				Vector3(sx * wrx * 0.30, 0.09, wrz + 0.010),
+			])
+			add_ribbon_to_st(st, pts, 0.022, 0.009, Color(0.94, 0.92, 0.90), int(sx + 2))
+	else: # Gunner / Commando diagonal chest-to-hip bandolier loop
+		var pts := PackedVector3Array([
+			Vector3(-crx * 0.45, 0.585, 0.0),
+			Vector3(-crx * 0.36, 0.50, -(crz * 0.88 + 0.014)),
+			Vector3(-crx * 0.08, 0.34, -(crz * 0.98 + 0.015)),
+			Vector3(wrx * 0.62, 0.16, -(wrz * 0.88 + 0.014)),
+			Vector3(wrx + 0.014, 0.09, 0.0),
+			Vector3(wrx * 0.62, 0.16, wrz * 0.88 + 0.014),
+			Vector3(-crx * 0.08, 0.34, crz * 0.98 + 0.015),
+			Vector3(-crx * 0.36, 0.50, crz * 0.88 + 0.014),
+			Vector3(-crx * 0.45, 0.585, 0.0),
+		])
+		add_ribbon_to_st(st, pts, 0.030 if class_id == 1 else 0.024, 0.011, Color(0.90, 0.88, 0.86), 0)
+		if class_id == 1: # Brass ammo shells studded along Gunner chest bandolier
+			var shell_col := Color(0.95, 0.78, 0.28)
+			for t in [0.16, 0.23, 0.30, 0.37]:
+				var idx: float = t * float(pts.size() - 1)
+				var i0: int = clampi(int(idx), 0, pts.size() - 2)
+				var sp: Vector3 = pts[i0].lerp(pts[i0 + 1], idx - float(i0))
+				add_loft_to_st(st, [
+					{"y": -0.022, "rx": 0.011, "rz": 0.011, "p": 2.0, "col": shell_col},
+					{"y": 0.022, "rx": 0.010, "rz": 0.010, "p": 2.0, "col": shell_col},
+				], 8, true, _xform(sp + Vector3(0.0, 0.0, -0.012), Vector3(0.0, 0.0, 0.62)), 10 + i0)
+
+	st.generate_normals()
+	return st.commit()
+
+
+static func build_epaulet_mesh(is_pauldron: bool = false) -> ArrayMesh:
+	if is_pauldron:
+		return make_loft([
+			{"y": -0.032, "rx": 0.095, "rz": 0.125, "p": 2.4, "col": Color(0.84, 0.84, 0.88)},
+			{"y": 0.012, "rx": 0.098, "rz": 0.122, "p": 2.4, "col": Color.WHITE},
+			{"y": 0.036, "rx": 0.068, "rz": 0.088, "p": 2.2, "col": Color.WHITE},
+		], 14)
+	return _commit_lofts([
+		{
+			"seg": 10,
+			"rings": [
+				{"y": 0.0, "rx": 0.038, "rz": 0.088, "p": 2.5, "col": Color(0.90, 0.90, 0.94)},
+				{"y": 0.018, "rx": 0.034, "rz": 0.082, "p": 2.4, "col": Color.WHITE},
+			],
+		},
+		{
+			"seg": 8,
+			"xform": _xform(Vector3(0.0, 0.020, -0.045)),
+			"rings": [
+				{"y": -0.005, "rx": 0.012, "rz": 0.012, "p": 2.0, "col": Color(0.96, 0.80, 0.28)},
+				{"y": 0.008, "rx": 0.011, "rz": 0.011, "p": 2.0, "col": Color(1.0, 0.86, 0.36)},
+			],
+		},
+	])
+
+
+static func build_rolled_sleeve_cap_mesh(r_top: float) -> ArrayMesh:
+	return make_loft([
+		{"y": -0.072, "rx": r_top * 1.12, "rz": r_top * 1.10, "p": 2.1, "col": Color(0.90, 0.90, 0.92)},
+		{"y": -0.036, "rx": r_top * 1.15, "rz": r_top * 1.12, "p": 2.1, "col": Color.WHITE},
+		{"y": 0.010, "rx": r_top * 1.06, "rz": r_top * 1.04, "p": 2.0, "col": Color.WHITE},
+		{"y": 0.056, "rx": r_top * 0.56, "rz": r_top * 0.56, "p": 2.0, "col": Color(0.94, 0.94, 0.96)},
+	], 14)
+
+
+static func build_cuff_mesh(r_cuff: float) -> ArrayMesh:
+	return make_loft([
+		{"y": -0.022, "rx": r_cuff * 1.12, "rz": r_cuff * 1.10, "p": 2.2, "col": Color(0.86, 0.86, 0.90)},
+		{"y": 0.000, "rx": r_cuff * 1.16, "rz": r_cuff * 1.14, "p": 2.2, "col": Color.WHITE},
+		{"y": 0.022, "rx": r_cuff * 1.10, "rz": r_cuff * 1.08, "p": 2.2, "col": Color(0.94, 0.94, 0.96)},
+	], 14)
+
+
+static func build_scarf_mesh() -> ArrayMesh:
+	return _commit_lofts([
+		{
+			"seg": 16,
+			"rings": [
+				{"y": 0.585, "rx": 0.148, "rz": 0.138, "p": 2.1, "col": Color(0.82, 0.82, 0.85)},
+				{"y": 0.630, "rx": 0.156, "rz": 0.145, "p": 2.1, "col": Color.WHITE},
+				{"y": 0.672, "rx": 0.132, "rz": 0.128, "p": 2.1, "col": Color(0.92, 0.92, 0.94)},
+			],
+		},
+		{
+			"seg": 10,
+			"xform": _xform(Vector3(0.0, 0.545, -0.142), Vector3(0.24, 0.0, 0.08)),
+			"rings": [
+				{"y": -0.065, "rx": 0.056, "rz": 0.018, "p": 2.4, "col": Color(0.84, 0.84, 0.86)},
+				{"y": 0.045, "rx": 0.046, "rz": 0.024, "p": 2.2, "col": Color.WHITE},
+			],
+		},
+	])
 
 
 static func build_head_mesh() -> ArrayMesh:
-	# Smooth sculpted cartoon cranium with tapered square jaw (NO cubes!)
+	# Smooth sculpted cartoon cranium with chiseled square jaw, cheekbones & brow ridge
 	return make_loft([
-		{"y": 0.00, "rx": 0.078, "rz": 0.075, "p": 2.0, "col": Color(0.84, 0.80, 0.78)}, # neck base
-		{"y": 0.08, "rx": 0.085, "rz": 0.082, "p": 2.1, "col": Color(0.90, 0.86, 0.84)},
-		{"y": 0.11, "z": -0.015, "rx": 0.112, "rz": 0.118, "p": 3.0, "col": Color(0.95, 0.92, 0.90)}, # strong jaw
-		{"y": 0.19, "z": -0.01, "rx": 0.122, "rz": 0.125, "p": 2.6, "col": Color.WHITE}, # cheeks
-		{"y": 0.28, "z": 0.00, "rx": 0.124, "rz": 0.130, "p": 2.2, "col": Color.WHITE}, # brow
-		{"y": 0.35, "z": 0.005, "rx": 0.110, "rz": 0.118, "p": 2.0, "col": Color.WHITE}, # forehead
-		{"y": 0.39, "z": 0.008, "rx": 0.068, "rz": 0.072, "p": 2.0, "col": Color.WHITE}, # crown
-	], 18)
+		{"y": 0.000, "rx": 0.082, "rz": 0.078, "p": 2.0, "col": Color(0.84, 0.80, 0.78), "v": 1.00},
+		{"y": 0.080, "rx": 0.088, "rz": 0.084, "p": 2.1, "col": Color(0.90, 0.86, 0.84), "v": 0.80},
+		{"y": 0.115, "z": -0.018, "rx": 0.118, "rz": 0.122, "p": 3.2, "col": Color(0.95, 0.92, 0.90), "v": 0.68},
+		{"y": 0.200, "z": -0.012, "rx": 0.128, "rz": 0.128, "p": 2.6, "col": Color.WHITE, "v": 0.48},
+		{"y": 0.275, "z": -0.014, "rx": 0.126, "rz": 0.132, "p": 2.4, "col": Color.WHITE, "v": 0.30},
+		{"y": 0.345, "z": 0.002, "rx": 0.112, "rz": 0.120, "p": 2.0, "col": Color.WHITE, "v": 0.14},
+		{"y": 0.395, "z": 0.008, "rx": 0.068, "rz": 0.072, "p": 2.0, "col": Color.WHITE, "v": 0.00},
+	], 20)
 
 
 static func build_hair_cap_mesh() -> ArrayMesh:
-	# Back & top hair silhouette visible from behind in 3rd person!
+	# Back & side hair silhouette visible beneath headgear in 3rd person
 	return make_loft([
-		{"y": 0.14, "z": 0.055, "rx": 0.105, "rz": 0.088, "p": 2.2, "col": Color(0.85, 0.85, 0.85)}, # nape trim
-		{"y": 0.24, "z": 0.032, "rx": 0.126, "rz": 0.115, "p": 2.1, "col": Color.WHITE},
-		{"y": 0.34, "z": 0.012, "rx": 0.125, "rz": 0.128, "p": 2.0, "col": Color.WHITE},
-		{"y": 0.40, "z": 0.005, "rx": 0.085, "rz": 0.092, "p": 2.0, "col": Color.WHITE},
+		{"y": 0.135, "z": 0.052, "rx": 0.106, "rz": 0.090, "p": 2.2, "col": Color(0.84, 0.84, 0.84)},
+		{"y": 0.235, "z": 0.030, "rx": 0.130, "rz": 0.118, "p": 2.1, "col": Color.WHITE},
+		{"y": 0.340, "z": 0.010, "rx": 0.128, "rz": 0.130, "p": 2.0, "col": Color.WHITE},
+		{"y": 0.402, "z": 0.005, "rx": 0.088, "rz": 0.094, "p": 2.0, "col": Color.WHITE},
 	], 16)
+
+
+static func build_ear_mesh() -> ArrayMesh:
+	return make_loft([
+		{"y": -0.036, "rx": 0.018, "rz": 0.026, "p": 2.1, "col": Color(0.88, 0.84, 0.82)},
+		{"y": 0.0, "rx": 0.024, "rz": 0.034, "p": 2.1, "col": Color.WHITE},
+		{"y": 0.036, "rx": 0.016, "rz": 0.024, "p": 2.1, "col": Color.WHITE},
+	], 10)
+
+
+static func build_nose_mesh() -> ArrayMesh:
+	return make_loft([
+		{"y": -0.024, "z": -0.006, "rx": 0.024, "rz": 0.026, "p": 2.3, "col": Color(0.94, 0.88, 0.86)},
+		{"y": 0.006, "z": -0.002, "rx": 0.020, "rz": 0.022, "p": 2.2, "col": Color.WHITE},
+		{"y": 0.036, "z": 0.004, "rx": 0.013, "rz": 0.015, "p": 2.0, "col": Color.WHITE},
+	], 10)
+
+
+static func build_eyes_mesh() -> ArrayMesh:
+	var parts: Array[Dictionary] = []
+	for sx in [-1.0, 1.0]:
+		parts.append({
+			"seg": 10,
+			"xform": _xform(Vector3(sx * 0.044, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.016, "rx": 0.022, "rz": 0.012, "p": 2.2, "col": Color(0.96, 0.96, 0.98)},
+				{"y": 0.0, "rx": 0.025, "rz": 0.014, "p": 2.2, "col": Color.WHITE},
+				{"y": 0.016, "rx": 0.020, "rz": 0.011, "p": 2.2, "col": Color(0.94, 0.94, 0.96)},
+			],
+		})
+		parts.append({
+			"seg": 8,
+			"xform": _xform(Vector3(sx * 0.043, -0.001, -0.011)),
+			"rings": [
+				{"y": -0.009, "rx": 0.011, "rz": 0.006, "p": 2.0, "col": Color(0.12, 0.14, 0.18)},
+				{"y": 0.009, "rx": 0.011, "rz": 0.006, "p": 2.0, "col": Color(0.16, 0.18, 0.22)},
+			],
+		})
+		parts.append({
+			"seg": 8,
+			"xform": _xform(Vector3(sx * 0.045, 0.022, -0.006), Vector3(0.0, 0.0, sx * -0.14)),
+			"rings": [
+				{"y": -0.006, "rx": 0.030, "rz": 0.012, "p": 2.5, "col": Color(0.28, 0.18, 0.12)},
+				{"y": 0.006, "rx": 0.028, "rz": 0.011, "p": 2.5, "col": Color(0.36, 0.24, 0.16)},
+			],
+		})
+	return _commit_lofts(parts)
+
+
+## Builds metal-rimmed aviator sunglasses with bridge bar and ear temples.
+static func build_sunglasses_mesh() -> ArrayMesh:
+	var frame_col := Color(0.84, 0.78, 0.64)
+	var lens_col := Color(0.26, 0.26, 0.30)
+	var parts: Array[Dictionary] = [
+		{
+			"seg": 8,
+			"xform": _xform(Vector3(0.0, 0.014, -0.004), Vector3(0.0, 0.0, PI * 0.5)),
+			"rings": [
+				{"y": -0.055, "rx": 0.005, "rz": 0.005, "p": 2.0, "col": frame_col},
+				{"y": 0.055, "rx": 0.005, "rz": 0.005, "p": 2.0, "col": frame_col},
+			],
+		},
+	]
+	for sx in [-1.0, 1.0]:
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(sx * 0.050, -0.002, -0.004), Vector3(0.0, 0.0, sx * 0.08)),
+			"rings": [
+				{"y": -0.022, "rx": 0.032, "rz": 0.012, "p": 2.5, "col": lens_col},
+				{"y": 0.002, "rx": 0.042, "rz": 0.013, "p": 2.7, "col": lens_col.lightened(0.08)},
+				{"y": 0.018, "rx": 0.040, "rz": 0.012, "p": 2.6, "col": frame_col},
+			],
+		})
+		parts.append({
+			"seg": 8,
+			"xform": _xform(Vector3(sx * 0.112, 0.006, 0.068), Vector3(PI * 0.5, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.068, "rx": 0.005, "rz": 0.005, "p": 2.0, "col": frame_col},
+				{"y": 0.068, "rx": 0.005, "rz": 0.005, "p": 2.0, "col": frame_col},
+			],
+		})
+	return _commit_lofts(parts)
+
+
+## Builds sculpted cartoon facial hair: 0 = full beard+mustache, 1 = chevron mustache, 2 = goatee.
+static func build_beard_mesh(style: int = 0) -> ArrayMesh:
+	var parts: Array[Dictionary] = []
+	var c_dark := Color(0.84, 0.84, 0.86)
+	var c_lit := Color.WHITE
+
+	if style == 0: # Full sculpted Royal Soldier beard + handlebar mustache
+		parts.append({
+			"seg": 16,
+			"xform": _xform(Vector3(0.0, -0.022, 0.095)),
+			"rings": [
+				{"y": -0.065, "rx": 0.084, "rz": 0.078, "p": 2.6, "col": c_dark},
+				{"y": -0.018, "rx": 0.118, "rz": 0.112, "p": 3.0, "col": c_lit},
+				{"y": 0.020, "rx": 0.124, "rz": 0.114, "p": 3.0, "col": c_lit},
+			],
+		})
+	elif style == 2: # Rugged Gunner chin goatee
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, -0.032, 0.022)),
+			"rings": [
+				{"y": -0.036, "rx": 0.044, "rz": 0.032, "p": 2.4, "col": c_dark},
+				{"y": 0.014, "rx": 0.056, "rz": 0.036, "p": 2.5, "col": c_lit},
+			],
+		})
+
+	# Handlebar / chevron mustache wings across upper lip
+	for sx in [-1.0, 1.0]:
+		parts.append({
+			"seg": 10,
+			"xform": _xform(Vector3(sx * 0.030, 0.018, -0.004), Vector3(0.0, 0.0, sx * -0.26)),
+			"rings": [
+				{"y": -0.016, "rx": 0.038, "rz": 0.018, "p": 2.4, "col": c_dark},
+				{"y": 0.014, "rx": 0.042, "rz": 0.020, "p": 2.3, "col": c_lit},
+			],
+		})
+	return _commit_lofts(parts)
+
+
+## Builds domed M1 steel helmet (is_royal=true) or flared Stahlhelm (is_royal=false) with strap.
+static func build_helmet_mesh(is_royal: bool) -> ArrayMesh:
+	var shell_col := Color(0.34, 0.40, 0.24) if is_royal else Color(0.30, 0.32, 0.36)
+	var c_band := shell_col.darkened(0.18)
+	var c_rim := shell_col.darkened(0.12)
+	var c_strap := Color(0.30, 0.21, 0.13)
+	var parts: Array[Dictionary] = []
+
+	if is_royal:
+		parts.append({
+			"seg": 20,
+			"rings": [
+				{"y": -0.018, "z": -0.004, "rx": 0.156, "rz": 0.168, "p": 2.2, "col": c_rim},
+				{"y": 0.015, "rx": 0.144, "rz": 0.156, "p": 2.1, "col": c_band},
+				{"y": 0.045, "rx": 0.146, "rz": 0.158, "p": 2.1, "col": shell_col},
+				{"y": 0.108, "rx": 0.128, "rz": 0.138, "p": 2.0, "col": shell_col.lightened(0.06)},
+				{"y": 0.162, "rx": 0.068, "rz": 0.074, "p": 2.0, "col": shell_col.lightened(0.08)},
+			],
+		})
+	else:
+		parts.append({
+			"seg": 20,
+			"rings": [
+				{"y": -0.042, "z": 0.008, "rx": 0.162, "rz": 0.174, "p": 2.3, "col": c_rim},
+				{"y": 0.008, "rx": 0.144, "rz": 0.154, "p": 2.2, "col": shell_col},
+				{"y": 0.078, "rx": 0.134, "rz": 0.142, "p": 2.1, "col": shell_col.lightened(0.05)},
+				{"y": 0.152, "rx": 0.072, "rz": 0.078, "p": 2.0, "col": shell_col.lightened(0.08)},
+			],
+		})
+
+	for sx in [-1.0, 1.0]:
+		parts.append({
+			"seg": 8,
+			"xform": _xform(Vector3(sx * 0.126, -0.095, -0.012), Vector3(0.0, 0.0, sx * -0.10)),
+			"rings": [
+				{"y": -0.090, "rx": 0.010, "rz": 0.012, "p": 2.2, "col": c_strap},
+				{"y": 0.090, "rx": 0.011, "rz": 0.014, "p": 2.2, "col": c_strap},
+			],
+		})
+	return _commit_lofts(parts)
+
+
+## Builds peaked National Officer Visor Cap with dark glossy brim, cap band, and brass cockade.
+static func build_officer_cap_mesh(crown_col: Color = Color(0.28, 0.30, 0.34)) -> ArrayMesh:
+	return _commit_lofts([
+		{
+			"seg": 20,
+			"rings": [
+				{"y": 0.000, "rx": 0.130, "rz": 0.136, "p": 2.1, "col": Color(0.16, 0.16, 0.18)},
+				{"y": 0.036, "rx": 0.134, "rz": 0.140, "p": 2.1, "col": Color(0.76, 0.16, 0.18)},
+				{"y": 0.048, "z": -0.004, "rx": 0.146, "rz": 0.152, "p": 2.1, "col": crown_col},
+				{"y": 0.128, "z": -0.016, "rx": 0.168, "rz": 0.180, "p": 2.2, "col": crown_col.lightened(0.06)},
+				{"y": 0.162, "z": -0.018, "rx": 0.122, "rz": 0.134, "p": 2.1, "col": crown_col.lightened(0.08)},
+			],
+		},
+		{
+			"seg": 14,
+			"xform": _xform(Vector3(0.0, -0.004, -0.102), Vector3(0.26, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.008, "rx": 0.128, "rz": 0.088, "p": 2.3, "col": Color(0.10, 0.10, 0.12)},
+				{"y": 0.010, "rx": 0.124, "rz": 0.082, "p": 2.3, "col": Color(0.18, 0.18, 0.20)},
+			],
+		},
+		{
+			"seg": 10,
+			"xform": _xform(Vector3(0.0, 0.088, -0.165), Vector3(-0.18, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.022, "rx": 0.026, "rz": 0.014, "p": 2.4, "col": Color(0.94, 0.78, 0.26)},
+				{"y": 0.022, "rx": 0.030, "rz": 0.014, "p": 2.4, "col": Color(1.0, 0.88, 0.38)},
+			],
+		},
+	])
 
 
 static func build_beret_mesh() -> ArrayMesh:
 	return make_loft([
-		{"y": 0.00, "rx": 0.122, "rz": 0.128, "p": 2.1, "col": Color(0.82, 0.82, 0.85)},
-		{"y": 0.035, "x": -0.025, "rx": 0.165, "rz": 0.160, "p": 2.0, "col": Color.WHITE},
-		{"y": 0.085, "x": -0.030, "rx": 0.155, "rz": 0.150, "p": 2.0, "col": Color.WHITE},
-		{"y": 0.115, "x": -0.020, "rx": 0.085, "rz": 0.085, "p": 2.0, "col": Color.WHITE},
+		{"y": -0.008, "rx": 0.124, "rz": 0.130, "p": 2.1, "col": Color(0.26, 0.26, 0.28)},
+		{"y": 0.012, "rx": 0.128, "rz": 0.134, "p": 2.1, "col": Color(0.76, 0.76, 0.80)},
+		{"y": 0.042, "x": -0.026, "rx": 0.168, "rz": 0.162, "p": 2.0, "col": Color.WHITE},
+		{"y": 0.090, "x": -0.032, "rx": 0.156, "rz": 0.152, "p": 2.0, "col": Color.WHITE},
+		{"y": 0.118, "x": -0.020, "rx": 0.086, "rz": 0.086, "p": 2.0, "col": Color.WHITE},
 	], 18)
 
 
-static func build_fedora_mesh() -> ArrayMesh:
+## Builds sculpted heraldic crest badge for beret front.
+static func build_badge_mesh() -> ArrayMesh:
 	return make_loft([
-		{"y": 0.00, "rx": 0.32, "rz": 0.34, "p": 2.0, "col": Color(0.86, 0.86, 0.88)}, # curved wide brim outer
-		{"y": 0.022, "rx": 0.22, "rz": 0.23, "p": 2.0, "col": Color.WHITE},
-		{"y": 0.032, "rx": 0.135, "rz": 0.145, "p": 2.1, "col": Color(0.75, 0.75, 0.78)}, # hatband
-		{"y": 0.095, "rx": 0.128, "rz": 0.140, "p": 2.2, "col": Color.WHITE},
-		{"y": 0.140, "rx": 0.085, "rz": 0.105, "p": 2.3, "col": Color.WHITE}, # pinched crown
-	], 20)
+		{"y": -0.022, "rx": 0.014, "rz": 0.010, "p": 2.4, "col": Color(0.86, 0.86, 0.90)},
+		{"y": 0.004, "rx": 0.024, "rz": 0.012, "p": 2.6, "col": Color.WHITE},
+		{"y": 0.022, "rx": 0.020, "rz": 0.010, "p": 2.5, "col": Color.WHITE},
+	], 10)
 
 
-static func build_arm_segment_mesh(r_top: float, r_bot: float, length: float) -> ArrayMesh:
+static func build_fedora_mesh(band_col: Color = Color(0.75, 0.20, 0.20), crown_col: Color = Color(0.14, 0.14, 0.16)) -> ArrayMesh:
+	return _commit_lofts([
+		{
+			"seg": 20,
+			"rings": [
+				{"y": -0.006, "rx": 0.305, "rz": 0.325, "p": 2.0, "col": crown_col.darkened(0.10)},
+				{"y": 0.022, "rx": 0.215, "rz": 0.225, "p": 2.0, "col": crown_col},
+				{"y": 0.030, "rx": 0.136, "rz": 0.146, "p": 2.1, "col": crown_col},
+				{"y": 0.098, "rx": 0.128, "rz": 0.140, "p": 2.2, "col": crown_col.lightened(0.06)},
+				{"y": 0.142, "rx": 0.082, "rz": 0.104, "p": 2.4, "col": crown_col.lightened(0.08)},
+			],
+		},
+		{
+			"seg": 20,
+			"rings": [
+				{"y": 0.025, "rx": 0.142, "rz": 0.152, "p": 2.1, "col": band_col},
+				{"y": 0.052, "rx": 0.139, "rz": 0.149, "p": 2.1, "col": band_col.lightened(0.10)},
+			],
+		},
+	])
+
+
+## Builds upper arm with rounded deltoid cap (is_upper=true) or forearm overlapping inside elbow (is_upper=false).
+static func build_arm_segment_mesh(r_top: float, r_bot: float, length: float, is_upper: bool = false) -> ArrayMesh:
+	var c_lit := Color.WHITE
+	var c_mid := Color(0.94, 0.94, 0.96)
+	var c_shade := Color(0.84, 0.84, 0.88)
+	if is_upper:
+		return make_loft([
+			{"y": -length - 0.030, "rx": r_bot * 0.74, "rz": r_bot * 0.74, "p": 2.0, "col": c_shade, "v": 1.00},
+			{"y": -length, "rx": r_bot, "rz": r_bot, "p": 2.0, "col": c_shade, "v": 0.90},
+			{"y": -length * 0.72, "rx": lerpf(r_top, r_bot, 0.70), "rz": lerpf(r_top, r_bot, 0.70), "p": 2.1, "col": c_mid, "v": 0.66},
+			{"y": -length * 0.34, "rx": r_top * 0.98, "rz": r_top * 0.96, "p": 2.1, "col": c_lit, "v": 0.36},
+			{"y": 0.000, "rx": r_top, "rz": r_top * 0.96, "p": 2.0, "col": c_lit, "v": 0.14},
+			{"y": 0.032, "rx": r_top * 0.84, "rz": r_top * 0.82, "p": 2.0, "col": c_lit, "v": 0.06},
+			{"y": 0.055, "rx": r_top * 0.48, "rz": r_top * 0.48, "p": 2.0, "col": c_mid, "v": 0.00},
+		], 16)
 	return make_loft([
-		{"y": -length, "rx": r_bot, "rz": r_bot, "p": 2.1, "col": Color(0.88, 0.88, 0.90)},
-		{"y": -length * 0.5, "rx": (r_top + r_bot) * 0.54, "rz": (r_top + r_bot) * 0.54, "p": 2.1, "col": Color.WHITE},
-		{"y": 0.0, "rx": r_top, "rz": r_top, "p": 2.0, "col": Color.WHITE},
-	], 14)
+		{"y": -length * 0.94, "rx": r_bot, "rz": r_bot * 0.96, "p": 2.1, "col": c_shade, "v": 1.00},
+		{"y": -length * 0.68, "rx": lerpf(r_top, r_bot, 0.64), "rz": lerpf(r_top, r_bot, 0.64), "p": 2.1, "col": c_mid, "v": 0.72},
+		{"y": -length * 0.28, "rx": r_top * 1.05, "rz": r_top * 1.02, "p": 2.1, "col": c_lit, "v": 0.34},
+		{"y": 0.000, "rx": r_top, "rz": r_top * 0.98, "p": 2.0, "col": c_lit, "v": 0.10},
+		{"y": 0.014, "rx": r_top * 0.90, "rz": r_top * 0.90, "p": 2.0, "col": c_mid, "v": 0.04},
+		{"y": 0.032, "rx": r_top * 0.56, "rz": r_top * 0.56, "p": 2.0, "col": c_shade, "v": 0.00},
+	], 16)
+
+
+## Builds sculpted chunky BFH fist/mitten palm + thumb ridge centered around Vector3.ZERO.
+static func build_hand_mesh(r_scale: float = 1.0) -> ArrayMesh:
+	return _commit_lofts([
+		{
+			"seg": 14,
+			"rings": [
+				{"y": -0.064 * r_scale, "rx": 0.032 * r_scale, "rz": 0.028 * r_scale, "p": 2.1, "col": Color(0.86, 0.86, 0.88)},
+				{"y": -0.046 * r_scale, "rx": 0.048 * r_scale, "rz": 0.044 * r_scale, "p": 2.5, "col": Color(0.95, 0.95, 0.96)},
+				{"y": -0.020 * r_scale, "rx": 0.056 * r_scale, "rz": 0.052 * r_scale, "p": 2.6, "col": Color.WHITE},
+				{"y": 0.006 * r_scale, "rx": 0.050 * r_scale, "rz": 0.046 * r_scale, "p": 2.4, "col": Color.WHITE},
+				{"y": 0.026 * r_scale, "rx": 0.042 * r_scale, "rz": 0.038 * r_scale, "p": 2.1, "col": Color(0.90, 0.90, 0.92)},
+			],
+		},
+		{
+			"seg": 10,
+			"xform": _xform(Vector3(0.044 * r_scale, -0.015 * r_scale, 0.0), Vector3(0.0, 0.0, -0.45)),
+			"rings": [
+				{"y": -0.026 * r_scale, "rx": 0.018 * r_scale, "rz": 0.020 * r_scale, "p": 2.1, "col": Color(0.92, 0.92, 0.94)},
+				{"y": 0.004 * r_scale, "rx": 0.024 * r_scale, "rz": 0.026 * r_scale, "p": 2.2, "col": Color.WHITE},
+				{"y": 0.026 * r_scale, "rx": 0.020 * r_scale, "rz": 0.022 * r_scale, "p": 2.1, "col": Color(0.92, 0.92, 0.94)},
+			],
+		},
+	])
 
 
 static func build_leg_mesh(thigh_r: float) -> ArrayMesh:
 	return make_loft([
-		{"y": -0.58, "rx": thigh_r * 0.68, "rz": thigh_r * 0.68, "p": 2.1, "col": Color(0.82, 0.82, 0.86)},
-		{"y": -0.34, "rx": thigh_r * 0.85, "rz": thigh_r * 0.88, "p": 2.1, "col": Color(0.95, 0.95, 0.97)},
-		{"y": -0.02, "rx": thigh_r, "rz": thigh_r * 1.05, "p": 2.1, "col": Color.WHITE},
-	], 14)
+		{"y": -0.58, "rx": thigh_r * 0.70, "rz": thigh_r * 0.72, "p": 2.1, "col": Color(0.80, 0.80, 0.84), "v": 1.00},
+		{"y": -0.39, "rx": thigh_r * 0.90, "rz": thigh_r * 0.92, "p": 2.1, "col": Color(0.92, 0.92, 0.96), "v": 0.66},
+		{"y": -0.33, "rx": thigh_r * 0.84, "rz": thigh_r * 0.86, "p": 2.2, "col": Color(0.84, 0.84, 0.88), "v": 0.56},
+		{"y": -0.22, "rx": thigh_r * 1.18, "rz": thigh_r * 1.20, "p": 2.2, "col": Color.WHITE, "v": 0.38},
+		{"y": -0.06, "rx": thigh_r * 1.12, "rz": thigh_r * 1.15, "p": 2.2, "col": Color.WHITE, "v": 0.14},
+		{"y": 0.05, "rx": thigh_r * 0.96, "rz": thigh_r * 1.00, "p": 2.1, "col": Color(0.92, 0.92, 0.94), "v": 0.00},
+	], 16)
 
 
 static func build_boot_mesh() -> ArrayMesh:
-	return make_loft([
-		{"y": -0.18, "z": -0.04, "rx": 0.082, "rz": 0.135, "p": 2.5, "col": Color(0.80, 0.80, 0.80)}, # sole
-		{"y": -0.10, "z": -0.03, "rx": 0.080, "rz": 0.125, "p": 2.3, "col": Color.WHITE},
-		{"y": 0.02, "z": 0.00, "rx": 0.072, "rz": 0.076, "p": 2.0, "col": Color.WHITE}, # cuff
-	], 14)
+	return _commit_lofts([
+		{
+			"seg": 16,
+			"rings": [
+				{"y": -0.200, "z": -0.045, "rx": 0.090, "rz": 0.152, "p": 2.5, "col": Color(0.45, 0.45, 0.48)},
+				{"y": -0.165, "z": -0.045, "rx": 0.092, "rz": 0.155, "p": 2.5, "col": Color(0.55, 0.55, 0.58)},
+				{"y": -0.125, "z": -0.040, "rx": 0.084, "rz": 0.142, "p": 2.4, "col": Color.WHITE},
+				{"y": -0.075, "z": -0.012, "rx": 0.072, "rz": 0.086, "p": 2.1, "col": Color(0.94, 0.94, 0.96)},
+				{"y": 0.045, "z": 0.000, "rx": 0.078, "rz": 0.082, "p": 2.1, "col": Color(0.88, 0.88, 0.92)},
+			],
+		},
+		{
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, 0.036, 0.0)),
+			"rings": [
+				{"y": -0.020, "rx": 0.082, "rz": 0.086, "p": 2.1, "col": Color(0.82, 0.80, 0.78)},
+				{"y": 0.020, "rx": 0.084, "rz": 0.088, "p": 2.1, "col": Color(0.92, 0.90, 0.88)},
+			],
+		},
+	])
 
 
 static func populate_weapon_root(root: Node3D, w_kind: int) -> Dictionary:

@@ -57,10 +57,16 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _tex_jacket(Color(0.76, 0.74, 0.68), Color(0.52, 0.50, 0.45), Color(0.40, 0.35, 0.25))
 		"hero_skin":
 			return _tex_skin()
+		"hero_arm_tattoo":
+			return _tex_arm_tattoo()
+		"hero_rucksack":
+			return _tex_rucksack()
+		"hero_leather":
+			return _tex_leather()
 		"hero_pants_royal":
-			return _tex_stucco(Color(0.42, 0.35, 0.25), Color(0.34, 0.28, 0.19))
+			return _tex_pants(Color(0.44, 0.37, 0.26), Color(0.32, 0.26, 0.18), Color(0.64, 0.54, 0.36))
 		"hero_pants_national":
-			return _tex_stucco(Color(0.24, 0.25, 0.28), Color(0.18, 0.19, 0.22))
+			return _tex_pants(Color(0.26, 0.27, 0.30), Color(0.17, 0.18, 0.21), Color(0.58, 0.18, 0.18))
 		"hero_gun_wood":
 			return _tex_stucco(Color(0.50, 0.30, 0.15), Color(0.36, 0.20, 0.09))
 		"flag_royal":
@@ -215,43 +221,170 @@ static func _tex_bark() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
+static func _draw_dashed_h(img: Image, x0: int, x1: int, y: int, step: int, col: Color) -> void:
+	for x in range(x0, x1, step):
+		_draw_rect(img, x, y, maxi(1, step / 2), 1, col)
+
+
+static func _draw_dashed_v(img: Image, x: int, y0: int, y1: int, step: int, col: Color) -> void:
+	for y in range(y0, y1, step):
+		_draw_rect(img, x, y, 1, maxi(1, step / 2), col)
+
+
 static func _tex_jacket(base: Color, seam: Color, accent: Color) -> ImageTexture:
 	var img := _new_img(128, 128, base)
-	var shade: Color = base.lerp(seam, 0.45)
-	# Subtle painted cloth fold shadows & waist AO
+	var shade: Color = base.lerp(seam, 0.48)
+	var highlight: Color = base.lightened(0.11)
+	var stitch: Color = accent.lerp(highlight, 0.45)
+	var brass: Color = Color(0.88, 0.72, 0.28)
+
+	# Vertical painterly lighting + subtle herringbone cloth weave
 	for y in range(128):
 		var vy: float = float(y) / 127.0
 		var row_col: Color = base
 		if vy > 0.80:
-			row_col = seam.lerp(base, 0.45)
-		elif vy < 0.16:
-			row_col = base.lightened(0.08)
+			row_col = base.lerp(seam, (vy - 0.80) * 2.2)
+		elif vy < 0.18:
+			row_col = base.lerp(highlight, (0.18 - vy) * 3.8)
 		_draw_rect(img, 0, y, 128, 1, row_col)
-	# Vertical cloth fold shadows under arms (x ~ 32 & x ~ 96) and back center seam (x ~ 64)
-	_draw_rect(img, 63, 18, 2, 95, seam)
-	_draw_rect(img, 29, 28, 6, 82, shade)
-	_draw_rect(img, 93, 28, 6, 82, shade)
-	# Horizontal shoulder yoke on back (seen directly in TPS!)
-	_draw_rect(img, 36, 28, 56, 3, seam)
-	_draw_rect(img, 36, 25, 56, 3, base.lightened(0.10))
-	# Waist belt & back belt loops
-	_draw_rect(img, 0, 104, 128, 12, Color(0.16, 0.13, 0.10))
-	_draw_rect(img, 0, 104, 128, 2, accent)
-	# Front lapels, pockets & buttons near x = 0..26 & 102..127
-	_draw_rect(img, 0, 0, 6, 104, seam)
-	_draw_rect(img, 122, 0, 6, 104, seam)
-	_draw_rect(img, 10, 44, 16, 14, shade)
-	_draw_rect(img, 102, 44, 16, 14, shade)
-	_draw_rect(img, 10, 44, 16, 4, accent)
-	_draw_rect(img, 102, 44, 16, 4, accent)
+		if y % 4 == 0:
+			for x in range((y % 8), 128, 8):
+				_draw_rect(img, x, y, 3, 1, row_col.lightened(0.04))
+
+	# Horizontal shoulder yoke & topstitching across back (visible in TPS)
+	_draw_rect(img, 30, 23, 68, 3, highlight)
+	_draw_rect(img, 30, 26, 68, 3, seam)
+	_draw_dashed_h(img, 32, 96, 29, 4, stitch)
+
+	# Underarm fold shadows & rear back-pleat folds
+	for sx in [29, 93]:
+		_draw_rect(img, sx, 26, 6, 74, shade)
+	for px in [46, 80]:
+		_draw_rect(img, px, 30, 2, 56, shade)
+
+	# Shoulder insignia rank stripes on outer sleeve/shoulder zones (u ~ 0.25 & 0.75)
+	for ix in [25, 91]:
+		_draw_rect(img, ix, 18, 12, 3, accent)
+		_draw_rect(img, ix, 23, 12, 3, accent)
+
+	# Center back seam + split coat hem vent
+	_draw_rect(img, 63, 14, 2, 82, seam)
+	_draw_rect(img, 62, 96, 4, 32, seam.darkened(0.15))
+	_draw_dashed_v(img, 60, 20, 124, 5, stitch)
+
+	# Waist cinch seam & hem stitching
+	_draw_rect(img, 0, 92, 128, 6, shade)
+	_draw_dashed_h(img, 0, 128, 91, 4, stitch)
+	_draw_dashed_h(img, 0, 128, 122, 4, stitch)
+
+	# Front lapels, placket closure, brass buttons & pocket flaps (u ~ 0.0 & 1.0)
+	_draw_rect(img, 0, 0, 5, 124, seam)
+	_draw_rect(img, 123, 0, 5, 124, seam)
+	_draw_rect(img, 5, 8, 14, 26, highlight)
+	_draw_rect(img, 109, 8, 14, 26, highlight)
+	_draw_line(img, Vector2(5, 8), Vector2(18, 34), 2.0, seam)
+	_draw_line(img, Vector2(122, 8), Vector2(109, 34), 2.0, seam)
+	for by in [38, 54, 70, 86]:
+		_draw_circle(img, 6, by, 2.1, brass)
+		_draw_circle(img, 121, by, 2.1, brass)
+	for kx in [9, 103]:
+		_draw_rect(img, kx, 42, 16, 15, shade)
+		_draw_rect(img, kx, 42, 16, 4, accent)
+		_draw_circle(img, kx + 8, 48, 1.8, brass)
+		_draw_rect(img, kx - 1, 76, 18, 14, shade)
+		_draw_rect(img, kx - 1, 76, 18, 4, accent)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_pants(base: Color, shadow: Color, accent: Color) -> ImageTexture:
+	var img := _new_img(128, 128, base)
+	var hi: Color = base.lightened(0.08)
+	for y in range(128):
+		var vy: float = float(y) / 127.0
+		var row_col: Color = base
+		if vy > 0.45 and vy < 0.60:
+			row_col = base.lerp(shadow, 0.35) # knee fold AO
+		elif vy > 0.86:
+			row_col = shadow # boot cuff shadow
+		elif vy < 0.16:
+			row_col = hi
+		_draw_rect(img, 0, y, 128, 1, row_col)
+		if y % 6 == 0:
+			for x in range((y % 12), 128, 12):
+				_draw_rect(img, x, y, 4, 1, row_col.lightened(0.03))
+	# Vertical trouser pleats & outer side piping/stitching
+	for px in [0, 63, 126]:
+		_draw_rect(img, px, 6, 2, 114, shadow)
+	for sx in [31, 95]:
+		_draw_rect(img, sx, 0, 3, 128, shadow)
+		_draw_rect(img, sx + 1, 0, 1, 128, accent.lerp(base, 0.45))
+	_draw_dashed_h(img, 0, 128, 112, 4, accent.lerp(hi, 0.4))
 	return ImageTexture.create_from_image(img)
 
 
 static func _tex_skin() -> ImageTexture:
-	var img := _new_img(64, 64, Color(0.95, 0.76, 0.62))
-	# Soft jaw/neck shadow at bottom & subtle warm flush
-	_draw_rect(img, 0, 52, 64, 12, Color(0.80, 0.60, 0.48))
-	_draw_rect(img, 0, 0, 64, 12, Color(0.98, 0.82, 0.68))
+	var img := _new_img(128, 128, Color(0.95, 0.76, 0.62))
+	# Warm crown/forehead highlight, subtle cheek blush & soft jaw/neck shadow
+	_draw_rect(img, 0, 0, 128, 28, Color(0.98, 0.82, 0.68))
+	_draw_rect(img, 0, 96, 128, 32, Color(0.80, 0.60, 0.48))
+	for cx in [18, 110]:
+		_draw_circle(img, cx, 56, 12.0, Color(0.95, 0.68, 0.56))
+	_draw_rect(img, 0, 40, 128, 6, Color(0.88, 0.68, 0.55)) # subtle brow crease
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_arm_tattoo() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.95, 0.76, 0.62))
+	_draw_rect(img, 0, 0, 128, 22, Color(0.98, 0.82, 0.68))
+	_draw_rect(img, 0, 96, 128, 32, Color(0.84, 0.64, 0.50))
+	var ink := Color(0.24, 0.30, 0.36)
+	var ink_hi := Color(0.38, 0.42, 0.46)
+	# Twin bicep armbands & stylized nautical anchor-wing tattoos on outer arms (u ~ 0.25 & 0.75)
+	_draw_rect(img, 0, 32, 128, 5, ink)
+	_draw_rect(img, 0, 40, 128, 3, ink_hi)
+	for cx in [32, 96]:
+		for s in range(-12, 13, 6):
+			_draw_line(img, Vector2(cx + s, 32), Vector2(cx + s + 3, 25), 2.5, ink)
+		# Stylized anchor + wing crest
+		_draw_line(img, Vector2(cx, 54), Vector2(cx, 88), 3.6, ink)
+		_draw_line(img, Vector2(cx - 10, 62), Vector2(cx + 10, 62), 3.2, ink)
+		_draw_line(img, Vector2(cx - 12, 78), Vector2(cx, 90), 3.4, ink)
+		_draw_line(img, Vector2(cx + 12, 78), Vector2(cx, 90), 3.4, ink)
+		_draw_circle(img, cx, 52, 4.0, ink_hi)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_rucksack() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.48, 0.44, 0.30))
+	var weave := Color(0.42, 0.38, 0.25)
+	var hi := Color(0.56, 0.51, 0.36)
+	var strap := Color(0.24, 0.17, 0.12)
+	for y in range(0, 128, 4):
+		_draw_rect(img, 0, y, 128, 1, weave)
+	for x in range(0, 128, 4):
+		_draw_rect(img, x, 0, 1, 128, weave)
+	_draw_rect(img, 0, 38, 128, 6, Color(0.30, 0.26, 0.18))
+	_draw_dashed_h(img, 4, 124, 36, 4, hi)
+	for sx in [26, 92]:
+		_draw_rect(img, sx, 0, 10, 128, strap)
+		_draw_rect(img, sx + 1, 44, 8, 8, Color(0.84, 0.68, 0.26))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_leather() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.38, 0.26, 0.17))
+	var grain := Color(0.28, 0.18, 0.12)
+	var sheen := Color(0.48, 0.34, 0.22)
+	var stitch := Color(0.68, 0.54, 0.34)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 505
+	for _i in range(110):
+		var col: Color = sheen if rng.randf() > 0.5 else grain
+		_draw_rect(img, rng.randi_range(0, 120), rng.randi_range(0, 122), rng.randi_range(3, 10), rng.randi_range(2, 4), col)
+	_draw_dashed_h(img, 4, 124, 6, 4, stitch)
+	_draw_dashed_h(img, 4, 124, 121, 4, stitch)
+	_draw_dashed_v(img, 6, 4, 124, 4, stitch)
+	_draw_dashed_v(img, 121, 4, 124, 4, stitch)
 	return ImageTexture.create_from_image(img)
 
 
