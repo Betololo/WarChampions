@@ -358,6 +358,20 @@ func _drive_physics(_driver: HeroCharacter, _delta: float, _context: Dictionary)
 	pass
 
 
+func _enforce_remote_freeze() -> bool:
+	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+		if not freeze:
+			freeze = true
+			linear_velocity = Vector3.ZERO
+			angular_velocity = Vector3.ZERO
+		return true
+	return false
+
+
+func _physics_process(_delta: float) -> void:
+	_enforce_remote_freeze()
+
+
 func _process(delta: float) -> void:
 	var eff_vel: Vector3 = linear_velocity
 	var has_turret_seat: bool = false

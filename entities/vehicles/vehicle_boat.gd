@@ -29,9 +29,9 @@ func _build_vehicle_mesh() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if is_destroyed or freeze:
+	if _enforce_remote_freeze():
 		return
-	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+	if is_destroyed or freeze:
 		return
 	_apply_buoyancy_and_leveling(delta)
 

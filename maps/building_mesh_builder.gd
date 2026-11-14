@@ -372,11 +372,22 @@ static func build_town_house(parent: Node3D, origin: Vector3, yaw: float, style_
 		var bal_z: float = d * 0.5 + 1.45
 		_add_box(body, Vector3(w + 0.4, 0.34, 2.9), Vector3(0.0, bal_y - 0.17, bal_z), Vector3.ZERO, mats["timber_warm"], "BalconyDeck")
 		_add_box_col(body, Vector3(w + 0.4, 0.34, 2.9), Vector3(0.0, bal_y - 0.17, bal_z))
-		# Balcony corner support posts + railing (leave right side stair opening clear!)
-		for bx in [-w * 0.5 + 0.85, -1.2, 2.2]:
+		# Balcony support posts + full perimeter railing across balcony front, stair landing & sides
+		for bx in [-w * 0.5 + 0.55, -1.2, 2.2, w * 0.5 - 0.55]:
 			_add_box(body, Vector3(0.24, bal_y, 0.24), Vector3(bx, bal_y * 0.5, bal_z + 1.25), Vector3.ZERO, mats["timber_dark"])
-		_add_box(body, Vector3(w - 4.2, 0.18, 0.18), Vector3(-1.4, bal_y + 1.0, bal_z + 1.32), Vector3.ZERO, mats["timber_dark"])
-		_add_box_col(body, Vector3(w - 4.2, 1.0, 0.20), Vector3(-1.4, bal_y + 0.5, bal_z + 1.32))
+		var rail_left: float = -w * 0.5 - 0.12
+		var rail_right: float = w * 0.5 + 2.48
+		var rail_cx: float = (rail_left + rail_right) * 0.5
+		var rail_len: float = rail_right - rail_left
+		_add_box(body, Vector3(rail_len, 0.16, 0.16), Vector3(rail_cx, bal_y + 1.0, bal_z + 1.32), Vector3.ZERO, mats["timber_dark"], "BalconyRailFront")
+		_add_box(body, Vector3(rail_len, 0.12, 0.12), Vector3(rail_cx, bal_y + 0.50, bal_z + 1.32), Vector3.ZERO, mats["timber_warm"])
+		_add_box_col(body, Vector3(rail_len, 1.05, 0.20), Vector3(rail_cx, bal_y + 0.52, bal_z + 1.32))
+		for px in [rail_left + 0.08, -2.2, 2.2, w * 0.5 - 0.1, rail_right - 0.08]:
+			_add_box(body, Vector3(0.18, 1.08, 0.18), Vector3(px, bal_y + 0.54, bal_z + 1.32), Vector3.ZERO, mats["timber_dark"])
+		for side_x in [rail_left + 0.08, rail_right - 0.08]:
+			_add_box(body, Vector3(0.16, 0.16, 2.75), Vector3(side_x, bal_y + 1.0, bal_z), Vector3.ZERO, mats["timber_dark"])
+			_add_box(body, Vector3(0.12, 0.12, 2.75), Vector3(side_x, bal_y + 0.50, bal_z), Vector3.ZERO, mats["timber_warm"])
+			_add_box_col(body, Vector3(0.20, 1.05, 2.75), Vector3(side_x, bal_y + 0.52, bal_z))
 		_add_ramp_between(body, Vector3(w * 0.5 + 1.35, 0.0, -d * 0.32), Vector3(w * 0.5 + 1.35, bal_y, d * 0.5 + 0.15), 2.1, 0.36, mats["timber_dark"], true, mats["timber_warm"])
 		_add_box(body, Vector3(2.4, 0.34, 2.9), Vector3(w * 0.5 + 1.35, bal_y - 0.17, bal_z), Vector3.ZERO, mats["timber_warm"])
 		_add_box_col(body, Vector3(2.4, 0.34, 2.9), Vector3(w * 0.5 + 1.35, bal_y - 0.17, bal_z))
@@ -431,16 +442,20 @@ static func build_church_chapel(parent: Node3D, origin: Vector3, yaw: float = 0.
 				_add_box(body, Vector3(0.18, 3.6, 1.5), Vector3(sx * (nave_w * 0.5 + 0.05), plinth_h + 4.4, sz), Vector3.ZERO, mats["glass"])
 				_add_box(body, Vector3(0.24, 3.85, 1.75), Vector3(sx * (nave_w * 0.5 + 0.02), plinth_h + 4.4, sz), Vector3.ZERO, mats["stone_trim"])
 
-	# Tall Front Belltower (+Z)
+	# Tall Front Belltower (+Z): distinct Lower Stone Stage (0..5.2m), Upper Stucco Stage (5.2..14.3m), & Open Belfry
 	var tw: float = 6.4
 	var tower_z: float = nave_d * 0.5 + 1.2
-	var tower_h: float = 15.6
-	_add_box(body, Vector3(tw + 0.5, plinth_h + tower_h, tw + 0.5), Vector3(0.0, (plinth_h + tower_h) * 0.5, tower_z), Vector3.ZERO, mats["stone"], "BellTowerLower")
-	_add_box(body, Vector3(tw, 9.2, tw), Vector3(0.0, plinth_h + 8.6, tower_z), Vector3.ZERO, mats["cream"], "BellTowerUpper")
-	_add_box_col(body, Vector3(tw + 0.5, plinth_h + tower_h, tw + 0.5), Vector3(0.0, (plinth_h + tower_h) * 0.5, tower_z))
+	var lower_h: float = 5.2
+	var belfry_y: float = plinth_h + 13.4
+	var upper_h: float = belfry_y - lower_h
+	_add_box(body, Vector3(tw + 0.5, lower_h, tw + 0.5), Vector3(0.0, lower_h * 0.5, tower_z), Vector3.ZERO, mats["stone"], "BellTowerLower")
+	_add_box(body, Vector3(tw + 0.86, 0.34, tw + 0.86), Vector3(0.0, lower_h, tower_z), Vector3.ZERO, mats["stone_trim"], "BellTowerBelt")
+	_add_box(body, Vector3(tw, upper_h, tw), Vector3(0.0, lower_h + upper_h * 0.5, tower_z), Vector3.ZERO, mats["cream"], "BellTowerUpper")
+	_add_box(body, Vector3(tw + 0.64, 0.32, tw + 0.64), Vector3(0.0, belfry_y, tower_z), Vector3.ZERO, mats["stone_trim"], "BelfryCornice")
+	_add_box_col(body, Vector3(tw + 0.5, lower_h, tw + 0.5), Vector3(0.0, lower_h * 0.5, tower_z))
+	_add_box_col(body, Vector3(tw, upper_h + 3.2, tw), Vector3(0.0, lower_h + (upper_h + 3.2) * 0.5, tower_z))
 
 	# Belfry open chamber with corner columns & bronze bell!
-	var belfry_y: float = plinth_h + 13.4
 	for cx in [-2.3, 2.3]:
 		for cz in [-2.3, 2.3]:
 			_add_box(body, Vector3(0.85, 3.2, 0.85), Vector3(cx, belfry_y + 1.6, tower_z + cz), Vector3.ZERO, mats["stone_trim"])
@@ -463,9 +478,9 @@ static func build_church_chapel(parent: Node3D, origin: Vector3, yaw: float = 0.
 	_add_box(body, Vector3(0.22, 2.2, 0.22), Vector3(0.0, spire_y + 6.2, tower_z), Vector3.ZERO, mats["brass"])
 	_add_box(body, Vector3(1.25, 0.22, 0.22), Vector3(0.0, spire_y + 6.7, tower_z), Vector3.ZERO, mats["brass"])
 
-	_add_arched_doorway(body, Vector3(0.0, plinth_h * 0.35, tower_z + tw * 0.5), 0.0, 2.6, 3.8, mats)
-	_add_cyl(body, 1.15, 1.15, 0.28, Vector3(0.0, plinth_h + 7.2, tower_z + tw * 0.5 + 0.06), Vector3(PI * 0.5, 0.0, 0.0), mats["brass"], 16, "RoseWindowRim")
-	_add_cyl(body, 0.92, 0.92, 0.32, Vector3(0.0, plinth_h + 7.2, tower_z + tw * 0.5 + 0.08), Vector3(PI * 0.5, 0.0, 0.0), mats["glass"], 16, "RoseWindowGlass")
+	_add_arched_doorway(body, Vector3(0.0, 0.0, tower_z + (tw + 0.5) * 0.5), 0.0, 2.6, 3.8, mats)
+	_add_cyl(body, 1.15, 1.15, 0.28, Vector3(0.0, lower_h + 4.4, tower_z + tw * 0.5 + 0.06), Vector3(PI * 0.5, 0.0, 0.0), mats["brass"], 16, "RoseWindowRim")
+	_add_cyl(body, 0.92, 0.92, 0.32, Vector3(0.0, lower_h + 4.4, tower_z + tw * 0.5 + 0.08), Vector3(PI * 0.5, 0.0, 0.0), mats["glass"], 16, "RoseWindowGlass")
 	return body
 
 
@@ -810,7 +825,7 @@ static func build_airstrip_complex(parent: Node3D, origin: Vector3, yaw: float, 
 	_add_cyl(body, 0.34, 0.16, 1.8, Vector3(-41.0, 6.15, -18.0), Vector3(0.0, 0.0, -PI * 0.42), mats["red_paint"], 10, "WindsockCone")
 	_add_box(body, Vector3(8.5, 1.25, 1.15), Vector3(42.0, 0.62, -24.0), Vector3.ZERO, mats["sandbag"])
 	_add_box_col(body, Vector3(8.5, 1.25, 1.15), Vector3(42.0, 0.62, -24.0))
-	for dx in [36.0, 37.3, 38.6]:
+	for dx in [34.2, 35.4, 36.6]:
 		_add_cyl(body, 0.44, 0.44, 1.2, Vector3(dx, 0.6, -24.0), Vector3.ZERO, mats["red_paint"], 10)
 	return body
 

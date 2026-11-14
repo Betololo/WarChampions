@@ -93,6 +93,7 @@ func _exit_tree() -> void:
 
 
 func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
+	_sync_vehicle_authority_freeze()
 	if hud == null:
 		return
 	if connected and is_srv:
@@ -104,6 +105,19 @@ func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
 		hud.add_killfeed("Conectado ao servidor!")
 	elif not _switching_mode:
 		hud.add_killfeed("Desconectado da partida.")
+
+
+func _sync_vehicle_authority_freeze() -> void:
+	var auth: bool = NetworkManager.is_server_authority()
+	for v_val in vehicles_by_id.values():
+		var v := v_val as VehicleBase
+		if v == null or not is_instance_valid(v):
+			continue
+		var should_freeze: bool = (v.vehicle_type == VehicleBase.VehicleType.AA_GUN) or not auth
+		v.freeze = should_freeze
+		if should_freeze:
+			v.linear_velocity = Vector3.ZERO
+			v.angular_velocity = Vector3.ZERO
 
 
 func _load_map() -> void:
@@ -118,6 +132,7 @@ func _load_map() -> void:
 	map_instance.build_map(conquest_manager, vehicles_root, _build_combat_context())
 	for v in map_instance.spawned_vehicles:
 		vehicles_by_id[v.id] = v
+	_sync_vehicle_authority_freeze()
 
 
 func _setup_ui() -> void:
@@ -169,6 +184,7 @@ func _on_host_online(team: int, class_id: int, port: int) -> void:
 	conquest_manager.reset_match()
 	NetworkManager.set_local_loadout("HostHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.start_host(port, false)
+	_sync_vehicle_authority_freeze()
 	_switching_mode = false
 	SoundSynthesizer.start_whistle_theme()
 
@@ -178,6 +194,7 @@ func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
 	_clear_match_entities()
 	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.join_server(ip, port)
+	_sync_vehicle_authority_freeze()
 	_switching_mode = false
 	SoundSynthesizer.start_whistle_theme()
 
@@ -188,6 +205,7 @@ func _on_play_offline_bots(team: int, class_id: int) -> void:
 	conquest_manager.reset_match()
 	NetworkManager.set_local_loadout("Hero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.start_host(NetworkManager.DEFAULT_PORT, true)
+	_sync_vehicle_authority_freeze()
 	_switching_mode = false
 	_spawn_12v12_bots(team)
 	SoundSynthesizer.start_whistle_theme()

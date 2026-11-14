@@ -20,6 +20,7 @@ func _ready() -> void:
 	await _test_vehicle_protection_destruction_and_hud()
 	_test_seaside_map_and_12v12_bots_integration()
 	_test_double_map_architecture_and_landmarks()
+	await _test_client_vehicle_freeze_and_buoyancy_sync()
 	_test_overhaul_net_u32_fall_damage_and_assets()
 	_test_hero_visuals_camera_and_audio()
 	_test_ik_weapon_grip_shot_fx_and_scope()
@@ -1237,8 +1238,16 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	_assert(grass_col != null and grass_col.shape is BoxShape3D and (grass_col.shape as BoxShape3D).size.x >= 1440.0 and (grass_col.shape as BoxShape3D).size.z >= 920.0, "GrassMainland covers >= 1440m x 920m")
 
 	# 4. Verify required landmarks, sculpted buildings, watchtowers & 140+ layered trees
-	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier"]:
+	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier", "RuinArchPillarL", "RuinArchPillarR", "BuntingPost_-36_N", "BuntingPost_36_S"]:
 		_assert(map.get_node_or_null(lm_name) != null, "Landmark '%s' exists on map" % lm_name)
+
+	# Verify ChurchChapel belltower lower stone stage does not swallow upper cream stage
+	var chapel := map.get_node_or_null("ChurchChapel")
+	var bell_low := chapel.get_node_or_null("BellTowerLower") as MeshInstance3D if chapel != null else null
+	var bell_up := chapel.get_node_or_null("BellTowerUpper") as MeshInstance3D if chapel != null else null
+	var bell_low_top: float = (bell_low.position.y + bell_low.get_aabb().end.y) if bell_low != null else 999.0
+	var bell_up_top: float = (bell_up.position.y + bell_up.get_aabb().end.y) if bell_up != null else 0.0
+	_assert(bell_low != null and bell_up != null and bell_low_top < bell_up_top - 4.0 and chapel.position.y >= 2.29, "ChurchChapel belltower stages separate cleanly (lower top=%.1f < upper top=%.1f) atop plaza" % [bell_low_top, bell_up_top])
 
 	var watchtower_count: int = 0
 	var tree_count: int = 0
@@ -1376,6 +1385,55 @@ func _test_double_map_architecture_and_landmarks() -> void:
 
 	remove_child(test_host)
 	test_host.free()
+
+
+func _test_client_vehicle_freeze_and_buoyancy_sync() -> void:
+	var game := MainGame.new()
+	add_child(game)
+
+	# Before joining online, non-AA boats float unfrozen under local OfflineMultiplayerPeer authority
+	var initial_boats: int = 0
+	var initial_unfrozen_boats: int = 0
+	for v_val in game.vehicles_by_id.values():
+		var v := v_val as VehicleBase
+		if v is VehicleBoat:
+			initial_boats += 1
+			if not v.freeze:
+				initial_unfrozen_boats += 1
+	_assert(initial_boats == 6 and initial_unfrozen_boats == 6, "All 6 boats start unfrozen under OfflineMultiplayerPeer (%d/%d)" % [initial_unfrozen_boats, initial_boats])
+
+	# Joining an ENet server must freeze ALL vehicles immediately so client boats never sink to seafloor
+	game._on_join_online(NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, "127.0.0.1", 7809)
+	_assert(not NetworkManager.is_server_authority(), "ENet client peer reports is_server_authority() == false immediately")
+	var unfrozen_after_join: int = 0
+	for v_val in game.vehicles_by_id.values():
+		var v := v_val as VehicleBase
+		if v != null and not v.freeze:
+			unfrozen_after_join += 1
+	_assert(unfrozen_after_join == 0, "All client vehicles frozen immediately after _on_join_online (unfrozen=%d)" % unfrozen_after_join)
+
+	for _f in range(6):
+		await get_tree().physics_frame
+
+	var sunk_boats: int = 0
+	var unfrozen_after_frames: int = 0
+	for v_val in game.vehicles_by_id.values():
+		var v := v_val as VehicleBase
+		if v != null and not v.freeze:
+			unfrozen_after_frames += 1
+		if v is VehicleBoat and v.position.y < -0.6:
+			sunk_boats += 1
+	_assert(unfrozen_after_frames == 0 and sunk_boats == 0, "Client boats remain frozen at waterline after physics ticks (unfrozen=%d, sunk=%d)" % [unfrozen_after_frames, sunk_boats])
+
+	NetworkManager.shutdown_network()
+	SoundSynthesizer.stop_whistle_theme()
+	var boats_restored: int = 0
+	for v_val in game.vehicles_by_id.values():
+		var v := v_val as VehicleBase
+		if v is VehicleBoat and not v.freeze:
+			boats_restored += 1
+	_assert(boats_restored == 6, "Disconnecting back to offline unfreezes client boats (%d/6)" % boats_restored)
+	game.free()
 
 
 func _test_scene_compile_and_load() -> void:

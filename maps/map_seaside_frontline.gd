@@ -184,14 +184,27 @@ func _build_streetlamps_and_bunting() -> void:
 			arm.material_override = pole_mat
 			add_child(arm)
 
-	# Festive Battlefield Heroes Triangle Pennant Bunting across Town Square Plaza
+	# Festive Battlefield Heroes Triangle Pennant Bunting across Town Square Plaza (grounded posts at both ends)
 	var pennant_mats: Array[Material] = [
 		BuildingMeshBuilder.make_mat(Color(0.88, 0.18, 0.16)),
 		BuildingMeshBuilder.make_mat(Color(0.96, 0.80, 0.18)),
 		BuildingMeshBuilder.make_mat(Color(0.16, 0.48, 0.92)),
 		BuildingMeshBuilder.make_mat(Color(0.24, 0.72, 0.30)),
 	]
+	var finial_mat := BuildingMeshBuilder.make_mat(Color(0.86, 0.68, 0.22), "", 0.35, 0.75)
 	for bx in [-36.0, -14.0, 14.0, 36.0]:
+		for end_tag in [{"z": 29.0, "suffix": "N"}, {"z": 51.0, "suffix": "S"}]:
+			var pz_post: float = float(end_tag["z"])
+			_create_solid_box("BuntingPost_%d_%s" % [int(bx), str(end_tag["suffix"])], Vector3(0.28, 7.1, 0.28), Vector3(bx, 2.295 + 3.55, pz_post), pole_mat)
+			_create_solid_box("BuntingBase_%d_%s" % [int(bx), str(end_tag["suffix"])], Vector3(0.56, 0.36, 0.56), Vector3(bx, 2.295 + 0.18, pz_post), pole_mat)
+			var finial := MeshInstance3D.new()
+			var fm := SphereMesh.new()
+			fm.radius = 0.20
+			fm.height = 0.40
+			finial.mesh = fm
+			finial.position = Vector3(bx, 9.48, pz_post)
+			finial.material_override = finial_mat
+			add_child(finial)
 		var cord := MeshInstance3D.new()
 		var cm := BoxMesh.new()
 		cm.size = Vector3(0.08, 0.08, 22.0)
@@ -226,10 +239,11 @@ func _build_runways_and_harbors() -> void:
 
 
 func _build_landmarks_and_village() -> void:
-	# 1. Town Square Centerpiece: Sculpted Multi-Tier Fountain + Bustling Mercadinho + Church Chapel
+	# 1. Town Square Centerpiece: Sculpted Multi-Tier Fountain + Bustling Mercadinho + Church Chapel on flush plaza/parvis
 	BuildingMeshBuilder.build_central_fountain(self, Vector3(0.0, 2.295, 40.0))
 	BuildingMeshBuilder.build_mercadinho_complex(self, Vector3(28.0, 2.295, 66.0))
-	BuildingMeshBuilder.build_church_chapel(self, Vector3(28.0, 2.15, -16.0), 0.0)
+	_create_solid_box("ChurchParvis", Vector3(18.0, 0.18, 23.0), Vector3(28.0, 2.205, -18.5), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(4, 5)))
+	BuildingMeshBuilder.build_church_chapel(self, Vector3(28.0, 2.295, -16.0), 0.0)
 
 	# 2. Windmill Landmark atop Windmill Hill (Flag B)
 	var windmill: Node3D = BuildingMeshBuilder.build_windmill(self, Vector3(-250.0, 12.15, -262.0), 0.35)
@@ -292,7 +306,13 @@ func _build_landmarks_and_village() -> void:
 	_create_solid_box("RuinWallE", Vector3(2.6, 5.4, 30.0), Vector3(312.0, 7.65 + 2.7, -238.0), masonry)
 	_create_solid_box("RuinBastionPillarL", Vector3(4.2, 7.2, 4.2), Vector3(262.0, 7.65 + 3.6, -280.0), trim_stone)
 	_create_solid_box("RuinBastionPillarR", Vector3(4.2, 7.2, 4.2), Vector3(298.0, 7.65 + 3.6, -280.0), trim_stone)
-	_create_solid_box("RuinArchLintel", Vector3(22.0, 2.0, 3.2), Vector3(280.0, 7.65 + 5.8, -206.0), trim_stone)
+	_create_solid_box("RuinArchBaseL", Vector3(4.2, 0.75, 4.2), Vector3(270.0, 7.65 + 0.375, -206.0), trim_stone)
+	_create_solid_box("RuinArchBaseR", Vector3(4.2, 0.75, 4.2), Vector3(290.0, 7.65 + 0.375, -206.0), trim_stone)
+	_create_solid_box("RuinArchPillarL", Vector3(3.4, 4.9, 3.4), Vector3(270.0, 7.65 + 2.45, -206.0), masonry)
+	_create_solid_box("RuinArchPillarR", Vector3(3.4, 4.9, 3.4), Vector3(290.0, 7.65 + 2.45, -206.0), masonry)
+	_create_solid_box("RuinArchCapL", Vector3(4.0, 0.55, 4.0), Vector3(270.0, 7.65 + 4.65, -206.0), trim_stone)
+	_create_solid_box("RuinArchCapR", Vector3(4.0, 0.55, 4.0), Vector3(290.0, 7.65 + 4.65, -206.0), trim_stone)
+	_create_solid_box("RuinArchLintel", Vector3(24.0, 2.0, 3.6), Vector3(280.0, 7.65 + 5.8, -206.0), trim_stone)
 
 
 func _build_watchtowers() -> void:
