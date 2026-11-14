@@ -614,13 +614,7 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) ->
 	_weapon_recoil_anim = 1.0
 	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG) else 0.55
 	if apply_camera_kick and hero_camera != null:
-		var kick_rad: float = 0.022
-		if not weapons.is_empty():
-			var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
-			var w: WeaponBase = weapons[slot] as WeaponBase
-			if w != null:
-				kick_rad = w.recoil_rad
-		hero_camera.add_recoil(kick_rad)
+		hero_camera.add_recoil(0.0)
 
 
 func get_muzzle_world_position() -> Vector3:
@@ -676,6 +670,7 @@ func _process(delta: float) -> void:
 			is_parachuting = (active_flags & NetSerializer.SNAP_PARACHUTING) != 0
 			is_crouching = (active_flags & NetSerializer.SNAP_CROUCHING) != 0
 			is_defeated = (active_flags & NetSerializer.SNAP_DEFEATED) != 0
+			collision_layer = 0 if is_defeated else 2
 			is_stealthed = (active_flags & NetSerializer.SNAP_STEALTHED) != 0
 			is_emoting = (active_flags & NetSerializer.SNAP_EMOTING) != 0
 			if visual_root != null:
@@ -1288,7 +1283,13 @@ func reconcile_with_server(state: Dictionary) -> void:
 			hero_camera.set_vehicle_mode(current_vehicle_id >= 0)
 		if current_vehicle_id < 0 and visual_root != null and not is_scoping:
 			visual_root.visible = true
+	var was_defeated: bool = is_defeated
 	is_defeated = (auth_flags & NetSerializer.SNAP_DEFEATED) != 0
+	if is_defeated:
+		collision_layer = 0
+	elif was_defeated and not is_defeated:
+		collision_layer = 2
+		reset_weapons_full()
 	stats_changed.emit()
 
 	if current_vehicle_id >= 0 or prev_vid >= 0:
@@ -1369,6 +1370,9 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 		_reset_seat_metadata()
 	if _body_collision != null:
 		_body_collision.disabled = (current_vehicle_id >= 0)
+	var def: bool = (flags & NetSerializer.SNAP_DEFEATED) != 0 or hp <= 0
+	is_defeated = def
+	collision_layer = 0 if def else 2
 	var rot := Quaternion(Vector3.UP, yaw)
 	snapshot_interpolator.push_snapshot(server_tick, server_time_ms, pos, rot, vel, yaw, pitch, 0.0, flags)
 
@@ -1414,6 +1418,7 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 	if hp <= 0:
 		hp = 0
 		is_defeated = true
+		collision_layer = 0
 		defeat_timer = 5.0
 		_defeat_elapsed = 0.0
 		_airborne_fall_time = 0.0
@@ -1439,6 +1444,20 @@ func heal_server(amount: int) -> int:
 	return hp - prev
 
 
+func reset_weapons_full() -> void:
+	for w_node in weapons:
+		var w: WeaponBase = w_node as WeaponBase
+		if w != null:
+			w.ammo_in_mag = w.mag_size
+			w.is_reloading = false
+			w.reload_timer = 0.0
+			w.cooldown_timer = 0.0
+			w._burst_bloom = 0.0
+			w._was_first_shot = true
+			w._prev_fire_held = false
+			w.ammo_changed.emit(w.ammo_in_mag, w.mag_size, false)
+
+
 func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
@@ -1448,6 +1467,8 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	hp = max_hp
 	shield = 0
 	is_defeated = false
+	collision_layer = 2
+	reset_weapons_full()
 	_defeat_elapsed = 0.0
 	_airborne_fall_time = 0.0
 	_knockback_stun_timer = 0.0

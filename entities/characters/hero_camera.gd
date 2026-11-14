@@ -78,8 +78,8 @@ func apply_look_delta(relative: Vector2) -> void:
 	pitch = clampf(pitch - relative.y * sens, -1.35, 1.35)
 
 
-func add_recoil(amount_rad: float) -> void:
-	recoil_pitch_offset = clampf(recoil_pitch_offset + amount_rad, 0.0, 0.22)
+func add_recoil(_amount_rad: float = 0.0) -> void:
+	recoil_pitch_offset = 0.0
 
 
 func set_scoped(scoped: bool) -> void:
@@ -134,17 +134,9 @@ func _process(delta: float) -> void:
 	var p_hero: HeroCharacter = get_parent() as HeroCharacter
 	if p_hero != null and is_inside_tree():
 		var target_anchor: Vector3 = p_hero.visual_root.global_position if p_hero.visual_root != null else p_hero.global_position
-		if global_position == Vector3.ZERO or global_position.distance_to(target_anchor) > 4.0:
-			global_position = target_anchor
-		else:
-			var new_pos := target_anchor
-			if p_hero.is_on_floor() and not p_hero.is_parachuting:
-				var dy: float = absf(target_anchor.y - global_position.y)
-				if dy < 0.35:
-					new_pos.y = lerpf(global_position.y, target_anchor.y, minf(1.0, 32.0 * delta))
-			global_position = new_pos
+		global_position = target_anchor
 
-	recoil_pitch_offset = lerpf(recoil_pitch_offset, 0.0, aim_punch_decay * delta)
+	recoil_pitch_offset = 0.0
 	var target_offset: Vector3 = TPS_SHOULDER_OFFSET
 	var target_length: float = TPS_SPRING_LENGTH
 	var target_fov: float = TPS_FOV

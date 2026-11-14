@@ -80,6 +80,85 @@ func trace_rewound_ray(
 	return _trace_segment(shooter, ray_origin, ray_origin + dir * max_range, frame, heroes_by_id, world_3d, exclude_rids)
 
 
+## Finds the closest rewound (or live fallback) hero hitbox intersected by a ray.
+## Returns {hit: bool, dist: float, pos: Vector3, hero_id: int, headshot: bool}
+func find_closest_rewound_hero_hit(
+	shooter: HeroCharacter,
+	ray_origin: Vector3,
+	ray_dir: Vector3,
+	max_dist: float,
+	view_tick_delta: int,
+	current_tick: int,
+	heroes_by_id: Dictionary
+) -> Dictionary:
+	var target_tick: int = current_tick - clampi(view_tick_delta, 0, MAX_REWIND_TICKS)
+	var frame: FrameRecord = get_frame(target_tick, current_tick)
+	return find_closest_hero_hit_in_frame(shooter, ray_origin, ray_dir, max_dist, frame, heroes_by_id)
+
+
+static func find_closest_hero_hit_in_frame(
+	shooter: HeroCharacter,
+	ray_origin: Vector3,
+	ray_dir: Vector3,
+	max_dist: float,
+	frame: FrameRecord,
+	heroes_by_id: Dictionary
+) -> Dictionary:
+	var dir: Vector3 = ray_dir.normalized()
+	var best_dist: float = max_dist
+	var best_pos: Vector3 = ray_origin + dir * max_dist
+	var best_hero_id: int = -1
+	var best_headshot: bool = false
+
+	if frame != null:
+		for id_key in frame.entries.keys():
+			var snap: HeroHitboxSnapshot = frame.entries[id_key]
+			if shooter != null and (snap.entity_id == shooter.entity_id or snap.team == shooter.team):
+				continue
+			var live_h: HeroCharacter = heroes_by_id.get(snap.entity_id, null) as HeroCharacter
+			if live_h != null and (live_h.is_defeated or (live_h.current_vehicle_id >= 0 and live_h.current_seat_enclosed)):
+				continue
+			var h_res: Dictionary = _hit_test_hero_bounds(
+				ray_origin, dir, best_dist,
+				snap.head_center, snap.head_radius,
+				snap.body_bottom, snap.body_top, snap.body_radius
+			)
+			if bool(h_res["hit"]):
+				best_dist = float(h_res["dist"])
+				best_pos = ray_origin + dir * best_dist
+				best_hero_id = snap.entity_id
+				best_headshot = bool(h_res["headshot"])
+	else:
+		# Fallback to live hero bounds if buffer hasn't reached target_tick yet
+		for id_key in heroes_by_id.keys():
+			var h: HeroCharacter = heroes_by_id[id_key]
+			if h == null or h.is_defeated:
+				continue
+			if h.current_vehicle_id >= 0 and h.current_seat_enclosed:
+				continue
+			if shooter != null and (h.entity_id == shooter.entity_id or h.team == shooter.team):
+				continue
+			var bnd: Dictionary = _compute_hero_bounds(h)
+			var h_res: Dictionary = _hit_test_hero_bounds(
+				ray_origin, dir, best_dist,
+				bnd["head_center"], float(bnd["head_radius"]),
+				bnd["body_bottom"], bnd["body_top"], float(bnd["body_radius"])
+			)
+			if bool(h_res["hit"]):
+				best_dist = float(h_res["dist"])
+				best_pos = ray_origin + dir * best_dist
+				best_hero_id = h.entity_id
+				best_headshot = bool(h_res["headshot"])
+
+	return {
+		"hit": best_hero_id >= 0,
+		"dist": best_dist,
+		"pos": best_pos,
+		"hero_id": best_hero_id,
+		"headshot": best_headshot,
+	}
+
+
 ## Evaluates a gravity-curved ballistic arc against World/Vehicle geometry and rewound opponent hitboxes.
 ## Returns {hit: bool, target_hero_id: int, target_object: Node, is_headshot: bool, hit_pos: Vector3, distance: float, arc_points: PackedVector3Array}
 func trace_ballistic_arc(
@@ -223,48 +302,13 @@ func _trace_segment(
 	# 2. Check rewound player hitboxes (or live fallback) closer than wall/vehicle hit
 	var best_hero_id: int = -1
 	var best_headshot: bool = false
-
-	if frame != null:
-		for id_key in frame.entries.keys():
-			var snap: HeroHitboxSnapshot = frame.entries[id_key]
-			if shooter != null and (snap.entity_id == shooter.entity_id or snap.team == shooter.team):
-				continue
-			var live_h: HeroCharacter = heroes_by_id.get(snap.entity_id, null) as HeroCharacter
-			if live_h != null and live_h.current_vehicle_id >= 0 and live_h.current_seat_enclosed:
-				continue
-			var h_res: Dictionary = _hit_test_hero_bounds(
-				seg_start, dir, best_dist,
-				snap.head_center, snap.head_radius,
-				snap.body_bottom, snap.body_top, snap.body_radius
-			)
-			if bool(h_res["hit"]):
-				best_dist = float(h_res["dist"])
-				best_pos = seg_start + dir * best_dist
-				best_hero_id = snap.entity_id
-				best_headshot = bool(h_res["headshot"])
-				hit_object = null
-	else:
-		# Fallback to live hero bounds if buffer hasn't reached target_tick yet
-		for id_key in heroes_by_id.keys():
-			var h: HeroCharacter = heroes_by_id[id_key]
-			if h == null or h.is_defeated:
-				continue
-			if h.current_vehicle_id >= 0 and h.current_seat_enclosed:
-				continue
-			if shooter != null and (h.entity_id == shooter.entity_id or h.team == shooter.team):
-				continue
-			var bnd: Dictionary = _compute_hero_bounds(h)
-			var h_res: Dictionary = _hit_test_hero_bounds(
-				seg_start, dir, best_dist,
-				bnd["head_center"], float(bnd["head_radius"]),
-				bnd["body_bottom"], bnd["body_top"], float(bnd["body_radius"])
-			)
-			if bool(h_res["hit"]):
-				best_dist = float(h_res["dist"])
-				best_pos = seg_start + dir * best_dist
-				best_hero_id = h.entity_id
-				best_headshot = bool(h_res["headshot"])
-				hit_object = null
+	var hero_hit: Dictionary = find_closest_hero_hit_in_frame(shooter, seg_start, dir, best_dist, frame, heroes_by_id)
+	if bool(hero_hit.get("hit", false)):
+		best_dist = float(hero_hit["dist"])
+		best_pos = hero_hit["pos"]
+		best_hero_id = int(hero_hit["hero_id"])
+		best_headshot = bool(hero_hit["headshot"])
+		hit_object = null
 
 	return {
 		"hit": best_hero_id >= 0 or hit_world or hit_object != null,

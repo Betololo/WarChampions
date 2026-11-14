@@ -953,7 +953,7 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 		"Bazooka rocket (y=%.2f, vy=%.2f) and Tank shell (y=%.2f, vy=%.2f) drop along parabolic path" % [rocket.global_position.y, rocket.velocity.y, shell.global_position.y, shell.velocity.y]
 	)
 
-	# 3. Verify all firearm classes have ballistic drop stats and HitscanWeapon emits shot_vfx arcs
+	# 3. Verify all firearm classes have zero bullet gravity (pure hitscan) and HitscanWeapon emits straight shot_vfx arcs
 	var firearm_kinds: Array[int] = [
 		WeaponBase.WeaponKind.SMG,
 		WeaponBase.WeaponKind.MG,
@@ -961,20 +961,34 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 		WeaponBase.WeaponKind.PISTOL,
 		WeaponBase.WeaponKind.SNIPER,
 	]
-	var all_ballistic: bool = true
+	var all_zero_gravity: bool = true
 	for fk in firearm_kinds:
 		var fw := HitscanWeapon.new()
 		fw.configure(shooter, fk, NetworkManager.ARCHETYPE_BALANCED)
-		if fw.bullet_speed_mps <= 0.0 or fw.bullet_gravity_scale <= 0.0:
-			all_ballistic = false
+		if fw.bullet_gravity_scale != 0.0:
+			all_zero_gravity = false
 		if fk == WeaponBase.WeaponKind.SNIPER:
 			fw.spread_rad = 0.0
 			fw.fire_server(InputCmd.new(), {"lag_compensator": lc, "heroes_by_id": {901: shooter}})
 		fw.free()
 	NetworkManager.game_event_received.disconnect(ev_cb)
 
-	_assert(all_ballistic, "All firearm classes (SMG, MG, Shotgun, Pistol, Sniper) configure positive bullet_speed_mps & bullet_gravity_scale")
-	_assert(seen_proj_vfx[0] >= 2 and seen_arcs[0] >= 1, "Projectiles emit proj_vfx (%d) and HitscanWeapon emits curved arcs (%d)" % [seen_proj_vfx[0], seen_arcs[0]])
+	# Test straight pinpoint hitscan hit at long range (150m+) with zero bullet drop
+	var sniper_long := HitscanWeapon.new()
+	sniper_long.configure(shooter, WeaponBase.WeaponKind.SNIPER, NetworkManager.ARCHETYPE_BALANCED)
+	sniper_long.spread_rad = 0.0
+	add_child(sniper_long)
+	var hp_before_high: int = high_target.hp
+	var cmd_long := InputCmd.new()
+	cmd_long.buttons = InputCmd.BTN_AIM
+	cmd_long.aim_pitch = 0.0
+	cmd_long.aim_yaw = 0.0
+	sniper_long.fire_server(cmd_long, {"lag_compensator": lc, "heroes_by_id": {901: shooter, 902: low_target, 903: high_target}})
+	var long_range_hit: bool = high_target.hp < hp_before_high
+	sniper_long.free()
+
+	_assert(all_zero_gravity and long_range_hit, "All firearm classes (SMG, MG, Shotgun, Pistol, Sniper) configure bullet_gravity_scale == 0.0 and hit straight target at 240m (150m+) with zero drop")
+	_assert(seen_proj_vfx[0] >= 2 and seen_arcs[0] >= 1, "Projectiles emit proj_vfx (%d) and HitscanWeapon emits straight shot_vfx arcs (%d)" % [seen_proj_vfx[0], seen_arcs[0]])
 
 	for child in proj_root.get_children():
 		child.free()
@@ -1691,6 +1705,90 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 		close_dot > 0.7 and (aim_scoped["origin"] as Vector3).distance_to(cam_ray_scoped["origin"] as Vector3) < 0.001,
 		"Close-range convergence clamps forward (dot=%.3f) and scoped Sniper fires pinpoint from FPS eye" % close_dot
 	)
+
+	# 5. First-shot & scoped Sniper crosshair alignment at 140m+ with zero drop
+	var target_145 := HeroCharacter.new()
+	target_145.setup_identity(953, "Target145", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(target_145)
+	target_145.set_physics_process(false)
+
+	var cmd_145 := InputCmd.new()
+	cmd_145.aim_yaw = 0.12
+	cmd_145.aim_pitch = -0.01
+	cmd_145.buttons = InputCmd.BTN_AIM
+	var cam_ray_145: Dictionary = HeroCamera.compute_aim_ray(shooter.global_position, cmd_145.aim_yaw, cmd_145.aim_pitch, true, false, false)
+	var pt_145: Vector3 = (cam_ray_145["origin"] as Vector3) + (cam_ray_145["dir"] as Vector3) * 145.0
+	target_145.global_position = pt_145 - Vector3(0.0, 1.35, 0.0)
+
+	heroes[953] = target_145
+	NetworkManager.server_tick = 45
+	lc.record_frame(45, heroes)
+
+	var aim_145: Dictionary = sniper.get_aim_origin_and_dir(cmd_145, space, lc, heroes)
+	var dist_to_ray_145: float = ((pt_145 - (aim_145["origin"] as Vector3)).cross(aim_145["dir"] as Vector3)).length()
+	var hp_before_145: int = target_145.hp
+	sniper.fire_server(cmd_145, {"lag_compensator": lc, "heroes_by_id": heroes})
+	var hit_145: bool = target_145.hp < hp_before_145
+
+	_assert(
+		hit_145 and dist_to_ray_145 < 0.05,
+		"Scoped Sniper crosshair alignment at 145m (140m+) hits target with zero drop (err=%.4fm, hit=%s)" % [dist_to_ray_145, str(hit_145)]
+	)
+
+	# 6. Zero camera recoil pitch kick on firing (screenshake removed)
+	shooter.trigger_weapon_fire_visual(WeaponBase.WeaponKind.SMG, true)
+	_assert(
+		shooter.hero_camera.recoil_pitch_offset == 0.0,
+		"trigger_weapon_fire_visual(..., apply_camera_kick=true) keeps hero_camera.recoil_pitch_offset == 0.0 (zero screenshake)"
+	)
+
+	# 7. Drain magazines + reload -> defeat -> respawn_at restores full magazines and cancels reload
+	for w in shooter.weapons:
+		var wb := w as WeaponBase
+		wb.ammo_in_mag = 1
+		wb.start_reload()
+		_assert(wb.is_reloading, "Weapon %s entered reloading state" % wb.weapon_name)
+
+	shooter.apply_damage_server(9999, 951, false)
+	_assert(shooter.is_defeated and shooter.collision_layer == 0, "Lethal damage defeats hero and clears collision_layer to 0")
+
+	shooter.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	var all_refilled: bool = (shooter.collision_layer == 2)
+	for w in shooter.weapons:
+		var wb := w as WeaponBase
+		if wb.ammo_in_mag != wb.mag_size or wb.is_reloading or wb.reload_timer > 0.0 or wb.cooldown_timer > 0.0 or wb._burst_bloom > 0.0:
+			all_refilled = false
+	_assert(
+		all_refilled,
+		"respawn_at restores all equipped weapons to full ammo_in_mag == mag_size, cancels reload, and restores collision_layer == 2"
+	)
+
+	# 7b. Remote HeroCharacter push_remote_snapshot clears collision_layer on defeat and restores it on alive
+	var remote_hero := HeroCharacter.new()
+	remote_hero.setup_identity(954, "RemoteTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(remote_hero)
+	remote_hero.push_remote_snapshot(50, 1000.0, {"pos": Vector3.ZERO, "yaw": 0.0, "pitch": 0.0, "vel": Vector3.ZERO, "flags": NetSerializer.SNAP_DEFEATED, "hp": 0})
+	_assert(remote_hero.is_defeated and remote_hero.collision_layer == 0, "push_remote_snapshot clears collision_layer=0 on defeated remote hero")
+	remote_hero.push_remote_snapshot(51, 1050.0, {"pos": Vector3.ZERO, "yaw": 0.0, "pitch": 0.0, "vel": Vector3.ZERO, "flags": 0, "hp": 110})
+	_assert(not remote_hero.is_defeated and remote_hero.collision_layer == 2, "push_remote_snapshot restores collision_layer=2 on respawned remote hero")
+	remote_hero.free()
+
+	# 8. First-shot pinpoint accuracy (spread_mult == 0.0 on first shot with non-zero base spread) & burst bloom decay over 0.28s
+	var test_smg := HitscanWeapon.new()
+	test_smg.configure(shooter, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_BALANCED)
+	_assert(test_smg.is_first_shot() and test_smg.spread_rad > 0.02, "SMG starts with non-zero spread_rad (%.3f) and is_first_shot() == true" % test_smg.spread_rad)
+
+	var cmd_fire := InputCmd.new()
+	cmd_fire.buttons = InputCmd.BTN_FIRE
+	var consumed: bool = test_smg.try_consume_fire(cmd_fire)
+	_assert(consumed and test_smg._burst_bloom > 0.15, "try_consume_fire increments _burst_bloom (got %.2f)" % test_smg._burst_bloom)
+
+	var cmd_idle := InputCmd.new()
+	test_smg.step_timers(0.32, cmd_idle)
+	_assert(test_smg._burst_bloom <= 0.001 and test_smg.is_first_shot(), "step_timers over 0.28s decays _burst_bloom to 0.0 (got %.3f) and restores is_first_shot()" % test_smg._burst_bloom)
+	test_smg.free()
+
+	target_145.free()
 
 	close_wall.free()
 	sniper.free()
