@@ -32,6 +32,7 @@ class SeatSlot extends RefCounted:
 	var can_use_skills: bool = false
 	var is_enclosed: bool = false
 	var seat_pose: String = "stand"
+	var follow_turret: bool = false
 
 
 var id: int = 1
@@ -103,7 +104,7 @@ func _build_vehicle_mesh() -> void:
 	pass
 
 
-func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bool, is_enclosed: bool = false, seat_pose: String = "sit") -> void:
+func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bool, is_enclosed: bool = false, seat_pose: String = "sit", follow_turret_flag: bool = false) -> void:
 	var s := SeatSlot.new()
 	s.seat_index = seats.size()
 	s.seat_type = s_type
@@ -112,13 +113,26 @@ func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bo
 	s.can_use_skills = allow_skills
 	s.is_enclosed = is_enclosed
 	s.seat_pose = seat_pose
+	s.follow_turret = follow_turret_flag
 	seats.append(s)
 
 
+func _effective_turret_local_yaw() -> float:
+	return turret_yaw - rotation.y
+
+
+func _seat_local_offset(s: SeatSlot) -> Vector3:
+	if not s.follow_turret:
+		return s.local_offset
+	var piv_xz: Vector3 = Vector3(_turret_node.position.x, 0.0, _turret_node.position.z) if _turret_node != null else Vector3.ZERO
+	return piv_xz + (s.local_offset - piv_xz).rotated(Vector3.UP, _effective_turret_local_yaw())
+
+
 func _seat_world_pos(s: SeatSlot) -> Vector3:
+	var off: Vector3 = _seat_local_offset(s)
 	if is_inside_tree():
-		return to_global(s.local_offset)
-	return transform * s.local_offset
+		return to_global(off)
+	return transform * off
 
 
 func _place_hero_at(hero: HeroCharacter, world_pos: Vector3, vel: Vector3) -> void:
@@ -136,6 +150,18 @@ func _sync_hero_seat_state(hero: HeroCharacter, s: SeatSlot) -> void:
 	hero.current_seat_enclosed = s.is_enclosed
 	hero.current_seat_pose = s.seat_pose
 	hero.current_seat_can_shoot = s.can_shoot
+	if s.follow_turret:
+		_sync_turret_occupant_facing(hero)
+
+
+func _sync_turret_occupant_facing(hero: HeroCharacter) -> void:
+	var cmd: InputCmd = hero.latest_server_input
+	var use_turret_yaw: bool = (cmd == null) or (cmd.tick == 0 and is_zero_approx(cmd.aim_yaw))
+	var target_yaw: float = turret_yaw if use_turret_yaw else cmd.aim_yaw
+	hero.aim_yaw = target_yaw
+	if hero.visual_root != null:
+		hero.visual_root.global_position = hero.global_position if hero.is_inside_tree() else hero.position
+		hero.visual_root.rotation.y = target_yaw
 
 
 func _clear_hero_seat_state(hero: HeroCharacter, eject_pos: Variant = null, eject_vel: Variant = null) -> void:
@@ -205,7 +231,8 @@ func sync_occupants(heroes_by_id: Dictionary, delta: float, context: Dictionary)
 				_clear_hero_seat_state(h)
 			continue
 		_sync_hero_seat_state(h, s)
-		h.aim_yaw = h.latest_server_input.aim_yaw
+		if not s.follow_turret:
+			h.aim_yaw = h.latest_server_input.aim_yaw
 		h.aim_pitch = h.latest_server_input.aim_pitch
 		if s.can_shoot or s.can_use_skills:
 			# Passengers & Wing-Riders freely fire weapons, use skills, and repair with Wrench
@@ -320,6 +347,11 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 	sync_occupants(heroes_by_id, delta, context)
 	var driver: HeroCharacter = get_driver_hero(heroes_by_id)
 	_drive_physics(driver, delta, context)
+	for s in seats:
+		if s.follow_turret and s.occupant_id >= 0:
+			var occ: HeroCharacter = heroes_by_id.get(s.occupant_id, null)
+			if occ != null and not occ.is_defeated:
+				_sync_hero_seat_state(occ, s)
 
 
 func _drive_physics(_driver: HeroCharacter, _delta: float, _context: Dictionary) -> void:
@@ -328,6 +360,11 @@ func _drive_physics(_driver: HeroCharacter, _delta: float, _context: Dictionary)
 
 func _process(delta: float) -> void:
 	var eff_vel: Vector3 = linear_velocity
+	var has_turret_seat: bool = false
+	for s in seats:
+		if s.follow_turret:
+			has_turret_seat = true
+			break
 	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())
 		if sample != null:
@@ -336,9 +373,19 @@ func _process(delta: float) -> void:
 			eff_vel = sample.velocity
 			turret_yaw = sample.turret_yaw
 			if _turret_node != null:
-				_turret_node.rotation.y = turret_yaw - rotation.y
+				_turret_node.rotation.y = _effective_turret_local_yaw()
 	elif _turret_node != null:
-		_turret_node.rotation.y = lerp_angle(_turret_node.rotation.y, turret_yaw - rotation.y, minf(1.0, 12.0 * delta))
+		if has_turret_seat:
+			_turret_node.rotation.y = _effective_turret_local_yaw()
+		else:
+			_turret_node.rotation.y = lerp_angle(_turret_node.rotation.y, _effective_turret_local_yaw(), minf(1.0, 12.0 * delta))
+
+	if has_turret_seat:
+		for s in seats:
+			if s.follow_turret and s.occupant_id >= 0:
+				var th: HeroCharacter = _last_heroes_by_id.get(s.occupant_id, null) as HeroCharacter
+				if th != null and is_instance_valid(th) and not th.is_defeated:
+					_sync_hero_seat_state(th, s)
 
 	if _barrel_pivot != null:
 		var target_pitch: float = clampf(turret_pitch, -0.35, 0.95)

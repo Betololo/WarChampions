@@ -11,7 +11,7 @@ func _setup_vehicle_stats_and_seats() -> void:
 	max_hp = 320
 	hp = 320
 	freeze = true
-	_add_seat(SeatType.GUNNER, Vector3(0.0, 0.88, 0.52), false, false, false, "sit")
+	_add_seat(SeatType.GUNNER, Vector3(0.0, 0.88, 0.52), false, false, false, "sit", true)
 
 
 func _build_vehicle_mesh() -> void:

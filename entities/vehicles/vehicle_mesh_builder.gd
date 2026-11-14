@@ -121,9 +121,49 @@ static func add_wheel(parent: Node3D, radius: float, width: float, pos: Vector3,
 	return wheel
 
 
-static func _add_seat_cushion(parent: Node3D, pos: Vector3, width: float, mat: Material) -> void:
+static func _add_seat_cushion(parent: Node3D, pos: Vector3, width: float, mat: Material, back_h: float = 0.52, back_aft: float = 0.0) -> void:
 	_add_box(parent, Vector3(width, 0.12, 0.48), pos, Vector3.ZERO, mat)
-	_add_box(parent, Vector3(width, 0.52, 0.12), pos + Vector3(0.0, 0.28, 0.22), Vector3(0.14, 0.0, 0.0), mat)
+	_add_box(parent, Vector3(width, back_h, 0.12), pos + Vector3(0.0, back_h * 0.5 + 0.02, 0.22 + back_aft), Vector3(0.14, 0.0, 0.0), mat)
+
+
+static func _make_arch_mesh(rx: float, ry: float, tube_r: float, start_ang: float = -0.65, arc_segs: int = 16, tube_segs: int = 8) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings: Array[Array] = []
+	var centers: Array[Vector3] = []
+	var end_ang: float = PI - start_ang
+	for i in range(arc_segs + 1):
+		var a: float = lerpf(start_ang, end_ang, float(i) / float(arc_segs))
+		var c := Vector3(cos(a) * rx, sin(a) * ry, 0.0)
+		var tang := Vector3(-sin(a) * rx, cos(a) * ry, 0.0).normalized()
+		var n_xy := Vector3(tang.y, -tang.x, 0.0)
+		var ring: Array[Vector3] = []
+		for j in range(tube_segs):
+			var phi: float = TAU * float(j) / float(tube_segs)
+			ring.append(c + n_xy * (cos(phi) * tube_r) + Vector3.BACK * (sin(phi) * tube_r))
+		rings.append(ring)
+		centers.append(c)
+	for i in range(arc_segs):
+		var r0: Array = rings[i]
+		var r1: Array = rings[i + 1]
+		for j in range(tube_segs):
+			var jn: int = (j + 1) % tube_segs
+			st.add_vertex(r0[j])
+			st.add_vertex(r0[jn])
+			st.add_vertex(r1[j])
+			st.add_vertex(r0[jn])
+			st.add_vertex(r1[jn])
+			st.add_vertex(r1[j])
+	for j in range(tube_segs):
+		var jn: int = (j + 1) % tube_segs
+		st.add_vertex(centers[0])
+		st.add_vertex(rings[0][jn])
+		st.add_vertex(rings[0][j])
+		st.add_vertex(centers[arc_segs])
+		st.add_vertex(rings[arc_segs][j])
+		st.add_vertex(rings[arc_segs][jn])
+	st.generate_normals()
+	return st.commit()
 
 
 static func _add_headlight_pod(parent: Node3D, pos: Vector3, radius: float, shell_mat: Material, lens_mat: Material) -> void:
@@ -313,17 +353,23 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	add_part(root, fuse_mesh, Vector3(0.0, 1.02, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), body_mat, "Fuselage")
 	_add_cyl(root, 0.42, 0.48, 0.32, Vector3(0.0, 1.02, -2.68), Vector3(PI * 0.5, 0.0, 0.0), trim_mat, 18, "NoseTrimBand")
 
-	# Translucent tinted bubble glass canopy over pilot (Vector3(0.0, 0.92, -0.15)) + opaque frame arches
+	# Translucent tinted bubble glass canopy over pilot (Vector3(0.0, 0.92, -0.15)) + hollow arch frame hoops
 	var canopy_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-		{"y": -0.92, "z": 0.04, "rx": 0.22, "rz": 0.18, "p": 2.0},
-		{"y": -0.35, "z": 0.34, "rx": 0.44, "rz": 0.48, "p": 2.0},
-		{"y": 0.22, "z": 0.38, "rx": 0.46, "rz": 0.52, "p": 2.0},
-		{"y": 0.72, "z": 0.22, "rx": 0.36, "rz": 0.36, "p": 2.0},
-		{"y": 0.98, "z": 0.04, "rx": 0.14, "rz": 0.12, "p": 2.0},
+		{"y": -0.96, "z": 0.06, "rx": 0.22, "rz": 0.20, "p": 2.0},
+		{"y": -0.38, "z": 0.44, "rx": 0.45, "rz": 0.64, "p": 2.0},
+		{"y": 0.02, "z": 0.46, "rx": 0.47, "rz": 0.66, "p": 2.0},
+		{"y": 0.46, "z": 0.40, "rx": 0.42, "rz": 0.56, "p": 2.0},
+		{"y": 0.86, "z": 0.06, "rx": 0.24, "rz": 0.16, "p": 2.0},
 	], 18)
-	add_part(root, canopy_mesh, Vector3(0.0, 1.42, -0.10), Vector3(-PI * 0.5, 0.0, 0.0), pal["glass_mat"], "CanopyGlass")
-	for fz in [-0.66, 0.28]:
-		_add_cyl(root, 0.44, 0.44, 0.07, Vector3(0.0, 1.54, fz), Vector3(PI * 0.5, 0.0, 0.0), body_mat, 14, "CanopyFrame")
+	add_part(root, canopy_mesh, Vector3(0.0, 1.44, -0.12), Vector3(-PI * 0.5, 0.0, 0.0), pal["glass_mat"], "CanopyGlass")
+	var front_arch: ArrayMesh = _make_arch_mesh(0.43, 0.58, 0.034, -0.65, 16, 8)
+	var rear_arch: ArrayMesh = _make_arch_mesh(0.46, 0.66, 0.036, -0.65, 16, 8)
+	add_part(root, front_arch, Vector3(0.0, 1.84, -0.58), Vector3.ZERO, body_mat, "CanopyFrameFront")
+	add_part(root, rear_arch, Vector3(0.0, 1.88, 0.26), Vector3.ZERO, body_mat, "CanopyFrameRear")
+	_add_box(root, Vector3(0.055, 0.04, 0.465), Vector3(0.0, 2.495, -0.36), Vector3(-0.328, 0.0, 0.0), body_mat, "CanopySpineFront")
+	_add_box(root, Vector3(0.055, 0.04, 0.402), Vector3(0.0, 2.555, 0.06), Vector3(0.075, 0.0, 0.0), body_mat, "CanopySpineRear")
+	for sx in [-1.0, 1.0]:
+		_add_box(root, Vector3(0.055, 0.055, 0.92), Vector3(sx * 0.44, 1.46, -0.16), Vector3.ZERO, body_mat, "CanopySill")
 
 	# Nose spinner + spinning 3-blade propeller
 	var prop := Node3D.new()
@@ -356,16 +402,17 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	var wheels: Array[Node3D] = []
 	for sx in [-1.0, 1.0]:
 		add_part(root, wing_mesh, Vector3(sx * 0.48, 0.88, -0.02), Vector3(0.0, 0.0, -sx * (PI * 0.5 - 0.04)), body_mat, "MainWing")
-		# Wing roundels (Royal) or Balkenkreuz cross medallions (National) + wing gun barrels + exhausts + gear
+		# Wing roundels (Royal) or Balkenkreuz cross medallions (National) tilted flush above dihedral wing surface
+		var mark_rot := Vector3(0.0, 0.0, sx * 0.04)
 		if is_royal:
-			_add_cyl(root, 0.48, 0.48, 0.03, Vector3(sx * 2.85, 1.06, 0.10), Vector3.ZERO, royal_blue_mat, 18, "RoundelOut")
-			_add_cyl(root, 0.32, 0.32, 0.035, Vector3(sx * 2.85, 1.065, 0.10), Vector3.ZERO, white_mat, 18, "RoundelMid")
-			_add_cyl(root, 0.15, 0.15, 0.04, Vector3(sx * 2.85, 1.07, 0.10), Vector3.ZERO, trim_mat, 16, "RoundelCore")
+			_add_cyl(root, 0.48, 0.48, 0.032, Vector3(sx * 2.85, 1.100, 0.10), mark_rot, royal_blue_mat, 18, "RoundelOut")
+			_add_cyl(root, 0.32, 0.32, 0.036, Vector3(sx * 2.85, 1.102, 0.10), mark_rot, white_mat, 18, "RoundelMid")
+			_add_cyl(root, 0.15, 0.15, 0.040, Vector3(sx * 2.85, 1.104, 0.10), mark_rot, trim_mat, 16, "RoundelCore")
 		else:
-			_add_box(root, Vector3(0.84, 0.035, 0.22), Vector3(sx * 2.85, 1.065, 0.10), Vector3.ZERO, white_mat, "CrossH")
-			_add_box(root, Vector3(0.22, 0.035, 0.84), Vector3(sx * 2.85, 1.065, 0.10), Vector3.ZERO, white_mat, "CrossV")
-			_add_box(root, Vector3(0.72, 0.04, 0.12), Vector3(sx * 2.85, 1.07, 0.10), Vector3.ZERO, dark_mat)
-			_add_box(root, Vector3(0.12, 0.04, 0.72), Vector3(sx * 2.85, 1.07, 0.10), Vector3.ZERO, dark_mat)
+			_add_box(root, Vector3(0.84, 0.034, 0.22), Vector3(sx * 2.85, 1.100, 0.10), mark_rot, white_mat, "CrossH")
+			_add_box(root, Vector3(0.22, 0.034, 0.84), Vector3(sx * 2.85, 1.100, 0.10), mark_rot, white_mat, "CrossV")
+			_add_box(root, Vector3(0.72, 0.038, 0.12), Vector3(sx * 2.85, 1.104, 0.10), mark_rot, dark_mat)
+			_add_box(root, Vector3(0.12, 0.038, 0.72), Vector3(sx * 2.85, 1.104, 0.10), mark_rot, dark_mat)
 		_add_cyl(root, 0.04, 0.045, 0.72, Vector3(sx * 1.48, 0.86, -1.02), Vector3(PI * 0.5, 0.0, 0.0), dark_mat, 8, "WingGun")
 		_add_box(root, Vector3(0.14, 0.10, 0.65), Vector3(sx * 0.54, 1.04, -1.85), Vector3.ZERO, dark_mat, "ExhaustRow")
 		_add_cyl(root, 0.055, 0.055, 0.62, Vector3(sx * 1.02, 0.60, -0.82), Vector3(0.24, 0.0, sx * 0.22), steel_mat, 10, "GearStrut")
@@ -398,46 +445,54 @@ static func build_boat_visuals(root: Node3D, team: int) -> Dictionary:
 	var steel_mat: Material = pal["steel_mat"]
 	var wood_mat: Material = pal["wood_mat"]
 
-	# Flared V-hull with extruded pointed bow along -Z (deck rests on top at Y=0.72)
+	# Flared V-hull keeping sheer cleanly beneath WoodDeck (deck top Y=0.76) with contoured closed bow stem
 	var hull_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-		{"y": -3.05, "z": 0.00, "rx": 1.28, "rz": 0.34, "p": 2.6, "col": Color(0.84, 0.84, 0.88), "side_ao": 0.10},
-		{"y": -1.40, "z": 0.00, "rx": 1.44, "rz": 0.36, "p": 2.5, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.10},
-		{"y": 0.40, "z": 0.02, "rx": 1.46, "rz": 0.37, "p": 2.4, "col": Color.WHITE, "side_ao": 0.10},
-		{"y": 1.45, "z": 0.06, "rx": 1.38, "rz": 0.36, "p": 2.3, "col": Color.WHITE, "side_ao": 0.08},
-		{"y": 2.40, "z": 0.16, "rx": 0.92, "rz": 0.34, "p": 1.9, "col": Color.WHITE},
-		{"y": 3.05, "z": 0.28, "rx": 0.36, "rz": 0.28, "p": 1.7, "col": Color.WHITE},
-		{"y": 3.42, "z": 0.38, "rx": 0.08, "rz": 0.20, "p": 1.6, "col": Color(0.95, 0.95, 0.98)},
+		{"y": -3.05, "z": 0.00, "rx": 1.28, "rz": 0.35, "p": 2.8, "col": Color(0.84, 0.84, 0.88), "side_ao": 0.10},
+		{"y": -1.40, "z": 0.00, "rx": 1.44, "rz": 0.36, "p": 2.8, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.10},
+		{"y": 0.40, "z": 0.00, "rx": 1.46, "rz": 0.36, "p": 2.8, "col": Color.WHITE, "side_ao": 0.10},
+		{"y": 1.55, "z": 0.00, "rx": 1.38, "rz": 0.36, "p": 2.7, "col": Color.WHITE, "side_ao": 0.08},
+		{"y": 2.45, "z": 0.01, "rx": 0.94, "rz": 0.35, "p": 2.6, "col": Color.WHITE},
+		{"y": 3.05, "z": 0.02, "rx": 0.48, "rz": 0.34, "p": 2.5, "col": Color.WHITE},
+		{"y": 3.44, "z": 0.05, "rx": 0.19, "rz": 0.30, "p": 2.4, "col": Color(0.95, 0.95, 0.98)},
 	], 18)
-	add_part(root, hull_mesh, Vector3(0.0, 0.36, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), hull_mat, "VHull")
+	add_part(root, hull_mesh, Vector3(0.0, 0.34, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), hull_mat, "VHull")
 
-	# Golden-brown planked wooden deck & side gunwale coaming rails
+	# Golden-brown planked wooden deck & contoured bow/stern gunwale coaming rails
 	var deck_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-		{"y": -2.98, "rx": 1.22, "rz": 0.04, "p": 3.2, "col": Color(0.95, 0.95, 0.95)},
-		{"y": 0.40, "rx": 1.38, "rz": 0.04, "p": 3.0, "col": Color.WHITE},
-		{"y": 1.45, "rx": 1.30, "rz": 0.04, "p": 2.6, "col": Color.WHITE},
-		{"y": 2.40, "rx": 0.84, "rz": 0.04, "p": 2.1, "col": Color.WHITE},
-		{"y": 3.12, "rx": 0.16, "rz": 0.04, "p": 1.8, "col": Color.WHITE},
+		{"y": -2.98, "rx": 1.24, "rz": 0.04, "p": 3.2, "col": Color(0.95, 0.95, 0.95)},
+		{"y": 0.40, "rx": 1.38, "rz": 0.04, "p": 3.2, "col": Color.WHITE},
+		{"y": 1.55, "rx": 1.31, "rz": 0.04, "p": 3.0, "col": Color.WHITE},
+		{"y": 2.45, "rx": 0.88, "rz": 0.04, "p": 2.7, "col": Color.WHITE},
+		{"y": 3.24, "rx": 0.14, "rz": 0.04, "p": 2.3, "col": Color.WHITE},
 	], 16)
 	add_part(root, deck_mesh, Vector3(0.0, 0.72, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, "WoodDeck")
 	for sx in [-1.0, 1.0]:
-		_add_box(root, Vector3(0.14, 0.36, 4.38), Vector3(sx * 1.38, 0.90, 0.79), Vector3.ZERO, wood_mat, "Gunwale")
-		_add_box(root, Vector3(0.14, 0.34, 1.91), Vector3(sx * 0.87, 0.92, -2.21), Vector3(0.0, sx * 0.563, 0.0), wood_mat, "BowGunwale")
-		_add_box(root, Vector3(0.08, 0.12, 4.42), Vector3(sx * 1.46, 0.68, 0.76), Vector3.ZERO, trim_mat, "TeamStripe")
+		_add_box(root, Vector3(0.14, 0.36, 4.57), Vector3(sx * 1.36, 0.90, 0.735), Vector3.ZERO, wood_mat, "Gunwale")
+		_add_box(root, Vector3(0.14, 0.35, 1.08), Vector3(sx * 1.11, 0.91, -2.00), Vector3(0.0, sx * 0.507, 0.0), wood_mat, "BowGunwale")
+		_add_box(root, Vector3(0.14, 0.34, 1.18), Vector3(sx * 0.47, 0.92, -2.865), Vector3(0.0, sx * 0.754, 0.0), wood_mat, "BowGunwaleTip")
+		_add_box(root, Vector3(0.08, 0.12, 4.50), Vector3(sx * 1.46, 0.68, 0.70), Vector3.ZERO, trim_mat, "TeamStripe")
+	_add_box(root, Vector3(0.22, 0.38, 0.22), Vector3(0.0, 0.88, -3.28), Vector3(0.0, PI * 0.25, 0.0), wood_mat, "BowStem")
+	_add_box(root, Vector3(2.60, 0.36, 0.14), Vector3(0.0, 0.90, 2.98), Vector3.ZERO, wood_mat, "SternTransom")
 
-	# Armored wheelhouse framing the enclosed helmsman (0.0, 0.85, 0.35) + wrap-around tinted glass
-	_add_box(root, Vector3(1.88, 0.68, 0.14), Vector3(0.0, 1.08, -0.34), Vector3.ZERO, cabin_mat, "CabinFrontWall")
+	# Extended armored wheelhouse giving helmsman (0.0, 0.85, 0.35) full seated legroom behind CabinFrontWall
+	_add_box(root, Vector3(1.88, 0.68, 0.14), Vector3(0.0, 1.08, -0.62), Vector3.ZERO, cabin_mat, "CabinFrontWall")
 	_add_box(root, Vector3(1.88, 0.68, 0.14), Vector3(0.0, 1.08, 1.04), Vector3.ZERO, cabin_mat, "CabinRearWall")
 	for sx in [-1.0, 1.0]:
-		_add_box(root, Vector3(0.14, 0.68, 1.38), Vector3(sx * 0.87, 1.08, 0.35), Vector3.ZERO, cabin_mat, "CabinSideWall")
-		for pz in [-0.28, 0.98]:
+		_add_box(root, Vector3(0.14, 0.68, 1.66), Vector3(sx * 0.87, 1.08, 0.21), Vector3.ZERO, cabin_mat, "CabinSideWall")
+		for pz in [-0.56, 0.98]:
 			_add_box(root, Vector3(0.12, 0.88, 0.12), Vector3(sx * 0.86, 1.86, pz), Vector3.ZERO, cabin_mat, "CabinPillar")
-	_add_box(root, Vector3(1.66, 0.78, 0.04), Vector3(0.0, 1.84, -0.30), Vector3(-0.12, 0.0, 0.0), pal["glass_mat"], "HelmWindshield")
+	_add_box(root, Vector3(1.66, 0.78, 0.04), Vector3(0.0, 1.84, -0.58), Vector3(-0.12, 0.0, 0.0), pal["glass_mat"], "HelmWindshield")
 	for sx in [-1.0, 1.0]:
-		_add_box(root, Vector3(0.04, 0.76, 1.16), Vector3(sx * 0.86, 1.84, 0.35), Vector3.ZERO, pal["glass_mat"], "HelmSideGlass")
-	_add_box(root, Vector3(2.02, 0.14, 1.62), Vector3(0.0, 2.34, 0.36), Vector3.ZERO, cabin_mat, "CabinRoof")
-	_add_box(root, Vector3(2.06, 0.07, 1.66), Vector3(0.0, 2.38, 0.36), Vector3.ZERO, trim_mat)
-	_add_cyl(root, 0.02, 0.03, 1.15, Vector3(0.0, 2.95, 0.55), Vector3.ZERO, steel_mat, 8, "Mast")
-	_add_headlight_pod(root, Vector3(0.0, 2.52, -0.32), 0.12, steel_mat, pal["headlight_mat"])
+		_add_box(root, Vector3(0.04, 0.76, 1.42), Vector3(sx * 0.86, 1.84, 0.21), Vector3.ZERO, pal["glass_mat"], "HelmSideGlass")
+	_add_box(root, Vector3(2.02, 0.14, 1.90), Vector3(0.0, 2.34, 0.21), Vector3.ZERO, cabin_mat, "CabinRoof")
+	_add_box(root, Vector3(2.06, 0.07, 1.94), Vector3(0.0, 2.38, 0.21), Vector3.ZERO, trim_mat)
+	_add_cyl(root, 0.02, 0.03, 1.15, Vector3(0.0, 2.95, 0.45), Vector3.ZERO, steel_mat, 8, "Mast")
+	_add_headlight_pod(root, Vector3(0.0, 2.52, -0.58), 0.12, steel_mat, pal["headlight_mat"])
+	_add_cyl(root, 0.035, 0.035, 0.36, Vector3(0.0, 1.16, -0.40), Vector3(0.85, 0.0, 0.0), pal["dark_metal"], 8, "HelmCol")
+	var helm_wheel := TorusMesh.new()
+	helm_wheel.inner_radius = 0.16
+	helm_wheel.outer_radius = 0.20
+	add_part(root, helm_wheel, Vector3(0.0, 1.28, -0.26), Vector3(0.85, 0.0, 0.0), pal["dark_metal"], "HelmWheel")
 
 	# Red & white lifebuoy rings mounted on cabin flanks + forward/stern crew benches
 	var buoy_mesh := TorusMesh.new()
@@ -503,7 +558,7 @@ static func build_aa_visuals(root: Node3D, team: int) -> Dictionary:
 		_add_box(turret, Vector3(0.14, 0.72, 0.44), Vector3(sx * 0.38, 0.54, -0.08), Vector3.ZERO, armor_hi, "TrunnionArm")
 		_add_box(turret, Vector3(0.46, 0.94, 0.09), Vector3(sx * 0.56, 0.70, -0.32), Vector3(0.20, sx * -0.18, 0.0), armor_mat, "GunShield")
 		_add_box(turret, Vector3(0.46, 0.10, 0.10), Vector3(sx * 0.56, 1.08, -0.39), Vector3(0.20, sx * -0.18, 0.0), trim_mat, "ShieldStripe")
-	_add_seat_cushion(turret, Vector3(0.0, 0.34, 0.52), 0.50, pal["leather_mat"])
+	_add_seat_cushion(turret, Vector3(0.0, 0.32, 0.56), 0.50, pal["leather_mat"], 0.28, 0.10)
 	_add_cyl(turret, 0.18, 0.18, 0.06, Vector3(0.48, 0.56, 0.24), Vector3(0.0, 0.0, PI * 0.5), steel_mat, 12, "TraverseWheel")
 
 	var barrel_piv := Node3D.new()

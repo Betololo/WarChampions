@@ -1089,7 +1089,48 @@ func _test_vehicle_sculpted_models_and_animations() -> void:
 	_assert(absf(jeep._wheels[0].rotation.x) > 1.0, "VehicleJeep._process rotates wheels proportional to forward speed (rot.x=%.2f rad)" % jeep._wheels[0].rotation.x)
 	_assert(absf(aa._barrel_pivot.rotation.x - 0.45) < 0.02 and absf(tank._barrel_pivot.rotation.x - 0.25) < 0.02, "AAGun & VehicleTank _barrel_pivot smoothly track clamped turret_pitch")
 
-	# 5. Verify VehicleBase parachute bit clear on board & remote snapshot collision_layer sync
+	# 5. Verify AAGun gunner seat rotates cleanly with turret_yaw around turret pivot
+	var aa_gunner := HeroCharacter.new()
+	aa_gunner.setup_identity(961, "AAGunner", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(aa_gunner)
+	var seat_pos_0: Vector3 = aa._seat_world_pos(aa.seats[0])
+	aa.try_enter_hero(aa_gunner)
+	aa.turret_yaw = PI * 0.75
+	aa.sync_occupants({961: aa_gunner}, 0.016, {})
+	aa._process(0.016)
+	var seat_pos_135: Vector3 = aa._seat_world_pos(aa.seats[0])
+	var expected_pos_135: Vector3 = aa.global_position + Vector3(0.0, 0.88, 0.52).rotated(Vector3.UP, PI * 0.75)
+	_assert(
+		aa.seats[0].follow_turret and seat_pos_0.distance_to(seat_pos_135) > 0.7 and seat_pos_135.distance_to(expected_pos_135) < 0.01 and aa_gunner.global_position.distance_to(expected_pos_135) < 0.01 and absf(aa_gunner.aim_yaw - PI * 0.75) < 0.02,
+		"AAGun gunner seat orbits behind turret shield cleanly at turret_yaw=135 deg"
+	)
+	aa.exit_hero(aa_gunner)
+	aa_gunner.free()
+
+	# 6. Verify Plane hollow canopy frame arches, raised crown & tilted wing insignia, plus Boat foredeck/cabin clearance
+	var canopy_front := plane._visual_root.get_node_or_null("CanopyFrameFront") as MeshInstance3D
+	var canopy_glass := plane._visual_root.get_node_or_null("CanopyGlass") as MeshInstance3D
+	var royal_roundel := plane._visual_root.get_node_or_null("RoundelOut") as MeshInstance3D
+	var plane_nat := VehiclePlane.new()
+	plane_nat.id = 96
+	plane_nat.team = NetworkManager.TEAM_NATIONAL
+	add_child(plane_nat)
+	var nat_cross := plane_nat._visual_root.get_node_or_null("CrossH") as MeshInstance3D
+	var glass_top_y: float = canopy_glass.position.y + canopy_glass.get_aabb().end.z if canopy_glass != null else 0.0
+	_assert(
+		canopy_front != null and canopy_front.mesh is ArrayMesh and glass_top_y >= 2.48 and royal_roundel != null and absf(royal_roundel.rotation.z) >= 0.039 and royal_roundel.position.y >= 1.095 and nat_cross != null and absf(nat_cross.rotation.z) >= 0.039,
+		"VehiclePlane uses hollow canopy arches, raised bubble crown (%.2fm), and dihedral wing insignia" % glass_top_y
+	)
+	plane_nat.free()
+
+	var cabin_front := boat._visual_root.get_node_or_null("CabinFrontWall") as MeshInstance3D
+	var bow_stem := boat._visual_root.get_node_or_null("BowStem") as MeshInstance3D
+	_assert(
+		cabin_front != null and cabin_front.position.z <= -0.55 and bow_stem != null,
+		"VehicleBoat clears helmsman cabin legroom (z=%.2f) and closes BowStem" % (cabin_front.position.z if cabin_front != null else 0.0)
+	)
+
+	# 7. Verify VehicleBase parachute bit clear on board & remote snapshot collision_layer sync
 	var flyer := HeroCharacter.new()
 	flyer.setup_identity(960, "Flyer", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
 	add_child(flyer)
