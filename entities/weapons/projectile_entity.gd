@@ -339,38 +339,44 @@ func _detonate() -> void:
 			var h: HeroCharacter = heroes_by_id[id_key]
 			if h == null or h.is_defeated:
 				continue
-			# Friendly fire off except minor self-knockback
+			# ZERO friendly fire: teammates take 0 damage and 0 knockback
 			if h.team == owner_team and h.entity_id != owner_id:
 				continue
 			var dist: float = h.global_position.distance_to(global_position)
 			if dist <= splash_radius:
 				var falloff: float = clampf(1.0 - (dist / splash_radius) * 0.75, 0.25, 1.0)
-				var dmg: int = maxi(1, int(roundf(base_damage * falloff)))
+				var diff_with_lift: Vector3 = h.global_position - global_position + Vector3(0.0, 0.9, 0.0)
+				if diff_with_lift.length_squared() < 0.001:
+					diff_with_lift = Vector3.UP
+				var kb_dir: Vector3 = diff_with_lift.normalized()
+
 				if h.entity_id == owner_id:
-					dmg = int(roundf(float(dmg) * 0.35))
-				var dealt: int = h.apply_damage_server(dmg, owner_id, true)
-				if dealt <= 0:
-					continue
-				var kb_dir: Vector3 = (h.global_position - global_position + Vector3(0.0, 0.75, 0.0)).normalized()
-				h.apply_knockback(kb_dir * knockback_force * falloff)
+					# ZERO self-damage, full radial self-knockback for rocket jumping
+					h.apply_knockback(kb_dir * knockback_force * falloff)
+				else:
+					# Enemies: deal damage AND always apply strong radial knockback
+					var dmg: int = maxi(1, int(roundf(base_damage * falloff)))
+					var dealt: int = h.apply_damage_server(dmg, owner_id, true)
+					var enemy_kb: float = maxf(16.0, knockback_force)
+					h.apply_knockback(kb_dir * enemy_kb * falloff)
 
-				if apply_keg_slow and h.team != owner_team and h.status_effects != null and h.status_effects.has_method("apply_concussion_slow"):
-					h.status_effects.apply_concussion_slow(0.55, 3.5)
+					if apply_keg_slow and h.status_effects != null and h.status_effects.has_method("apply_concussion_slow"):
+						h.status_effects.apply_concussion_slow(0.55, 3.5)
 
-				var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
-				if h.team != owner_team:
-					if xp_cb.is_valid():
-						var attacker: HeroCharacter = heroes_by_id.get(owner_id, null)
-						if attacker != null:
-							xp_cb.call(attacker, h, dealt)
-					NetworkManager.broadcast_game_event("hit_vfx", {
-						"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
-						"kind": "spark",
-						"attacker_id": owner_id,
-						"victim_id": h.entity_id,
-						"damage": dmg,
-						"headshot": true,
-					})
+					if dealt > 0:
+						var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
+						if xp_cb.is_valid():
+							var attacker: HeroCharacter = heroes_by_id.get(owner_id, null)
+							if attacker != null:
+								xp_cb.call(attacker, h, dealt)
+						NetworkManager.broadcast_game_event("hit_vfx", {
+							"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
+							"kind": "spark",
+							"attacker_id": owner_id,
+							"victim_id": h.entity_id,
+							"damage": dmg,
+							"headshot": true,
+						})
 
 		# Splash damage against vehicles & destructible props
 		if is_inside_tree():

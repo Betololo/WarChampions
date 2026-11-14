@@ -28,6 +28,7 @@ func _ready() -> void:
 	_test_vehicle_sculpted_models_and_animations()
 	await _test_hud_crosshair_and_aim_convergence()
 	await _test_sfx_priority_and_bot_anti_wallhack()
+	_test_parachute_delay_death_collapse_and_knockback()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -142,9 +143,20 @@ func _test_hero_prediction_reconciliation_and_parachute() -> void:
 		hero.simulate_movement(cmd, dt)
 		hero.input_buffer.push(t, cmd, hero.global_position, hero.velocity, hero.is_parachuting, hero.is_crouching, false, pre_jump)
 
-	_assert(hero.is_parachuting, "Infinite parachute deploys mid-air when Jump is pressed")
+	_assert(not hero.is_parachuting, "Parachute cannot deploy when fall time < 1.0s")
 
-	# Simulate server knockback divergence at tick 3 and verify reconciliation replays ticks 4..5
+	# Advance fall time past 1.0s and verify parachute deploys on Jump
+	hero._airborne_fall_time = 1.05
+	var jump_cmd := InputCmd.new()
+	jump_cmd.tick = 6
+	jump_cmd.set_button(InputCmd.BTN_JUMP, true)
+	var pre_j: bool = hero.prev_jump_held
+	hero.local_tick = 6
+	hero.simulate_movement(jump_cmd, dt)
+	hero.input_buffer.push(6, jump_cmd, hero.global_position, hero.velocity, hero.is_parachuting, hero.is_crouching, false, pre_j)
+	_assert(hero.is_parachuting, "Infinite parachute deploys mid-air when Jump is pressed after 1.0s fall")
+
+	# Simulate server knockback divergence at tick 3 and verify reconciliation replays ticks 4..6
 	var pos_before: Vector3 = hero.global_position
 	hero.reconcile_with_server({
 		"ack_tick": 3,
@@ -599,7 +611,9 @@ func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
 
 	h.global_position = Vector3(0.0, 25.0, 0.0)
 	h.velocity = Vector3(0.0, -18.0, 0.0)
-	_assert(h.can_open_parachute(), "Airborne falling hero reports can_open_parachute() == true")
+	_assert(not h.can_open_parachute(), "Airborne hero without 1.0s fall delay reports can_open_parachute() == false")
+	h._airborne_fall_time = 1.05
+	_assert(h.can_open_parachute(), "Airborne falling hero >= 1.0s reports can_open_parachute() == true")
 
 	var start_hp: int = h.hp
 	h._was_airborne = true
@@ -1867,6 +1881,189 @@ func _test_sfx_priority_and_bot_anti_wallhack() -> void:
 
 	remove_child(test_host)
 	test_host.free()
+
+
+func _test_parachute_delay_death_collapse_and_knockback() -> void:
+	# 1. Parachute Fall Delay: Flat Jump (<1.0s) vs High Fall (>=1.0s)
+	var p_hero := HeroCharacter.new()
+	p_hero.setup_identity(901, "ParaTester", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(p_hero)
+	p_hero.global_position = Vector3(0.0, 1.2, 0.0)
+	p_hero.velocity = Vector3(0.0, -4.0, 0.0)
+	p_hero._airborne_fall_time = 0.40 # Simulated flat jump fall time well under 1.0s
+	_assert(not p_hero.can_open_parachute(), "Flat jump (0.4s fall < 1.0s) reports can_open_parachute() == false")
+	var jump_cmd := InputCmd.new()
+	jump_cmd.set_button(InputCmd.BTN_JUMP, true)
+	p_hero.simulate_movement(jump_cmd, 1.0 / 60.0)
+	_assert(not p_hero.is_parachuting, "Pressing Jump under 1.0s fall does NOT deploy parachute")
+
+	p_hero.global_position = Vector3(0.0, 50.0, 0.0)
+	p_hero.velocity = Vector3(0.0, -10.0, 0.0)
+	p_hero._airborne_fall_time = 1.05
+	_assert(p_hero.can_open_parachute(), "Cliff/sky fall (fall time >= 1.05s) reports can_open_parachute() == true")
+	p_hero.prev_jump_held = false
+	p_hero.simulate_movement(jump_cmd, 1.0 / 60.0)
+	_assert(p_hero.is_parachuting, "Pressing Jump after >= 1.0s fall deploys parachute")
+	p_hero.free()
+
+	# 2. Defeated Non-Sliding Collapse & Multi-Stage Defeat Pose
+	var d_hero := HeroCharacter.new()
+	d_hero.setup_identity(902, "CollapseTester", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(d_hero)
+	d_hero.global_position = Vector3(0.0, 0.0, 0.0)
+	d_hero.velocity = Vector3(14.0, 0.0, -9.0)
+	var start_pos: Vector3 = d_hero.global_position
+	d_hero.apply_damage_server(999, -1, false)
+	_assert(d_hero.is_defeated, "Hero is defeated by lethal damage")
+
+	var idle_cmd := InputCmd.new()
+	for i in range(15):
+		d_hero.simulate_movement(idle_cmd, 1.0 / 60.0)
+
+	var drift_dist: float = Vector2(d_hero.global_position.x - start_pos.x, d_hero.global_position.z - start_pos.z).length()
+	_assert(
+		drift_dist < 0.55 and absf(d_hero.velocity.x) < 0.05 and absf(d_hero.velocity.z) < 0.05,
+		"Defeated hero comes to non-sliding halt (drift=%.3fm < 0.55m, vel=(%.2f, %.2f))" % [drift_dist, d_hero.velocity.x, d_hero.velocity.z]
+	)
+
+	d_hero._animate_character(0.7)
+	_assert(
+		d_hero._hips_pivot.rotation.x <= -0.85,
+		"Defeated collapse animation lays torso down flat onto turf (_hips_pivot.rot.x=%.3f <= -0.85)" % d_hero._hips_pivot.rotation.x
+	)
+	d_hero.free()
+
+	# 3. Explosives Zero-Friendly-Fire & Self/Enemy Knockback
+	var shooter := HeroCharacter.new()
+	shooter.setup_identity(910, "Shooter", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var teammate := HeroCharacter.new()
+	teammate.setup_identity(911, "Teammate", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var enemy := HeroCharacter.new()
+	enemy.setup_identity(912, "Enemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+
+	add_child(shooter)
+	add_child(teammate)
+	add_child(enemy)
+
+	var heroes_map: Dictionary = {
+		910: shooter,
+		911: teammate,
+		912: enemy,
+	}
+	var exp_ctx: Dictionary = {"heroes_by_id": heroes_map}
+
+	# --- 3A. Bazooka Rocket ---
+	shooter.global_position = Vector3(0.0, 0.0, 0.0)
+	shooter.velocity = Vector3.ZERO
+	shooter.hp = shooter.max_hp
+	teammate.global_position = Vector3(1.2, 0.0, 0.0)
+	teammate.velocity = Vector3.ZERO
+	teammate.hp = teammate.max_hp
+	enemy.global_position = Vector3(0.0, 0.0, 1.2)
+	enemy.velocity = Vector3.ZERO
+	enemy.hp = enemy.max_hp
+
+	var rocket := ProjectileEntity.new()
+	rocket.setup(ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET, shooter.entity_id, shooter.team, Vector3(0.0, 0.0, 0.0), Vector3.ZERO, exp_ctx)
+	add_child(rocket)
+	rocket._detonate()
+
+	_assert(
+		teammate.hp == teammate.max_hp and teammate.velocity.length() < 0.01,
+		"Bazooka blast deals 0 damage and 0 knockback to teammate"
+	)
+	_assert(
+		shooter.hp == shooter.max_hp and shooter.velocity.length() >= 8.0,
+		"Bazooka blast deals 0 self-damage (hp=%d/%d) and imparts strong self-knockback (vel=%.2f >= 8.0)" % [shooter.hp, shooter.max_hp, shooter.velocity.length()]
+	)
+	_assert(
+		enemy.hp < enemy.max_hp and enemy.velocity.length() >= 8.0,
+		"Bazooka blast damages enemy (%d -> %d) and imparts strong knockback (vel=%.2f >= 8.0)" % [enemy.max_hp, enemy.hp, enemy.velocity.length()]
+	)
+
+	var s_start: Vector3 = shooter.global_position
+	var e_start: Vector3 = enemy.global_position
+	for i in range(10):
+		shooter.simulate_movement(idle_cmd, 1.0 / 60.0)
+		enemy.simulate_movement(idle_cmd, 1.0 / 60.0)
+	_assert(
+		shooter.global_position.distance_to(s_start) >= 1.5 and enemy.global_position.distance_to(e_start) >= 1.5,
+		"Bazooka knockback visibly launches shooter (%.2fm) and enemy (%.2fm) >= 1.5m over 10 ticks" % [shooter.global_position.distance_to(s_start), enemy.global_position.distance_to(e_start)]
+	)
+
+	# --- 3B. Red Barrel ---
+	shooter.global_position = Vector3(0.0, 0.0, 0.0)
+	shooter.velocity = Vector3.ZERO
+	shooter.hp = shooter.max_hp
+	teammate.global_position = Vector3(1.2, 0.0, 0.0)
+	teammate.velocity = Vector3.ZERO
+	teammate.hp = teammate.max_hp
+	enemy.global_position = Vector3(0.0, 0.0, 1.2)
+	enemy.velocity = Vector3.ZERO
+	enemy.hp = enemy.max_hp
+
+	var barrel := DestructibleProp.new()
+	barrel.setup(DestructibleProp.PropKind.RED_BARREL, Vector3(0.0, 0.0, 0.0), 0.0, exp_ctx)
+	add_child(barrel)
+	barrel.apply_damage_server(999, shooter.entity_id, Vector3.FORWARD, barrel.global_position, true)
+
+	_assert(
+		teammate.hp == teammate.max_hp and teammate.velocity.length() < 0.01,
+		"Red Barrel explosion deals 0 damage and 0 knockback to teammate"
+	)
+	_assert(
+		shooter.hp == shooter.max_hp and shooter.velocity.length() >= 8.0,
+		"Red Barrel deals 0 self-damage (hp=%d/%d) and imparts strong self-knockback (vel=%.2f >= 8.0)" % [shooter.hp, shooter.max_hp, shooter.velocity.length()]
+	)
+	_assert(
+		enemy.hp < enemy.max_hp and enemy.velocity.length() >= 8.0,
+		"Red Barrel damages enemy (%d -> %d) and imparts strong knockback (vel=%.2f >= 8.0)" % [enemy.max_hp, enemy.hp, enemy.velocity.length()]
+	)
+
+	s_start = shooter.global_position
+	e_start = enemy.global_position
+	for i in range(10):
+		shooter.simulate_movement(idle_cmd, 1.0 / 60.0)
+		enemy.simulate_movement(idle_cmd, 1.0 / 60.0)
+	_assert(
+		shooter.global_position.distance_to(s_start) >= 1.5 and enemy.global_position.distance_to(e_start) >= 1.5,
+		"Red Barrel knockback visibly launches shooter (%.2fm) and enemy (%.2fm) >= 1.5m over 10 ticks" % [shooter.global_position.distance_to(s_start), enemy.global_position.distance_to(e_start)]
+	)
+	barrel.free()
+
+	# --- 3C. Soldier Blasting Strike ---
+	shooter.global_position = Vector3(0.0, 0.0, 0.0)
+	shooter.velocity = Vector3.ZERO
+	teammate.global_position = Vector3(2.5, 0.0, 0.0)
+	teammate.velocity = Vector3.ZERO
+	teammate.hp = teammate.max_hp
+	enemy.global_position = Vector3(0.0, 0.0, 2.5)
+	enemy.velocity = Vector3.ZERO
+	enemy.hp = enemy.max_hp
+
+	var sm_cmd := InputCmd.new()
+	var strike_ok: bool = shooter.skill_manager._execute_class_skill(3, 0, sm_cmd, exp_ctx)
+	_assert(strike_ok, "Soldier Blasting Strike skill executes cleanly")
+	_assert(
+		teammate.hp == teammate.max_hp and teammate.velocity.length() < 0.01,
+		"Blasting Strike deals 0 damage and 0 knockback to ally"
+	)
+	_assert(
+		enemy.hp < enemy.max_hp and enemy.velocity.length() >= 8.0 and enemy.velocity.y >= 6.5,
+		"Blasting Strike damages enemy and imparts strong knockback with upward lift (vel=%.2f, vy=%.2f >= 6.5)" % [enemy.velocity.length(), enemy.velocity.y]
+	)
+
+	e_start = enemy.global_position
+	for i in range(10):
+		enemy.simulate_movement(idle_cmd, 1.0 / 60.0)
+	_assert(
+		enemy.global_position.distance_to(e_start) >= 1.5,
+		"Blasting Strike knockback visibly launches enemy %.2fm >= 1.5m over 10 ticks" % enemy.global_position.distance_to(e_start)
+	)
+
+	shooter.free()
+	teammate.free()
+	enemy.free()
 
 
 func _test_scene_compile_and_load() -> void:

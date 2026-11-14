@@ -93,14 +93,34 @@ func _break_prop(attacker_id: int) -> void:
 	_col.disabled = true
 	if kind == PropKind.RED_BARREL:
 		var heroes_by_id: Dictionary = _context.get("heroes_by_id", {})
+		var attacker_hero: HeroCharacter = heroes_by_id.get(attacker_id, null) as HeroCharacter
+		var attacker_team: int = attacker_hero.team if attacker_hero != null else -1
+
 		for id_key in heroes_by_id.keys():
 			var h: HeroCharacter = heroes_by_id[id_key]
-			if h != null and not h.is_defeated:
-				var d: float = h.global_position.distance_to(global_position)
-				if d <= 6.5:
-					var dmg: int = int(roundf(75.0 * clampf(1.0 - d / 7.0, 0.25, 1.0)))
+			if h == null or h.is_defeated:
+				continue
+			var d: float = h.global_position.distance_to(global_position)
+			if d <= 6.5:
+				var falloff: float = clampf(1.0 - d / 7.0, 0.25, 1.0)
+				# Teammates take 0 damage and 0 knockback
+				if attacker_team >= 0 and h.team == attacker_team and h.entity_id != attacker_id:
+					continue
+
+				var diff_with_lift: Vector3 = h.global_position - global_position + Vector3(0.0, 0.9, 0.0)
+				if diff_with_lift.length_squared() < 0.001:
+					diff_with_lift = Vector3.UP
+				var kb_dir: Vector3 = diff_with_lift.normalized()
+				var kb_impulse: Vector3 = kb_dir * 16.0 * falloff
+
+				if h.entity_id == attacker_id:
+					# ZERO self-damage, full radial self-knockback with upward lift
+					h.apply_knockback(kb_impulse)
+				else:
+					# Enemy / unowned
+					var dmg: int = int(roundf(75.0 * falloff))
 					h.apply_damage_server(dmg, attacker_id, true)
-					h.apply_knockback((h.global_position - global_position + Vector3(0.0, 0.7, 0.0)).normalized() * 12.0)
+					h.apply_knockback(kb_impulse)
 		NetworkManager.broadcast_game_event("explosion_vfx", {"pos": global_position, "radius": 6.5, "kind": 77})
 	else:
 		NetworkManager.broadcast_game_event("hit_vfx", {"pos": global_position + Vector3(0.0, 0.6, 0.0), "kind": "dust"})

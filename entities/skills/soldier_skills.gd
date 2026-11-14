@@ -56,15 +56,17 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 		3: # Blasting Strike: Shockwave with massive knockback on enemies & light vehicles
 			var blast_radius: float = 8.0 + float(rank) * 1.0
 			var blast_dmg: int = 10 + rank * 4
-			var kb_power: float = 15.0 + float(rank) * 3.0
+			var kb_power: float = maxf(16.0, 16.0 + float(rank) * 3.0)
 			for id_key in heroes_by_id.keys():
 				var enemy: HeroCharacter = heroes_by_id[id_key]
 				if enemy != null and not enemy.is_defeated and enemy.team != owner_hero.team:
 					var diff: Vector3 = enemy.global_position - owner_hero.global_position
 					if diff.length() <= blast_radius:
 						enemy.apply_damage_server(blast_dmg, owner_hero.entity_id, false)
-						var dir: Vector3 = (diff.normalized() + Vector3(0.0, 0.65, 0.0)).normalized()
-						enemy.apply_knockback(dir * kb_power)
+						var horiz: Vector3 = Vector3(diff.x, 0.0, diff.z)
+						var horiz_dir: Vector3 = horiz.normalized() if horiz.length_squared() > 0.001 else Vector3.FORWARD
+						var kb_impulse: Vector3 = horiz_dir * kb_power + Vector3(0.0, maxf(6.5, kb_power * 0.45), 0.0)
+						enemy.apply_knockback(kb_impulse)
 						NetworkManager.broadcast_game_event("hit_vfx", {
 							"pos": enemy.global_position + Vector3(0.0, 1.75, 0.0),
 							"kind": "spark",

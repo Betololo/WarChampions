@@ -15,6 +15,7 @@ const GRAVITY: float = 22.0
 const JUMP_VELOCITY: float = 8.8
 const PARACHUTE_MAX_FALL: float = -3.8
 const PARACHUTE_GLIDE_SPEED_MULT: float = 1.25
+const PARACHUTE_MIN_FALL_TIME: float = 1.0
 const CROUCH_SPEED_MULT: float = 0.58
 const WATER_LEVEL: float = 0.0
 const RECONCILE_THRESHOLD_METERS: float = 0.05
@@ -64,6 +65,9 @@ var last_killer_id: int = -1
 var defeat_explosive: bool = false
 var _max_air_fall_speed: float = 0.0
 var _was_airborne: bool = false
+@export var _airborne_fall_time: float = 0.0
+@export var _knockback_stun_timer: float = 0.0
+@export var _defeat_elapsed: float = 0.0
 
 ## Networking & Prediction
 var local_tick: int = 0
@@ -685,24 +689,39 @@ func _animate_character(delta: float) -> void:
 		_parachute_rig.visible = is_parachuting and not is_defeated
 	if _defeat_prop != null:
 		_defeat_prop.visible = is_defeated
-		if is_defeated:
-			_defeat_prop.rotation.y += 4.0 * delta
 
 	_weapon_recoil_anim = maxf(0.0, _weapon_recoil_anim - 7.5 * delta)
 	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
 
 	if is_defeated:
-		_hips_pivot.position.y = 0.35
-		_hips_pivot.rotation.x = -0.55 if not defeat_explosive else _hips_pivot.rotation.x + 8.0 * delta
-		_leg_l_pivot.rotation.x = 1.2
-		_leg_r_pivot.rotation.x = 1.2
-		_arm_l_pivot.rotation = Vector3(0.5, 0.0, 0.15)
-		_arm_r_pivot.rotation = Vector3(0.5, 0.0, -0.15)
-		_forearm_l_pivot.rotation = Vector3(0.3, 0.0, 0.0)
-		_forearm_r_pivot.rotation = Vector3(0.3, 0.0, 0.0)
-		return
+		_defeat_elapsed += delta
+		var slump_t: float = clampf((_defeat_elapsed - 0.45) / 0.40, 0.0, 1.0)
+		var kneel_t: float = clampf(_defeat_elapsed / 0.45, 0.0, 1.0)
 
-	_hips_pivot.rotation.x = 0.0
+		# Multi-stage collapse defeat: drop to knees (0..0.45s) then slump flat onto ground (0.45s+)
+		_hips_pivot.position.y = lerpf(0.35, 0.12, slump_t)
+		var base_rot_x: float = lerpf(lerpf(0.0, -0.45, kneel_t), -1.15, slump_t)
+		_hips_pivot.rotation.x = base_rot_x if not defeat_explosive or _defeat_elapsed > 0.45 else _hips_pivot.rotation.x + 8.0 * delta
+		_torso_pivot.rotation.x = lerpf(0.0, -0.22, slump_t)
+		_head_pivot.rotation.x = lerpf(0.0, -0.42, slump_t)
+
+		_leg_l_pivot.rotation.x = lerpf(1.2, 1.45, slump_t)
+		_leg_r_pivot.rotation.x = lerpf(1.2, 1.45, slump_t)
+
+		# Left arm braces on ground
+		_arm_l_pivot.rotation = Vector3(lerpf(0.5, -0.35, slump_t), 0.0, lerpf(0.2, 0.65, slump_t))
+		_forearm_l_pivot.rotation = Vector3(lerpf(0.3, 0.85, slump_t), 0.0, 0.0)
+
+		# Right arm keeps waving white surrender flag clearly above ground
+		var wave: float = sin(Time.get_ticks_msec() * 0.008) * 0.35
+		_arm_r_pivot.rotation = Vector3(lerpf(0.5, 1.35, slump_t), wave, -0.25)
+		_forearm_r_pivot.rotation = Vector3(0.4, 0.0, 0.0)
+
+		if _defeat_prop != null:
+			_defeat_prop.visible = true
+			_defeat_prop.position = _hips_pivot.position + Vector3(0.35, 0.22, -0.12)
+			_defeat_prop.rotation = Vector3(0.0, wave * 0.3, -0.25)
+		return
 
 	var slot: int = clampi(selected_weapon_slot, 0, maxi(0, weapons.size() - 1))
 	var cur_w: WeaponBase = weapons[slot] as WeaponBase if slot < weapons.size() else null
@@ -711,6 +730,7 @@ func _animate_character(delta: float) -> void:
 	var kick: float = _weapon_recoil_anim
 
 	if current_vehicle_id >= 0:
+		_hips_pivot.rotation.x = 0.0
 		if current_seat_pose == "hidden":
 			return
 		var can_shoot_seat: bool = current_seat_can_shoot or current_seat_index > 0
@@ -739,6 +759,44 @@ func _animate_character(delta: float) -> void:
 			_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, Vector3(-0.20, 0.34, -0.36), Vector3(-0.80, -0.45, 0.45))
 		return
 
+	# Remote client fall time tracking in animation loop
+	if not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting:
+		if velocity.y < -0.5:
+			_airborne_fall_time += delta
+		else:
+			_airborne_fall_time = 0.0
+	elif is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0 or is_in_water or is_parachuting:
+		_airborne_fall_time = 0.0
+
+	var is_falling_air: bool = (not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting and (velocity.y < -4.5 or _airborne_fall_time > 0.35))
+
+	if is_falling_air:
+		if _held_weapon_root != null:
+			_held_weapon_root.visible = false
+		var ready_for_chute: bool = (_airborne_fall_time >= 1.0 or velocity.y < -10.5)
+		var flutter_freq: float = 24.0 if ready_for_chute else 12.0
+		var flutter_amp: float = 0.08 if ready_for_chute else 0.03
+		var flutter: float = sin(Time.get_ticks_msec() * 0.001 * flutter_freq) * flutter_amp
+
+		# Arched belly-to-earth skydiving freefall pose
+		_hips_pivot.position.y = lerpf(_hips_pivot.position.y, 0.68, 12.0 * delta)
+		_hips_pivot.rotation.x = lerpf(_hips_pivot.rotation.x, -0.62, 10.0 * delta)
+		_torso_pivot.rotation.x = lerpf(_torso_pivot.rotation.x, -0.25 + flutter, 10.0 * delta)
+		_torso_pivot.rotation.y = lerpf(_torso_pivot.rotation.y, 0.0, 10.0 * delta)
+		_head_pivot.rotation.x = lerpf(_head_pivot.rotation.x, 0.55, 10.0 * delta)
+
+		# Wings: arms spread out wide to the sides
+		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(0.20, 0.0, 1.35 + flutter), 12.0 * delta)
+		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(0.20, 0.0, -1.35 - flutter), 12.0 * delta)
+		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.35, 0.0, 0.25), 12.0 * delta)
+		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.35, 0.0, -0.25), 12.0 * delta)
+
+		# Legs bent backward
+		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, -0.55 + flutter * 0.5, 10.0 * delta)
+		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.55 - flutter * 0.5, 10.0 * delta)
+		return
+
+	_hips_pivot.rotation.x = 0.0
 	if _held_weapon_root != null:
 		_held_weapon_root.visible = true
 
@@ -749,7 +807,7 @@ func _animate_character(delta: float) -> void:
 		_walk_phase = lerpf(_walk_phase, 0.0, 8.0 * delta)
 
 	var stride: float = sin(_walk_phase) * clampf(horiz_speed / 7.0, 0.0, 1.0)
-	var bob: float = absf(sin(_walk_phase)) * 0.06 * clampf(horiz_speed / 7.0, 0.0, 1.0)
+	var bob: float = absf(sin(_walk_phase * 2.0)) * 0.012 * clampf(horiz_speed / 7.0, 0.0, 1.0)
 
 	var target_hips_y: float = 0.50 if is_crouching else (0.76 + bob)
 	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, 14.0 * delta)
@@ -762,6 +820,7 @@ func _animate_character(delta: float) -> void:
 		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
 		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
 		_torso_pivot.rotation.x = 0.12
+		_torso_pivot.rotation.y = 0.0
 	elif is_emoting:
 		emote_timer += delta
 		_leg_l_pivot.rotation.x = 0.0
@@ -774,8 +833,9 @@ func _animate_character(delta: float) -> void:
 	else:
 		_leg_l_pivot.rotation.x = stride * 0.72 + (-0.55 if is_crouching else 0.0)
 		_leg_r_pivot.rotation.x = -stride * 0.72 + (-0.55 if is_crouching else 0.0)
+		var counter_twist: float = -stride * 0.08 * (1.0 - fire_blend)
 		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0) - kick * 0.05
-		_torso_pivot.rotation.y = lerpf(0.0, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
+		_torso_pivot.rotation.y = lerpf(counter_twist, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
 		_head_pivot.rotation.x = aim_pitch * 0.35
 		_pose_held_weapon_and_arms(stride, fire_blend, kick, reloading)
 
@@ -808,8 +868,10 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 			_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
 				var r_tilt: float = 0.52 if reloading else 0.0
 				var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
-				_held_weapon_root.position = Vector3(0.21, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
-				_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3, lerpf(base_yaw, 0.20, fire_blend), -0.08 + r_tilt)
+				var sway_x: float = -stride * 0.015 * (1.0 - fire_blend)
+				var sway_yaw: float = -stride * 0.035 * (1.0 - fire_blend)
+				_held_weapon_root.position = Vector3(0.21 + sway_x, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3, lerpf(base_yaw + sway_yaw, 0.20, fire_blend), -0.08 + r_tilt)
 
 		var right_target: Vector3 = _held_weapon_root.transform * _weapon_grip_local
 		_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, right_pole)
@@ -867,6 +929,15 @@ func _physics_process(delta: float) -> void:
 	_prev_phys_pos = _curr_phys_pos
 	if is_defeated:
 		defeat_timer -= delta
+		_defeat_elapsed += delta
+		_airborne_fall_time = 0.0
+		_knockback_stun_timer = 0.0
+		if is_on_floor():
+			velocity.x = 0.0
+			velocity.z = 0.0
+		else:
+			velocity.x = lerpf(velocity.x, 0.0, minf(1.0, 24.0 * delta))
+			velocity.z = lerpf(velocity.z, 0.0, minf(1.0, 24.0 * delta))
 		velocity.y -= GRAVITY * delta
 		move_and_slide()
 		_curr_phys_pos = global_position
@@ -978,14 +1049,37 @@ func _sample_local_input() -> InputCmd:
 func can_open_parachute() -> bool:
 	if is_defeated or current_vehicle_id >= 0 or is_on_floor() or is_in_water:
 		return false
-	return velocity.y < -0.5 or _distance_to_ground() > 2.0
+	return _airborne_fall_time >= PARACHUTE_MIN_FALL_TIME and _distance_to_ground() > 1.8
 
 
 ## Deterministic 60Hz character physics simulation shared by Client Prediction & Server Authority.
 func simulate_movement(cmd: InputCmd, delta: float) -> void:
+	if is_defeated:
+		_defeat_elapsed += delta
+		_airborne_fall_time = 0.0
+		_knockback_stun_timer = 0.0
+		if is_on_floor():
+			velocity.x = 0.0
+			velocity.z = 0.0
+		else:
+			velocity.x = lerpf(velocity.x, 0.0, minf(1.0, 24.0 * delta))
+			velocity.z = lerpf(velocity.z, 0.0, minf(1.0, 24.0 * delta))
+		velocity.y -= GRAVITY * delta
+		move_and_slide()
+		active_flags = NetSerializer.SNAP_DEFEATED
+		if is_on_floor():
+			active_flags |= NetSerializer.SNAP_GROUNDED
+		return
+
 	aim_yaw = cmd.aim_yaw
 	aim_pitch = cmd.aim_pitch
 	selected_weapon_slot = cmd.selected_weapon_slot
+
+	_knockback_stun_timer = maxf(0.0, _knockback_stun_timer - delta)
+	if _knockback_stun_timer > 0.0 or velocity.y > 0.5:
+		floor_snap_length = 0.0
+	else:
+		floor_snap_length = 0.3
 
 	var jump_held: bool = cmd.has_button(InputCmd.BTN_JUMP)
 	var jump_just_pressed: bool = jump_held and not prev_jump_held
@@ -996,6 +1090,14 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 
 	is_in_water = global_position.y < WATER_LEVEL - 0.55
 	var grounded: bool = is_on_floor()
+
+	# Airborne fall time tracking: resets on ground, water, vehicle; only increments when falling past apex
+	if grounded or is_in_water or current_vehicle_id >= 0:
+		_airborne_fall_time = 0.0
+	elif velocity.y < -0.5:
+		_airborne_fall_time += delta
+	else:
+		_airborne_fall_time = 0.0
 
 	# Fall Damage Check when hitting ground after airborne drop without parachute
 	if (grounded or is_in_water) and _was_airborne:
@@ -1013,18 +1115,20 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 		elif velocity.y < 0.0:
 			_max_air_fall_speed = maxf(_max_air_fall_speed, -velocity.y)
 
-	# Jump & Infinite Reusable Parachute
+	# Jump & Infinite Reusable Parachute (requires >= 1.0s fall delay)
 	if jump_just_pressed:
 		if grounded:
 			velocity.y = JUMP_VELOCITY
 			is_parachuting = false
+			_airborne_fall_time = 0.0
 		elif is_in_water:
 			velocity.y = JUMP_VELOCITY * 0.8
 			is_parachuting = false
+			_airborne_fall_time = 0.0
 		else:
 			if is_parachuting:
 				is_parachuting = false
-			elif velocity.y < -0.2 or _distance_to_ground() > 1.6:
+			elif can_open_parachute():
 				is_parachuting = true
 				_max_air_fall_speed = 0.0
 
@@ -1052,7 +1156,16 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	elif is_in_water:
 		move_speed *= 0.72
 
-	var accel: float = 16.0 if grounded else (5.5 if is_parachuting else 8.0)
+	var accel: float
+	if _knockback_stun_timer > 0.0:
+		accel = 2.4 if grounded else 2.8
+	elif grounded:
+		accel = 16.0
+	elif is_parachuting:
+		accel = 5.5
+	else:
+		accel = 8.0
+
 	velocity.x = lerpf(velocity.x, wish_dir.x * move_speed, minf(1.0, accel * delta))
 	velocity.z = lerpf(velocity.z, wish_dir.z * move_speed, minf(1.0, accel * delta))
 
@@ -1250,6 +1363,9 @@ func build_snapshot_dict() -> Dictionary:
 
 func apply_knockback(impulse: Vector3) -> void:
 	velocity += impulse
+	if impulse.y > 0.2 or impulse.length() > 5.0:
+		velocity.y = maxf(velocity.y, maxf(4.8, impulse.y))
+	_knockback_stun_timer = maxf(_knockback_stun_timer, 0.38)
 	knockback_seq = (knockback_seq + 1) & 0xFF
 
 
@@ -1269,10 +1385,16 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 		hp = 0
 		is_defeated = true
 		defeat_timer = 5.0
+		_defeat_elapsed = 0.0
+		_airborne_fall_time = 0.0
+		_knockback_stun_timer = 0.0
 		last_killer_id = attacker_id
 		defeat_explosive = is_explosive
 		if is_explosive:
 			velocity += Vector3(randf_range(-4.0, 4.0), 10.5, randf_range(-4.0, 4.0))
+		elif is_on_floor():
+			velocity.x = 0.0
+			velocity.z = 0.0
 		defeated.emit(attacker_id, is_explosive)
 	stats_changed.emit()
 	return hp_dealt
@@ -1296,6 +1418,9 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	hp = max_hp
 	shield = 0
 	is_defeated = false
+	_defeat_elapsed = 0.0
+	_airborne_fall_time = 0.0
+	_knockback_stun_timer = 0.0
 	is_parachuting = false
 	is_crouching = false
 	_max_air_fall_speed = 0.0
@@ -1313,4 +1438,4 @@ func _on_scope_toggled(scoped: bool) -> void:
 	if visual_root != null and is_local_player:
 		visual_root.visible = not scoped
 	if is_local_player and not is_bot:
-		SoundSynthesizer.play_sfx("scope_in", 1.0 if scoped else 0.78)
+		SoundSynthesizer.play_sfx("scope_in", 0.0, true, Vector3.ZERO, 1.0 if scoped else 0.78)

@@ -238,40 +238,40 @@ static func get_torso_profile(class_id: int) -> Dictionary:
 
 
 static func build_torso_mesh(class_id: int) -> ArrayMesh:
-	var c_hem := Color(0.76, 0.77, 0.82)
-	var c_shade := Color(0.84, 0.85, 0.90)
+	var c_hem := Color(0.64, 0.65, 0.72)
+	var c_shade := Color(0.82, 0.83, 0.88)
 	var c_mid := Color(0.95, 0.95, 0.98)
 	var c_lit := Color.WHITE
 	if class_id == 1: # Gunner broad barrel chest enveloping deltoid sockets & flared hem over heavy thighs
 		return make_loft([
-			{"y": -0.10, "rx": 0.304, "rz": 0.175, "p": 2.4, "col": c_hem, "side_ao": 0.08, "v": 1.00},
-			{"y": -0.02, "rx": 0.256, "rz": 0.158, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.88},
-			{"y": 0.06, "rx": 0.205, "rz": 0.142, "p": 2.5, "col": c_shade, "side_ao": 0.08, "v": 0.75},
-			{"y": 0.24, "rx": 0.295, "rz": 0.185, "p": 2.5, "col": c_mid, "side_ao": 0.12, "v": 0.52},
-			{"y": 0.46, "rx": 0.375, "rz": 0.215, "p": 2.4, "col": c_lit, "side_ao": 0.14, "v": 0.24},
-			{"y": 0.54, "rx": 0.365, "rz": 0.200, "p": 2.3, "col": c_lit, "side_ao": 0.08, "v": 0.13},
+			{"y": -0.10, "rx": 0.306, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
+			{"y": -0.02, "rx": 0.258, "rz": 0.160, "p": 2.4, "col": c_shade, "side_ao": 0.10, "v": 0.88},
+			{"y": 0.06, "rx": 0.208, "rz": 0.144, "p": 2.5, "col": c_shade, "side_ao": 0.08, "v": 0.75},
+			{"y": 0.24, "rx": 0.298, "rz": 0.188, "p": 2.5, "col": c_mid, "side_ao": 0.12, "v": 0.52},
+			{"y": 0.46, "rx": 0.378, "rz": 0.218, "p": 2.4, "col": c_lit, "side_ao": 0.14, "v": 0.24},
+			{"y": 0.54, "rx": 0.368, "rz": 0.202, "p": 2.3, "col": c_lit, "side_ao": 0.08, "v": 0.13},
 			{"y": 0.60, "rx": 0.265, "rz": 0.158, "p": 2.1, "col": c_lit, "side_ao": 0.04, "v": 0.05},
 			{"y": 0.64, "rx": 0.122, "rz": 0.110, "p": 2.0, "col": c_mid.lightened(0.03), "v": 0.00},
 		], 20)
 	elif class_id == 2: # Commando sharp V-taper & dramatic long flared trenchcoat skirt
 		return make_loft([
-			{"y": -0.32, "z": 0.015, "rx": 0.295, "rz": 0.225, "p": 2.4, "col": c_hem, "side_ao": 0.10, "v": 1.00},
-			{"y": -0.14, "z": 0.008, "rx": 0.242, "rz": 0.182, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.87},
+			{"y": -0.32, "z": 0.015, "rx": 0.298, "rz": 0.228, "p": 2.4, "col": c_hem, "side_ao": 0.14, "v": 1.00},
+			{"y": -0.14, "z": 0.008, "rx": 0.244, "rz": 0.184, "p": 2.4, "col": c_shade, "side_ao": 0.10, "v": 0.87},
 			{"y": 0.06, "rx": 0.170, "rz": 0.128, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
-			{"y": 0.26, "rx": 0.225, "rz": 0.155, "p": 2.4, "col": c_mid, "side_ao": 0.10, "v": 0.48},
-			{"y": 0.48, "rx": 0.295, "rz": 0.172, "p": 2.4, "col": c_lit, "side_ao": 0.12, "v": 0.22},
-			{"y": 0.57, "rx": 0.255, "rz": 0.150, "p": 2.2, "col": c_lit, "side_ao": 0.05, "v": 0.10},
+			{"y": 0.26, "rx": 0.228, "rz": 0.158, "p": 2.4, "col": c_mid, "side_ao": 0.10, "v": 0.48},
+			{"y": 0.48, "rx": 0.298, "rz": 0.175, "p": 2.4, "col": c_lit, "side_ao": 0.12, "v": 0.22},
+			{"y": 0.57, "rx": 0.258, "rz": 0.152, "p": 2.2, "col": c_lit, "side_ao": 0.05, "v": 0.10},
 			{"y": 0.65, "rx": 0.112, "rz": 0.104, "p": 2.1, "col": c_lit, "v": 0.00},
 		], 20)
 	# Soldier tailored WWII jacket with pinched waist & flared coat tail
 	return make_loft([
-		{"y": -0.18, "z": 0.006, "rx": 0.235, "rz": 0.175, "p": 2.4, "col": c_hem, "side_ao": 0.08, "v": 1.00},
-		{"y": -0.04, "rx": 0.205, "rz": 0.150, "p": 2.4, "col": c_shade, "side_ao": 0.06, "v": 0.86},
+		{"y": -0.18, "z": 0.006, "rx": 0.238, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
+		{"y": -0.04, "rx": 0.206, "rz": 0.152, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.86},
 		{"y": 0.06, "rx": 0.180, "rz": 0.132, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
-		{"y": 0.22, "rx": 0.235, "rz": 0.162, "p": 2.5, "col": c_mid, "side_ao": 0.10, "v": 0.52},
-		{"y": 0.44, "rx": 0.300, "rz": 0.182, "p": 2.5, "col": c_lit, "side_ao": 0.12, "v": 0.24},
-		{"y": 0.52, "rx": 0.305, "rz": 0.178, "p": 2.4, "col": c_lit, "side_ao": 0.08, "v": 0.15},
-		{"y": 0.59, "rx": 0.245, "rz": 0.148, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.06},
+		{"y": 0.22, "rx": 0.238, "rz": 0.165, "p": 2.5, "col": c_mid, "side_ao": 0.10, "v": 0.52},
+		{"y": 0.44, "rx": 0.304, "rz": 0.185, "p": 2.5, "col": c_lit, "side_ao": 0.12, "v": 0.24},
+		{"y": 0.52, "rx": 0.308, "rz": 0.180, "p": 2.4, "col": c_lit, "side_ao": 0.08, "v": 0.15},
+		{"y": 0.59, "rx": 0.248, "rz": 0.150, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.06},
 		{"y": 0.64, "rx": 0.110, "rz": 0.102, "p": 2.0, "col": c_lit, "v": 0.00},
 	], 20)
 
@@ -291,7 +291,7 @@ static func build_collar_lapels_mesh(class_id: int) -> ArrayMesh:
 		{
 			"seg": 18,
 			"rings": [
-				{"y": 0.605, "z": 0.002, "rx": collar_rx * 1.06, "rz": collar_rz * 1.06, "p": 2.1, "col": Color(0.88, 0.88, 0.92)},
+				{"y": 0.605, "z": 0.002, "rx": collar_rx * 1.06, "rz": collar_rz * 1.06, "p": 2.1, "col": Color(0.66, 0.66, 0.72), "side_ao": 0.16},
 				{"y": (0.605 + collar_top_y) * 0.5, "z": collar_z * 0.6, "rx": collar_rx, "rz": collar_rz, "p": 2.1, "col": col_rim},
 				{"y": collar_top_y, "z": collar_z, "rx": collar_rx * 0.90, "rz": collar_rz * 0.90, "p": 2.1, "col": col_lapel},
 			],
@@ -339,6 +339,15 @@ static func build_backpack_mesh(class_id: int) -> ArrayMesh:
 					{"y": 0.15, "rx": 0.068, "rz": 0.068, "p": 2.1, "col": Color(0.56, 0.60, 0.48)},
 				],
 			})
+		for sx in [-0.105, 0.105]:
+			parts.append({
+				"seg": 8,
+				"xform": _xform(Vector3(sx, 0.44, 0.145), Vector3(0.48, 0.0, 0.0)),
+				"rings": [
+					{"y": -0.08, "rx": 0.018, "rz": 0.010, "p": 2.2, "col": Color(0.20, 0.15, 0.10)},
+					{"y": 0.08, "rx": 0.018, "rz": 0.010, "p": 2.2, "col": Color(0.28, 0.21, 0.15)},
+				],
+			})
 		parts.append({
 			"seg": 12,
 			"xform": _xform(Vector3(0.0, 0.50, 0.235), Vector3(0.0, 0.0, PI * 0.5)),
@@ -352,8 +361,8 @@ static func build_backpack_mesh(class_id: int) -> ArrayMesh:
 			"seg": 14,
 			"xform": _xform(Vector3(-0.145, 0.08, 0.175), Vector3(0.08, -0.22, 0.14)),
 			"rings": [
-				{"y": -0.095, "rx": 0.105, "rz": 0.052, "p": 2.6, "col": Color(0.84, 0.80, 0.76)},
-				{"y": 0.030, "rx": 0.112, "rz": 0.058, "p": 2.6, "col": Color(0.94, 0.90, 0.86)},
+				{"y": -0.095, "rx": 0.105, "rz": 0.052, "p": 2.6, "col": Color(0.68, 0.64, 0.58)},
+				{"y": 0.030, "rx": 0.112, "rz": 0.058, "p": 2.6, "col": Color(0.92, 0.88, 0.84)},
 				{"y": 0.095, "rx": 0.102, "rz": 0.052, "p": 2.5, "col": Color.WHITE},
 			],
 		})
@@ -388,9 +397,18 @@ static func build_backpack_mesh(class_id: int) -> ArrayMesh:
 				"seg": 8,
 				"xform": _xform(Vector3(sx, 0.32, 0.292)),
 				"rings": [
-					{"y": -0.11, "rx": 0.020, "rz": 0.012, "p": 2.4, "col": c_strap},
+					{"y": -0.11, "rx": 0.020, "rz": 0.012, "p": 2.4, "col": Color(0.20, 0.14, 0.09)},
 					{"y": -0.02, "rx": 0.022, "rz": 0.014, "p": 2.4, "col": c_brass},
-					{"y": 0.11, "rx": 0.020, "rz": 0.012, "p": 2.4, "col": c_strap},
+					{"y": 0.11, "rx": 0.020, "rz": 0.012, "p": 2.4, "col": Color(0.20, 0.14, 0.09)},
+				],
+			})
+		for sx in [-0.095, 0.095]:
+			parts.append({
+				"seg": 8,
+				"xform": _xform(Vector3(sx, 0.42, 0.135), Vector3(0.52, 0.0, 0.0)),
+				"rings": [
+					{"y": -0.08, "rx": 0.016, "rz": 0.010, "p": 2.2, "col": Color(0.20, 0.14, 0.09)},
+					{"y": 0.08, "rx": 0.016, "rz": 0.010, "p": 2.2, "col": Color(0.30, 0.22, 0.15)},
 				],
 			})
 		parts.append({
@@ -740,7 +758,8 @@ static func build_beard_mesh(style: int = 0) -> ArrayMesh:
 static func build_helmet_mesh(is_royal: bool) -> ArrayMesh:
 	var shell_col := Color(0.34, 0.40, 0.24) if is_royal else Color(0.30, 0.32, 0.36)
 	var c_band := shell_col.darkened(0.18)
-	var c_rim := shell_col.darkened(0.12)
+	var c_rim := shell_col.darkened(0.28)
+	var c_flange := shell_col.darkened(0.36)
 	var c_strap := Color(0.30, 0.21, 0.13)
 	var parts: Array[Dictionary] = []
 
@@ -748,7 +767,8 @@ static func build_helmet_mesh(is_royal: bool) -> ArrayMesh:
 		parts.append({
 			"seg": 20,
 			"rings": [
-				{"y": -0.018, "z": -0.004, "rx": 0.156, "rz": 0.168, "p": 2.2, "col": c_rim},
+				{"y": -0.022, "z": -0.004, "rx": 0.158, "rz": 0.170, "p": 2.2, "col": c_flange},
+				{"y": -0.012, "z": -0.002, "rx": 0.154, "rz": 0.166, "p": 2.2, "col": c_rim},
 				{"y": 0.015, "rx": 0.144, "rz": 0.156, "p": 2.1, "col": c_band},
 				{"y": 0.045, "rx": 0.146, "rz": 0.158, "p": 2.1, "col": shell_col},
 				{"y": 0.108, "rx": 0.128, "rz": 0.138, "p": 2.0, "col": shell_col.lightened(0.06)},
@@ -759,7 +779,8 @@ static func build_helmet_mesh(is_royal: bool) -> ArrayMesh:
 		parts.append({
 			"seg": 20,
 			"rings": [
-				{"y": -0.026, "z": 0.014, "rx": 0.162, "rz": 0.172, "p": 2.3, "col": c_rim},
+				{"y": -0.032, "z": 0.018, "rx": 0.166, "rz": 0.178, "p": 2.3, "col": c_flange},
+				{"y": -0.018, "z": 0.012, "rx": 0.160, "rz": 0.170, "p": 2.3, "col": c_rim},
 				{"y": 0.012, "rx": 0.144, "rz": 0.154, "p": 2.2, "col": shell_col},
 				{"y": 0.078, "rx": 0.134, "rz": 0.142, "p": 2.1, "col": shell_col.lightened(0.05)},
 				{"y": 0.152, "rx": 0.072, "rz": 0.078, "p": 2.0, "col": shell_col.lightened(0.08)},
