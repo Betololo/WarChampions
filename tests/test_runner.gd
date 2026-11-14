@@ -11,6 +11,8 @@ func _ready() -> void:
 	_test_input_ring_buffer_wraparound()
 	_test_snapshot_interpolator()
 	_test_hero_prediction_reconciliation_and_parachute()
+	_test_lag_compensator_rewind_and_cap()
+	_test_weapon_archetypes_and_infinite_reserve()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -141,7 +143,56 @@ func _test_hero_prediction_reconciliation_and_parachute() -> void:
 		"knockback_seq": 1,
 	})
 	_assert(hero.global_position.distance_to(pos_before) > 0.5, "Server reconciliation adjusts predicted position when divergence > 0.05m")
-	hero.queue_free()
+	hero.free()
+
+
+func _test_lag_compensator_rewind_and_cap() -> void:
+	var lc := LagCompensator.new()
+	var shooter := HeroCharacter.new()
+	shooter.setup_identity(1, "Shooter", 0, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	var target := HeroCharacter.new()
+	target.setup_identity(2, "Target", 1, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(shooter)
+	add_child(target)
+
+	var heroes := {1: shooter, 2: target}
+	for tick in range(1, 35):
+		if tick <= 15:
+			target.global_position = Vector3(0.0, 0.0, -25.0)
+		else:
+			target.global_position = Vector3(12.0, 0.0, -25.0)
+		lc.record_frame(tick, heroes)
+
+	NetworkManager.server_tick = 34
+	# Shooter saw target 20 ticks ago (tick 14) at X=0 -> rewound ray at -Z hits!
+	var hit_old: Dictionary = lc.trace_rewound_ray(shooter, Vector3(0.0, 1.2, 0.0), Vector3(0.0, 0.0, -1.0), 100.0, 20, 34, heroes, null)
+	_assert(int(hit_old["target_hero_id"]) == 2, "LagCompensator rewound ray hits target at past position (tick 14)")
+
+	# Trying to rewind 40 ticks (>24 max) gets clamped to tick 34 - 24 = 10, where target was at X=0, still bounded by 400ms max
+	var frame_clamped: LagCompensator.FrameRecord = lc.get_frame(34 - 40, 34)
+	_assert(frame_clamped != null and frame_clamped.server_tick == 10, "LagCompensator clamps max rewind to 24 ticks (400ms)")
+	lc.free()
+	shooter.free()
+	target.free()
+
+
+func _test_weapon_archetypes_and_infinite_reserve() -> void:
+	var hero := HeroCharacter.new()
+	hero.setup_identity(1, "SmgTest", 0, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var w_bal := HitscanWeapon.new()
+	w_bal.configure(hero, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_BALANCED)
+	var w_fast := HitscanWeapon.new()
+	w_fast.configure(hero, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_FAST_SHORT)
+	var w_slow := HitscanWeapon.new()
+	w_slow.configure(hero, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_SLOW_LONG)
+
+	_assert(w_bal.reserve_ammo == -1, "Weapon has infinite reserve ammo (-1)")
+	_assert(w_fast.mag_size > w_bal.mag_size and w_fast.fire_interval < w_bal.fire_interval, "Fast/Short archetype increases mag and fire rate")
+	_assert(w_slow.damage_min > w_bal.damage_min and w_slow.spread_rad < w_bal.spread_rad, "Slow/Long archetype increases long-range damage and precision")
+	w_bal.free()
+	w_fast.free()
+	w_slow.free()
+	hero.free()
 
 
 func _test_scene_compile_and_load() -> void:

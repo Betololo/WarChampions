@@ -6,6 +6,7 @@ var heroes_root: Node3D
 var vehicles_root: Node3D
 var projectiles_root: Node3D
 var map_root: Node3D
+var lag_compensator: LagCompensator
 var heroes_by_id: Dictionary = {}
 
 
@@ -25,6 +26,10 @@ func _ready() -> void:
 	map_root = Node3D.new()
 	map_root.name = "MapRoot"
 	add_child(map_root)
+
+	lag_compensator = LagCompensator.new()
+	lag_compensator.name = "LagCompensator"
+	add_child(lag_compensator)
 
 	NetworkManager.client_input_received.connect(_on_client_input)
 	NetworkManager.authoritative_state_received.connect(_on_auth_state)
@@ -48,10 +53,22 @@ func _build_fallback_arena() -> void:
 	map_root.add_child(floor_body)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if multiplayer.multiplayer_peer != null and multiplayer.is_server():
+		var combat_ctx: Dictionary = {
+			"lag_compensator": lag_compensator,
+			"heroes_by_id": heroes_by_id,
+			"projectiles_root": projectiles_root,
+		}
 		for id_key in heroes_by_id.keys():
 			var hero: HeroCharacter = heroes_by_id[id_key]
+			if not hero.is_defeated and not hero.weapons.is_empty():
+				var slot: int = clampi(hero.selected_weapon_slot, 0, hero.weapons.size() - 1)
+				var w: WeaponBase = hero.weapons[slot] as WeaponBase
+				if w != null:
+					w.step_timers(delta, hero.latest_server_input)
+					if w.try_consume_fire(hero.latest_server_input):
+						w.fire_server(hero.latest_server_input, combat_ctx)
 			if not hero.is_bot and hero.entity_id < 1000:
 				var packed: PackedByteArray = NetSerializer.pack_authoritative_state(
 					hero.latest_server_input.tick,
@@ -65,6 +82,8 @@ func _physics_process(_delta: float) -> void:
 					hero.knockback_seq
 				)
 				NetworkManager.send_authoritative_state(hero.entity_id, packed)
+
+		lag_compensator.record_frame(NetworkManager.server_tick, heroes_by_id)
 
 		if NetworkManager.should_broadcast_snapshot():
 			var hero_snaps: Array[Dictionary] = []
