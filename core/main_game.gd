@@ -36,6 +36,7 @@ func _ready() -> void:
 	NetworkManager.world_snapshot_received.connect(_on_world_snapshot)
 	NetworkManager.player_registered.connect(_on_player_registered)
 	NetworkManager.player_unregistered.connect(_on_player_unregistered)
+	NetworkManager.game_event_received.connect(_on_game_event)
 
 	if NetworkManager.is_dedicated_server:
 		_build_fallback_arena()
@@ -62,13 +63,17 @@ func _physics_process(delta: float) -> void:
 		}
 		for id_key in heroes_by_id.keys():
 			var hero: HeroCharacter = heroes_by_id[id_key]
-			if not hero.is_defeated and not hero.weapons.is_empty():
-				var slot: int = clampi(hero.selected_weapon_slot, 0, hero.weapons.size() - 1)
-				var w: WeaponBase = hero.weapons[slot] as WeaponBase
-				if w != null:
-					w.step_timers(delta, hero.latest_server_input)
-					if w.try_consume_fire(hero.latest_server_input):
-						w.fire_server(hero.latest_server_input, combat_ctx)
+			if not hero.is_defeated:
+				if hero.skill_manager != null and hero.skill_manager.has_method("step_server"):
+					hero.skill_manager.step_server(delta, hero.latest_server_input, combat_ctx)
+				if not hero.weapons.is_empty():
+					var slot: int = clampi(hero.latest_server_input.selected_weapon_slot, 0, hero.weapons.size() - 1)
+					hero.selected_weapon_slot = slot
+					var w: WeaponBase = hero.weapons[slot] as WeaponBase
+					if w != null:
+						w.step_timers(delta, hero.latest_server_input)
+						if w.try_consume_fire(hero.latest_server_input):
+							w.fire_server(hero.latest_server_input, combat_ctx)
 			if not hero.is_bot and hero.entity_id < 1000:
 				var packed: PackedByteArray = NetSerializer.pack_authoritative_state(
 					hero.latest_server_input.tick,
@@ -166,3 +171,26 @@ func _on_world_snapshot(snapshot: Dictionary) -> void:
 			})
 		var remote_hero: HeroCharacter = heroes_by_id[hid]
 		remote_hero.push_remote_snapshot(srv_tick, srv_time_ms, h_dict)
+
+
+func _process(delta: float) -> void:
+	var local_hero: HeroCharacter = heroes_by_id.get(NetworkManager.local_peer_id, null)
+	for id_key in heroes_by_id.keys():
+		var h: HeroCharacter = heroes_by_id[id_key]
+		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta)
+
+
+func _on_game_event(event_type: String, payload: Dictionary) -> void:
+	match event_type:
+		"hit_vfx":
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), str(payload.get("kind", "dust")), 0.4)
+			if int(payload.get("attacker_id", -1)) == NetworkManager.local_peer_id:
+				SoundSynthesizer.play_sfx("hit_ding")
+		"explosion_vfx":
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "explosion", float(payload.get("radius", 5.0)))
+			SoundSynthesizer.play_sfx("explosion")
+		"skill_vfx":
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.2)
+			SoundSynthesizer.play_sfx("skill_cast")
+		"eat_grenades":
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)

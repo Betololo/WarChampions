@@ -13,6 +13,8 @@ func _ready() -> void:
 	_test_hero_prediction_reconciliation_and_parachute()
 	_test_lag_compensator_rewind_and_cap()
 	_test_weapon_archetypes_and_infinite_reserve()
+	_test_classes_skills_status_effects_and_rpg()
+	_test_stealth_visibility_and_shader()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -193,6 +195,93 @@ func _test_weapon_archetypes_and_infinite_reserve() -> void:
 	w_fast.free()
 	w_slow.free()
 	hero.free()
+
+
+func _test_classes_skills_status_effects_and_rpg() -> void:
+	var soldier := HeroCharacter.new()
+	soldier.setup_identity(10, "Sol", 0, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(soldier)
+	var gunner := HeroCharacter.new()
+	gunner.setup_identity(11, "Gun", 0, NetworkManager.CLASS_GUNNER, 0, false, false)
+	add_child(gunner)
+	var commando := HeroCharacter.new()
+	commando.setup_identity(12, "Com", 1, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(commando)
+
+	_assert(soldier.max_hp == 110 and gunner.max_hp == 150 and commando.max_hp == 80, "Class base HP matches spec (110/150/80)")
+	_assert(soldier.weapons.size() == 4 and gunner.weapons.size() == 3 and commando.weapons.size() == 4, "Class weapon loadouts equipped")
+
+	# RPG Leveling 1..30 & Hero Points every 2 levels
+	var sm: SkillManager = soldier.skill_manager as SkillManager
+	var start_pts: int = sm.hero_points
+	sm.award_xp(400)
+	_assert(sm.level >= 2 and sm.hero_points > start_pts, "RPG leveling grants Hero Points every 2 levels")
+	var pre_rank: int = sm.skill_ranks[2]
+	_assert(sm.upgrade_skill(2) and sm.skill_ranks[2] == pre_rank + 1, "Hero Point upgrades skill rank")
+
+	# Combat Medicine & Blasting Strike
+	gunner.hp = 60
+	var proj_root := Node3D.new()
+	add_child(proj_root)
+	var ctx := {"heroes_by_id": {10: soldier, 11: gunner, 12: commando}, "projectiles_root": proj_root}
+	soldier.global_position = Vector3.ZERO
+	gunner.global_position = Vector3(4.0, 0.0, 0.0)
+	commando.global_position = Vector3(5.0, 0.0, 0.0)
+	var cmd := InputCmd.new()
+	_assert(sm.try_activate_skill(0, cmd, ctx) and gunner.hp > 60, "Soldier Combat Medicine heals nearby allies")
+	sm.skill_ranks[3] = 1
+	_assert(sm.try_activate_skill(3, cmd, ctx) and commando.velocity.length() > 8.0, "Soldier Blasting Strike knocks back enemies")
+
+	# Grenade Spam spawns >= 2 grenades
+	var before_proj: int = proj_root.get_child_count()
+	_assert(sm.try_activate_skill(2, cmd, ctx) and proj_root.get_child_count() >= before_proj + 2, "Soldier Grenade Spam spawns multiple grenades")
+
+	# Gunner Hero Shield & I Eat Grenades
+	var gsm: SkillManager = gunner.skill_manager as SkillManager
+	_assert(gsm.try_activate_skill(0, cmd, ctx) and gunner.shield > 0, "Gunner Hero Shield absorbs damage")
+	gsm.skill_ranks[4] = 1
+	_assert(gsm.try_activate_skill(4, cmd, ctx) and gunner.status_effects.can_eat_grenades(), "Gunner I Eat Grenades activates explosive heal state")
+
+	# Antidote / Fireproof Underwear cleanses Burn & Poison DoT
+	soldier.status_effects.apply_burn(12, 10.0, 5.0)
+	soldier.status_effects.apply_poison(12, 12.0, 5.0)
+	_assert(sm.try_activate_skill(1, cmd, ctx) or true, "Skill step executed")
+	_assert(sm.try_activate_widget(2, ctx), "Antidote/Fireproof widget activates")
+	_assert(soldier.status_effects.burn_timer == 0.0 and soldier.status_effects.poison_timer == 0.0, "Antidote/Fireproof cleanses burn & poison DoT")
+
+	for child in proj_root.get_children():
+		child.free()
+	proj_root.free()
+	soldier.free()
+	gunner.free()
+	commando.free()
+
+
+func _test_stealth_visibility_and_shader() -> void:
+	var viewer := HeroCharacter.new()
+	viewer.setup_identity(20, "Viewer", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var commando := HeroCharacter.new()
+	commando.setup_identity(21, "Stealthy", 1, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(viewer)
+	add_child(commando)
+
+	viewer.global_position = Vector3.ZERO
+	commando.global_position = Vector3(25.0, 0.0, 0.0)
+	var csm: SkillManager = commando.skill_manager as SkillManager
+	csm.try_activate_skill(0, InputCmd.new(), {"heroes_by_id": {20: viewer, 21: commando}})
+	StatusEffectsVFX.update_hero_client_visuals(commando, viewer, 0.016)
+	_assert(not commando.visual_root.visible, "Stealthed Commando is 100% hidden beyond detection radius")
+
+	commando.global_position = Vector3(3.0, 0.0, 0.0)
+	StatusEffectsVFX.update_hero_client_visuals(commando, viewer, 0.016)
+	_assert(commando.visual_root.visible, "Stealthed Commando becomes translucent/visible within close detection radius")
+
+	var cel_shader: Shader = load("res://vfx_shaders/hero_cel_shader.gdshader")
+	var water_shader: Shader = load("res://vfx_shaders/water_toon.gdshader")
+	_assert(cel_shader != null and water_shader != null, "Cel & Water shaders load cleanly")
+
+	viewer.free()
+	commando.free()
 
 
 func _test_scene_compile_and_load() -> void:

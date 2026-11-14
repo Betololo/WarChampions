@@ -87,7 +87,8 @@ func _ready() -> void:
 	collision_mask = 1 | 4 | 7
 	_build_collision()
 	_build_cartoon_visuals()
-	_apply_class_defaults()
+	configure_class_loadout()
+	StatusEffectsVFX.attach_hero_vfx_and_shader(self)
 	_prev_phys_pos = global_position
 	_curr_phys_pos = global_position
 
@@ -110,9 +111,35 @@ func setup_identity(p_entity_id: int, p_name: String, p_team: int, p_class_id: i
 	is_local_player = p_local
 	is_bot = p_bot
 	name = "Hero_%d" % entity_id
-	_apply_class_defaults()
 	if is_inside_tree():
+		configure_class_loadout()
 		_rebuild_cartoon_visuals()
+		StatusEffectsVFX.attach_hero_vfx_and_shader(self)
+	else:
+		_apply_class_defaults()
+
+
+func configure_class_loadout() -> void:
+	if status_effects != null:
+		status_effects.queue_free()
+		status_effects = null
+	if skill_manager != null:
+		skill_manager.queue_free()
+		skill_manager = null
+	for w in weapons:
+		if is_instance_valid(w):
+			w.queue_free()
+	weapons.clear()
+
+	match class_id:
+		NetworkManager.CLASS_SOLDIER:
+			ClassSoldier.configure_hero(self)
+		NetworkManager.CLASS_GUNNER:
+			ClassGunner.configure_hero(self)
+		NetworkManager.CLASS_COMMANDO:
+			ClassCommando.configure_hero(self)
+	if _capsule_shape != null:
+		_capsule_shape.radius = capsule_radius
 
 
 func _apply_class_defaults() -> void:
@@ -272,6 +299,15 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	if is_local_player and not is_bot and hero_camera != null:
+		var sniper_scoped: bool = false
+		if not is_defeated and current_vehicle_id < 0 and not weapons.is_empty():
+			var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
+			var w: WeaponBase = weapons[slot] as WeaponBase
+			if w != null and w.is_sniper and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+				sniper_scoped = true
+		hero_camera.set_scoped(sniper_scoped)
+
 	if is_local_player or multiplayer.is_server() or is_bot:
 		# Smooth visual error offset and interpolate between physics ticks for 144Hz+ smoothness
 		visual_error_offset = visual_error_offset.lerp(Vector3.ZERO, minf(1.0, 20.0 * delta))
