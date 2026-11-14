@@ -39,8 +39,26 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _tex_stucco(Color(0.95, 0.86, 0.56), Color(0.84, 0.72, 0.42))
 		"stucco_cream":
 			return _tex_stucco(Color(0.94, 0.90, 0.78), Color(0.82, 0.76, 0.62))
-		"terracotta":
+		"stucco_ochre":
+			return _tex_stucco_masonry(Color(0.95, 0.86, 0.60), Color(0.85, 0.72, 0.44), Color(0.72, 0.66, 0.56))
+		"stucco_terracotta":
+			return _tex_stucco_masonry(Color(0.92, 0.65, 0.46), Color(0.81, 0.53, 0.36), Color(0.70, 0.58, 0.50))
+		"stone_masonry":
+			return _tex_stone_masonry()
+		"awning_stripe":
+			return _tex_awning_stripe(Color(0.84, 0.18, 0.16), Color(0.97, 0.94, 0.85))
+		"awning_stripe_blue":
+			return _tex_awning_stripe(Color(0.16, 0.44, 0.82), Color(0.97, 0.94, 0.85))
+		"tarmac_runway":
+			return _tex_tarmac_runway()
+		"water_fountain":
+			return _tex_water_fountain()
+		"terracotta", "roof_terracotta":
 			return _tex_roof_tiles(Color(0.84, 0.34, 0.20), Color(0.66, 0.24, 0.14))
+		"slate_roof":
+			return _tex_roof_tiles(Color(0.32, 0.42, 0.54), Color(0.20, 0.28, 0.38))
+		"wood_shingle":
+			return _tex_roof_tiles(Color(0.56, 0.40, 0.24), Color(0.38, 0.26, 0.14))
 		"foliage":
 			return _tex_foliage()
 		"bark":
@@ -250,6 +268,97 @@ static func _tex_bark() -> ImageTexture:
 	var img := _new_img(64, 64, Color(0.38, 0.26, 0.16))
 	for x in range(4, 64, 10):
 		_draw_rect(img, x, 0, 3, 64, Color(0.28, 0.18, 0.10))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_stucco_masonry(base: Color, accent: Color, stone_peek: Color) -> ImageTexture:
+	var img := _new_img(128, 128, base)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(base.r * 1000.0) + 77
+	# Soft hand-painted plaster brush shading
+	for _i in range(95):
+		var col: Color = accent if rng.randf() > 0.35 else base.lightened(0.06)
+		_draw_rect(img, rng.randi_range(0, 114), rng.randi_range(0, 118), rng.randi_range(8, 18), rng.randi_range(4, 10), col)
+	# Subtle weathered base mortar & delicate exposed stone peeks near corners/base
+	for y in range(108, 128):
+		var t: float = float(y - 108) / 20.0
+		_draw_rect(img, 0, y, 128, 1, base.lerp(stone_peek.darkened(0.18), t * 0.45))
+	for sp in [Vector2i(14, 96), Vector2i(26, 104), Vector2i(86, 98), Vector2i(102, 108), Vector2i(52, 112)]:
+		_draw_rect(img, sp.x - 1, sp.y - 1, 14, 9, stone_peek.darkened(0.22))
+		_draw_rect(img, sp.x, sp.y, 12, 7, stone_peek)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_stone_masonry() -> ImageTexture:
+	var mortar := Color(0.50, 0.48, 0.44)
+	var img := _new_img(128, 128, mortar)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 808
+	var block_h: int = 16
+	var block_w: int = 32
+	for row in range(8):
+		var y: int = row * block_h
+		var offset: int = (block_w / 2) if (row % 2 == 1) else 0
+		for col_idx in range(5):
+			var x: int = (col_idx * block_w + offset) - block_w / 2
+			var shade: float = rng.randf_range(0.64, 0.80)
+			var warm: float = rng.randf_range(-0.03, 0.04)
+			var stone_col := Color(shade + warm, shade + warm * 0.5, shade - 0.04)
+			var x0: int = maxi(0, x + 2)
+			var w0: int = mini(128, x + block_w - 2) - x0
+			if w0 > 0:
+				_draw_rect(img, x0, y + 2, w0, block_h - 4, stone_col)
+				_draw_rect(img, x0, y + 2, w0, 2, stone_col.lightened(0.14))
+				_draw_rect(img, x0, y + block_h - 4, w0, 2, stone_col.darkened(0.16))
+	# Occasional coastal moss flecks along mortar joints
+	for _m in range(28):
+		_draw_circle(img, rng.randf_range(4, 124), float(rng.randi_range(1, 7) * 16), rng.randf_range(1.5, 3.0), Color(0.32, 0.48, 0.22))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_awning_stripe(stripe_col: Color, cream_col: Color) -> ImageTexture:
+	var img := _new_img(128, 128, cream_col)
+	var stripe_w: int = 16
+	for x in range(0, 128, stripe_w * 2):
+		_draw_rect(img, x, 0, stripe_w, 128, stripe_col)
+		# Crisp fabric highlight & stitched edge
+		_draw_rect(img, x + 2, 0, 2, 128, stripe_col.lightened(0.12))
+	# Subtle canvas weave + scalloped lower valance shadow band
+	for y in range(0, 128, 6):
+		_draw_rect(img, 0, y, 128, 1, Color(0.0, 0.0, 0.0, 0.06))
+	_draw_rect(img, 0, 114, 128, 4, stripe_col.darkened(0.30))
+	_draw_rect(img, 0, 118, 128, 10, cream_col.darkened(0.08))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_tarmac_runway() -> ImageTexture:
+	var base := Color(0.24, 0.25, 0.28)
+	var img := _new_img(128, 128, base)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 909
+	# Aggregate grit & weathered tread streaks
+	for _i in range(320):
+		var c: Color = base.lightened(rng.randf_range(0.04, 0.14)) if rng.randf() > 0.48 else base.darkened(rng.randf_range(0.05, 0.14))
+		_draw_rect(img, rng.randi_range(0, 125), rng.randi_range(0, 125), rng.randi_range(1, 3), rng.randi_range(1, 3), c)
+	for sy in [34, 42, 86, 94]:
+		_draw_rect(img, 0, sy, 128, 2, base.darkened(0.20))
+	_draw_line(img, Vector2(18, 12), Vector2(64, 38), 1.4, base.darkened(0.28))
+	_draw_line(img, Vector2(72, 84), Vector2(118, 106), 1.4, base.darkened(0.28))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_water_fountain() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.20, 0.76, 0.88))
+	var deep := Color(0.12, 0.56, 0.76)
+	var foam := Color(0.76, 0.96, 1.0)
+	for y in range(128):
+		var wave: float = 0.5 + 0.5 * sin(float(y) * 0.24)
+		_draw_rect(img, 0, y, 128, 1, deep.lerp(Color(0.26, 0.84, 0.94), wave))
+	for cy in [32.0, 96.0]:
+		for cx in [32.0, 96.0]:
+			_draw_ring(img, cx, cy, 24.0, 21.0, foam)
+			_draw_ring(img, cx, cy, 13.0, 10.5, Color(0.54, 0.90, 0.98))
+			_draw_circle(img, cx - 3.0, cy - 3.0, 2.8, Color.WHITE)
 	return ImageTexture.create_from_image(img)
 
 

@@ -84,6 +84,10 @@ func is_server_authority() -> bool:
 	return multiplayer.is_server()
 
 
+func is_active_host_authority() -> bool:
+	return (is_active_enet_connected() or is_solo_bot_mode) and multiplayer.is_server()
+
+
 func _process(delta: float) -> void:
 	_flush_delayed_packets()
 	if is_active_enet_connected() and not multiplayer.is_server():
@@ -94,7 +98,7 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if is_active_enet_connected() and multiplayer.is_server():
+	if is_active_host_authority():
 		server_tick += 1
 		_snapshot_accum += 1
 
@@ -126,12 +130,15 @@ func start_dedicated_server(port: int = DEFAULT_PORT) -> Error:
 
 func start_host(port: int = DEFAULT_PORT, solo_with_bots: bool = false) -> Error:
 	shutdown_network()
-	var peer := ENetMultiplayerPeer.new()
-	var err: Error = peer.create_server(port, MAX_PLAYERS, 2)
-	if err != OK:
-		push_error("Failed to start host on port %d: %s" % [port, error_string(err)])
-		return err
-	multiplayer.multiplayer_peer = peer
+	if solo_with_bots:
+		multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	else:
+		var peer := ENetMultiplayerPeer.new()
+		var err: Error = peer.create_server(port, MAX_PLAYERS, 2)
+		if err != OK:
+			push_error("Failed to start host on port %d: %s" % [port, error_string(err)])
+			return err
+		multiplayer.multiplayer_peer = peer
 	is_dedicated_server = false
 	is_solo_bot_mode = solo_with_bots
 	server_tick = 0
@@ -164,6 +171,7 @@ func shutdown_network() -> void:
 	server_tick = 0
 	_snapshot_accum = 0
 	is_dedicated_server = false
+	is_solo_bot_mode = false
 	connection_state_changed.emit(false, false)
 
 
@@ -226,7 +234,7 @@ func register_bot(bot_id: int, bot_name: String, team: int, class_id: int, arche
 
 
 func send_input_to_server(cmd: InputCmd) -> void:
-	if not is_active_enet_connected():
+	if not is_active_enet_connected() and not is_solo_bot_mode:
 		return
 	if multiplayer.is_server():
 		client_input_received.emit(1, cmd)

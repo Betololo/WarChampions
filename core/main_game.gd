@@ -88,11 +88,18 @@ func _check_cli_autostart() -> void:
 			return
 
 
+func _exit_tree() -> void:
+	SoundSynthesizer.stop_whistle_theme()
+
+
 func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
 	if hud == null:
 		return
 	if connected and is_srv:
-		hud.add_killfeed("Sala Online pronta (0 Bots, porta %d)" % NetworkManager.DEFAULT_PORT)
+		if NetworkManager.is_solo_bot_mode:
+			hud.add_killfeed("Modo Solo 12v12 com Bots pronto!")
+		else:
+			hud.add_killfeed("Sala Online pronta (0 Bots, porta %d)" % NetworkManager.DEFAULT_PORT)
 	elif connected:
 		hud.add_killfeed("Conectado ao servidor!")
 	elif not _switching_mode:
@@ -235,7 +242,7 @@ func _on_damage_dealt_xp(attacker: HeroCharacter, _victim: HeroCharacter, dealt:
 
 
 func _physics_process(delta: float) -> void:
-	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) and multiplayer.is_server():
+	if NetworkManager.is_active_host_authority():
 		var combat_ctx: Dictionary = _build_combat_context()
 
 		# 1. Step AI Bots

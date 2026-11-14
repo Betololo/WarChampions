@@ -890,7 +890,7 @@ func _physics_process(delta: float) -> void:
 		cmd.tick = local_tick
 		var pre_jump_held: bool = prev_jump_held
 		simulate_movement(cmd, delta)
-		if multiplayer.multiplayer_peer == null or (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) or not multiplayer.is_server():
+		if not NetworkManager.is_active_host_authority():
 			input_buffer.push(
 				local_tick,
 				cmd,
@@ -915,7 +915,7 @@ func _physics_process(delta: float) -> void:
 						var aim_dir: Vector3 = -(Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
 						StatusEffectsVFX.spawn_muzzle_flash(get_parent(), get_muzzle_world_position(), aim_dir, cw.weapon_kind)
 		NetworkManager.send_input_to_server(cmd)
-	elif multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) and multiplayer.is_server():
+	elif NetworkManager.is_active_host_authority():
 		simulate_movement(latest_server_input, delta)
 
 	_curr_phys_pos = global_position
@@ -1141,7 +1141,7 @@ func clear_vehicle_state() -> void:
 		visual_root.visible = true
 
 func reconcile_with_server(state: Dictionary) -> void:
-	var is_active_host: bool = multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) and multiplayer.is_server()
+	var is_active_host: bool = NetworkManager.is_active_host_authority()
 	if not is_local_player or is_bot or is_active_host:
 		return
 	var ack_tick: int = int(state.get("ack_tick", -1))

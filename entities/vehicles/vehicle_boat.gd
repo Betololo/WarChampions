@@ -4,7 +4,7 @@ extends VehicleBase
 ## Aquatic Patrol / Landing Boat: Buoyancy over ocean (Y = 0.0),
 ## 1 Driver + 2 open deck Passengers who can fire weapons, skills & Wrench.
 const MAX_WATER_SPEED: float = 22.0
-const BUOYANCY_STIFFNESS: float = 24.0
+const BUOYANCY_STIFFNESS: float = 36.0
 const WATER_DRAG: float = 2.8
 
 
@@ -28,33 +28,46 @@ func _build_vehicle_mesh() -> void:
 	_apply_built_visuals(VehicleMeshBuilder.build_boat_visuals(_visual_root, team))
 
 
+func _physics_process(delta: float) -> void:
+	if is_destroyed or freeze:
+		return
+	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+		return
+	_apply_buoyancy_and_leveling(delta)
+
+
+func _apply_buoyancy_and_leveling(delta: float) -> void:
+	var water_y: float = HeroCharacter.WATER_LEVEL
+	var in_water: bool = global_position.y <= water_y + 0.65
+	if in_water:
+		# Equilibrium sits at global_position.y ~= -0.34m (keel in -0.35 ocean, deck & gunwales crisp above water)
+		var submersion: float = clampf((water_y + 0.20) - global_position.y, 0.0, 2.5)
+		apply_central_force(Vector3.UP * (submersion * BUOYANCY_STIFFNESS - linear_velocity.y * 6.0) * mass * 0.50)
+		var has_driver: bool = not seats.is_empty() and seats[0].occupant_id >= 0
+		if not has_driver:
+			linear_velocity.x = lerpf(linear_velocity.x, 0.0, WATER_DRAG * delta)
+			linear_velocity.z = lerpf(linear_velocity.z, 0.0, WATER_DRAG * delta)
+	rotation.x = lerpf(rotation.x, 0.0, 5.0 * delta)
+	rotation.z = lerpf(rotation.z, 0.0, 5.0 * delta)
+
+
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:
 	var water_y: float = HeroCharacter.WATER_LEVEL
 	var in_water: bool = global_position.y <= water_y + 0.65
 
-	if in_water:
-		var submersion: float = clampf((water_y + 0.35) - global_position.y, 0.0, 2.5)
-		apply_central_force(Vector3.UP * (submersion * BUOYANCY_STIFFNESS - linear_velocity.y * 5.0) * mass * 0.45)
-
+	if in_water and driver != null:
 		var forward: Vector3 = -global_transform.basis.z
 		var flat_fwd := Vector3(forward.x, 0.0, forward.z).normalized()
-		if driver != null:
-			var cmd: InputCmd = driver.latest_server_input
-			var throttle: float = -cmd.move_dir.y
-			var steer: float = -cmd.move_dir.x
-			if absf(throttle) > 0.05 and linear_velocity.length() < MAX_WATER_SPEED:
-				apply_central_force(flat_fwd * throttle * 26.0 * mass)
-			if absf(steer) > 0.05:
-				angular_velocity.y = lerpf(angular_velocity.y, steer * 2.6, 5.0 * delta)
-			# Bow light gun on fire
-			if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
-				_driver_fire_cd = 0.14
-				var fire_dir: Vector3 = -Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0)).z.normalized()
-				var muzzle: Vector3 = global_position + Vector3(0.0, 1.9, 0.0) + fire_dir * 2.5
-				_fire_ballistic_mg(driver, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)
-		else:
-			linear_velocity.x = lerpf(linear_velocity.x, 0.0, WATER_DRAG * delta)
-			linear_velocity.z = lerpf(linear_velocity.z, 0.0, WATER_DRAG * delta)
-
-	rotation.x = lerpf(rotation.x, 0.0, 5.0 * delta)
-	rotation.z = lerpf(rotation.z, 0.0, 5.0 * delta)
+		var cmd: InputCmd = driver.latest_server_input
+		var throttle: float = -cmd.move_dir.y
+		var steer: float = -cmd.move_dir.x
+		if absf(throttle) > 0.05 and linear_velocity.length() < MAX_WATER_SPEED:
+			apply_central_force(flat_fwd * throttle * 26.0 * mass)
+		if absf(steer) > 0.05:
+			angular_velocity.y = lerpf(angular_velocity.y, steer * 2.6, 5.0 * delta)
+		# Bow light gun on fire
+		if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
+			_driver_fire_cd = 0.14
+			var fire_dir: Vector3 = -Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0)).z.normalized()
+			var muzzle: Vector3 = global_position + Vector3(0.0, 1.9, 0.0) + fire_dir * 2.5
+			_fire_ballistic_mg(driver, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)

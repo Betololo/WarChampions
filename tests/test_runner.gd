@@ -19,6 +19,7 @@ func _ready() -> void:
 	_test_vehicles_rear_armor_wing_riding_and_boat()
 	await _test_vehicle_protection_destruction_and_hud()
 	_test_seaside_map_and_12v12_bots_integration()
+	_test_double_map_architecture_and_landmarks()
 	_test_overhaul_net_u32_fall_damage_and_assets()
 	_test_hero_visuals_camera_and_audio()
 	_test_ik_weapon_grip_shot_fx_and_scope()
@@ -557,6 +558,7 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 
 	# 2. Launch Optional Offline 12v12 Bots Match and verify 24 spaced combatants (12 Royal vs 12 National)
 	game._on_play_offline_bots(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER)
+	_assert(NetworkManager.is_solo_bot_mode and NetworkManager.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Offline 12v12 Bots uses isolated OfflineMultiplayerPeer without binding UDP port")
 	var counts: Vector2i = NetworkManager.get_team_counts()
 	_assert(counts.x == 12 and counts.y == 12 and game.heroes_by_id.size() == 24, "12v12 Bots match spawns 12 Royal + 12 National (24 heroes)")
 
@@ -570,6 +572,7 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	_assert(min_spawn_dist >= 3.0, "No overlapping spawn positions across 24 combatants (min XZ separation %.2fm)" % min_spawn_dist)
 
 	NetworkManager.shutdown_network()
+	SoundSynthesizer.stop_whistle_theme()
 	game.free()
 
 
@@ -1150,6 +1153,229 @@ func _test_vehicle_sculpted_models_and_animations() -> void:
 	plane.free()
 	boat.free()
 	aa.free()
+
+
+func _collect_collision_shapes(node: Node, out: Array[CollisionShape3D]) -> void:
+	if node is CollisionShape3D:
+		out.append(node as CollisionShape3D)
+	for c in node.get_children():
+		_collect_collision_shapes(c, out)
+
+
+func _collision_shape_y_range(col: CollisionShape3D) -> Vector2:
+	var gt: Transform3D = col.global_transform
+	var s: Shape3D = col.shape
+	if s is BoxShape3D:
+		var h: Vector3 = (s as BoxShape3D).size * 0.5
+		var min_y: float = INF
+		var max_y: float = -INF
+		for sx in [-1.0, 1.0]:
+			for sy in [-1.0, 1.0]:
+				for sz in [-1.0, 1.0]:
+					var wy: float = (gt * Vector3(sx * h.x, sy * h.y, sz * h.z)).y
+					min_y = minf(min_y, wy)
+					max_y = maxf(max_y, wy)
+		return Vector2(min_y, max_y)
+	elif s is CylinderShape3D:
+		var cyl := s as CylinderShape3D
+		var hh: float = cyl.height * 0.5 * gt.basis.y.length()
+		return Vector2(gt.origin.y - hh, gt.origin.y + hh)
+	return Vector2(gt.origin.y, gt.origin.y)
+
+
+func _collision_shape_xz_distance(col: CollisionShape3D, world_pt: Vector3) -> float:
+	var s: Shape3D = col.shape
+	var inv: Transform3D = col.global_transform.affine_inverse()
+	var lp: Vector3 = inv * world_pt
+	if s is BoxShape3D:
+		var h: Vector3 = (s as BoxShape3D).size * 0.5
+		var clamped := Vector3(clampf(lp.x, -h.x, h.x), clampf(lp.y, -h.y, h.y), clampf(lp.z, -h.z, h.z))
+		var wp_closest: Vector3 = col.global_transform * clamped
+		return Vector2(world_pt.x, world_pt.z).distance_to(Vector2(wp_closest.x, wp_closest.z))
+	elif s is CylinderShape3D:
+		var cyl := s as CylinderShape3D
+		var center_dist: float = Vector2(world_pt.x, world_pt.z).distance_to(Vector2(col.global_transform.origin.x, col.global_transform.origin.z))
+		return maxf(0.0, center_dist - cyl.radius)
+	return Vector2(world_pt.x, world_pt.z).distance_to(Vector2(col.global_transform.origin.x, col.global_transform.origin.z))
+
+
+func _test_double_map_architecture_and_landmarks() -> void:
+	# 1. Verify all 6+ new architectural textures generate cleanly
+	for tex_key in ["stucco_ochre", "stucco_terracotta", "stone_masonry", "awning_stripe", "tarmac_runway", "water_fountain", "roof_terracotta"]:
+		var tex: ImageTexture = CartoonAssets.get_texture(tex_key)
+		_assert(tex != null and tex.get_width() >= 128 and tex.get_height() >= 128, "CartoonAssets architectural texture '%s' valid (%dx%d)" % [tex_key, tex.get_width() if tex else 0, tex.get_height() if tex else 0])
+
+	# 2. Build full 2x Seaside Frontline map inside scene tree for world-transform verification
+	var test_host := Node3D.new()
+	test_host.name = "MapScaleTestHost"
+	add_child(test_host)
+
+	var conquest := ConquestManager.new()
+	var vehicles_root := Node3D.new()
+	var map := MapSeasideFrontline.new()
+	test_host.add_child(conquest)
+	test_host.add_child(vehicles_root)
+	test_host.add_child(map)
+	map.build_map(conquest, vehicles_root, {"destruction_callback": func(_a, _b, _c): pass})
+
+	# 3. Verify 2x terrain & ocean bounds
+	var ocean_mi := map.get_node_or_null("Ocean") as MeshInstance3D
+	_assert(ocean_mi != null and ocean_mi.mesh is PlaneMesh and (ocean_mi.mesh as PlaneMesh).size.x >= 2400.0 and (ocean_mi.mesh as PlaneMesh).size.y >= 2400.0, "Ocean spans >= 2400m x 2400m")
+	var beach_col := map.get_node_or_null("BeachBase/CollisionShape3D") as CollisionShape3D
+	if beach_col == null and map.get_node_or_null("BeachBase") != null:
+		var bc: Array[CollisionShape3D] = []
+		_collect_collision_shapes(map.get_node("BeachBase"), bc)
+		if not bc.is_empty():
+			beach_col = bc[0]
+	var grass_col: CollisionShape3D = null
+	if map.get_node_or_null("GrassMainland") != null:
+		var gc: Array[CollisionShape3D] = []
+		_collect_collision_shapes(map.get_node("GrassMainland"), gc)
+		if not gc.is_empty():
+			grass_col = gc[0]
+	_assert(beach_col != null and beach_col.shape is BoxShape3D and (beach_col.shape as BoxShape3D).size.x >= 1600.0 and (beach_col.shape as BoxShape3D).size.z >= 1080.0, "BeachBase covers >= 1600m x 1080m")
+	_assert(grass_col != null and grass_col.shape is BoxShape3D and (grass_col.shape as BoxShape3D).size.x >= 1440.0 and (grass_col.shape as BoxShape3D).size.z >= 920.0, "GrassMainland covers >= 1440m x 920m")
+
+	# 4. Verify required landmarks, sculpted buildings, watchtowers & 140+ layered trees
+	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier"]:
+		_assert(map.get_node_or_null(lm_name) != null, "Landmark '%s' exists on map" % lm_name)
+
+	var watchtower_count: int = 0
+	var tree_count: int = 0
+	var house_count: int = 0
+	for child in map.get_children():
+		if child.name.begins_with("Watchtower"):
+			watchtower_count += 1
+		elif child.name.begins_with("Tree_") or child.name.begins_with("LayeredTree_"):
+			tree_count += 1
+		elif child.name.begins_with("VillageHouse_"):
+			house_count += 1
+	_assert(watchtower_count >= 6, "Map has >= 6 Watchtower landmarks (found %d)" % watchtower_count)
+	_assert(tree_count >= 140, "Map has >= 140 layered trees (found %d)" % tree_count)
+	_assert(house_count >= 28, "Map has >= 28 sculpted village houses (found %d)" % house_count)
+
+	# Verify Watchtower_1 has continuous walkable sloped stair/landing colliders climbing up to >= 6.0m
+	var wt1 := map.get_node_or_null("Watchtower_1")
+	var wt_cols: Array[CollisionShape3D] = []
+	if wt1 != null:
+		_collect_collision_shapes(wt1, wt_cols)
+	var stair_rungs_low: bool = false
+	var stair_rungs_mid: bool = false
+	var stair_deck_top: bool = false
+	var wt1_y: float = wt1.global_position.y if wt1 is Node3D else 0.0
+	for wc in wt_cols:
+		var yr: Vector2 = _collision_shape_y_range(wc)
+		var rel_top: float = yr.y - wt1_y
+		var is_sloped_or_step: bool = absf(wc.rotation.x) > 0.15 or absf(wc.rotation.z) > 0.15 or absf(wc.global_transform.basis.y.y) < 0.96
+		if is_sloped_or_step and rel_top >= 2.2 and rel_top <= 3.6:
+			stair_rungs_low = true
+		if is_sloped_or_step and rel_top >= 5.5 and rel_top <= 6.6:
+			stair_rungs_mid = true
+		if rel_top >= 5.95 and rel_top <= 6.35:
+			stair_deck_top = true
+	_assert(stair_rungs_low and stair_rungs_mid and stair_deck_top, "Watchtower_1 has climbable sloped stair ramps up to >= 6.0m deck (low=%s, mid=%s, deck=%s)" % [stair_rungs_low, stair_rungs_mid, stair_deck_top])
+
+	# 5. Material Transparency Hygiene & Outward Loft Winding across ENTIRE map!
+	var map_meshes: Array[MeshInstance3D] = []
+	_collect_mesh_instances(map, map_meshes)
+	var bad_trans: int = 0
+	var bad_vol: int = 0
+	var neg_scale: int = 0
+	for mi in map_meshes:
+		var det: float = mi.global_transform.basis.determinant()
+		if det <= 0.0:
+			neg_scale += 1
+		var mat := mi.material_override
+		if mat == null and mi.mesh != null and mi.mesh.get_surface_count() > 0:
+			mat = mi.mesh.surface_get_material(0)
+		if mat is StandardMaterial3D:
+			var sm := mat as StandardMaterial3D
+			if sm.albedo_color.a >= 0.99 and sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				bad_trans += 1
+		if mi.mesh is ArrayMesh:
+			var am := mi.mesh as ArrayMesh
+			if am.get_faces().size() >= 12:
+				if _signed_volume_outward_cw(am) <= 0.0:
+					bad_vol += 1
+	_assert(bad_trans == 0, "Zero opaque StandardMaterial3D (alpha >= 0.99) using transparency != DISABLED (found %d)" % bad_trans)
+	_assert(bad_vol == 0 and neg_scale == 0, "All map ArrayMesh lofts have outward CW winding & positive transforms (bad_vol=%d, neg_scale=%d)" % [bad_vol, neg_scale])
+
+	# 6. Vehicle placement usability: 4 Planes on unobstructed runways & 6 Boats beside piers past beach
+	var planes: Array[VehiclePlane] = []
+	var boats: Array[VehicleBoat] = []
+	for v in map.spawned_vehicles:
+		if v is VehiclePlane:
+			planes.append(v as VehiclePlane)
+		elif v is VehicleBoat:
+			boats.append(v as VehicleBoat)
+	_assert(planes.size() >= 4, "Map spawns >= 4 Fighter Planes (found %d)" % planes.size())
+	_assert(boats.size() >= 6, "Map spawns >= 6 Patrol Boats (found %d)" % boats.size())
+
+	var royal_runway := map.get_node("RoyalRunway") as Node3D
+	var nat_runway := map.get_node("NationalRunway") as Node3D
+	var royal_center: Vector3 = map.royal_spawns[0]
+	var nat_center: Vector3 = map.national_spawns[0]
+	var r_planes: int = 0
+	var n_planes: int = 0
+	for p in planes:
+		if p.team == NetworkManager.TEAM_ROYAL:
+			r_planes += 1
+			_assert(p.position.distance_to(royal_runway.position) <= 115.0 and p.position.distance_to(royal_center) <= 160.0, "Royal Plane near RoyalRunway & Royal Spawn (dist runway=%.1f, spawn=%.1f)" % [p.position.distance_to(royal_runway.position), p.position.distance_to(royal_center)])
+		elif p.team == NetworkManager.TEAM_NATIONAL:
+			n_planes += 1
+			_assert(p.position.distance_to(nat_runway.position) <= 115.0 and p.position.distance_to(nat_center) <= 160.0, "National Plane near NationalRunway & National Spawn (dist runway=%.1f, spawn=%.1f)" % [p.position.distance_to(nat_runway.position), p.position.distance_to(nat_center)])
+	_assert(r_planes >= 2 and n_planes >= 2, "Both factions have >= 2 runway Planes (R=%d, N=%d)" % [r_planes, n_planes])
+
+	# Ensure 220m x 18m runway corridor is completely free of vertical obstacles (> 0.6m above tarmac)
+	for rw_node in [royal_runway, nat_runway]:
+		var rw_cols: Array[CollisionShape3D] = []
+		_collect_collision_shapes(rw_node, rw_cols)
+		var blocked_rw: int = 0
+		for wc in rw_cols:
+			var yr: Vector2 = _collision_shape_y_range(wc)
+			if yr.y > rw_node.global_position.y + 0.6:
+				var local_p: Vector3 = rw_node.global_transform.affine_inverse() * wc.global_transform.origin
+				if absf(local_p.x) < 110.0 and absf(local_p.z) < 9.5:
+					blocked_rw += 1
+		_assert(blocked_rw == 0, "Airstrip '%s' takeoff corridor (220m x 19m) has 0 vertical obstacles (found %d)" % [rw_node.name, blocked_rw])
+
+	var pier_cols: Array[CollisionShape3D] = []
+	for p_name in ["RoyalPier", "CentralPier", "NationalPier"]:
+		_collect_collision_shapes(map.get_node(p_name), pier_cols)
+	var boats_ready: int = 0
+	for b in boats:
+		var min_dock_d: float = 999.0
+		for pc in pier_cols:
+			min_dock_d = minf(min_dock_d, _collision_shape_xz_distance(pc, b.position))
+		if b.position.y <= 0.65 and absf(b.position.z) > 542.0 and min_dock_d <= 3.5:
+			boats_ready += 1
+	_assert(boats_ready == boats.size() and boats.size() >= 6, "All %d Boats float in deep water (abs(Z)>542, y<=0.65) within <=3.5m of pier deck (%d ready)" % [boats.size(), boats_ready])
+
+	# 7. Verify all 24 spawn pads are >= 3.0m apart and clear >= 4.5m horizontally of vertical obstacles
+	var all_spawns: Array[Vector3] = []
+	all_spawns.append_array(map.royal_spawns)
+	all_spawns.append_array(map.national_spawns)
+	_assert(all_spawns.size() == 24, "Map provides 24 spawn positions (12 Royal + 12 National)")
+	var min_pad_sep: float = 999.0
+	for i in range(all_spawns.size()):
+		for j in range(i + 1, all_spawns.size()):
+			min_pad_sep = minf(min_pad_sep, Vector2(all_spawns[i].x, all_spawns[i].z).distance_to(Vector2(all_spawns[j].x, all_spawns[j].z)))
+	_assert(min_pad_sep >= 3.0, "All 24 spawn pads maintain >= 3.0m XZ spacing (min=%.2fm)" % min_pad_sep)
+
+	var all_cols: Array[CollisionShape3D] = []
+	_collect_collision_shapes(map, all_cols)
+	var blocked_spawns: int = 0
+	for sp in all_spawns:
+		for col in all_cols:
+			var yr: Vector2 = _collision_shape_y_range(col)
+			if yr.y >= sp.y + 0.35 and yr.x <= sp.y + 2.2:
+				if _collision_shape_xz_distance(col, sp) < 4.5:
+					blocked_spawns += 1
+					break
+	_assert(blocked_spawns == 0, "Zero spawn pads blocked within 4.5m by static vertical obstacles (blocked=%d)" % blocked_spawns)
+
+	remove_child(test_host)
+	test_host.free()
 
 
 func _test_scene_compile_and_load() -> void:
