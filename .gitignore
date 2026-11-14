@@ -11,3 +11,7 @@ export_presets.cfg
 Thumbs.db
 *.swp
 .vscode/
+
+# Superpowers temporary SDD workspace & worktrees
+.superpowers/
+.worktrees/
