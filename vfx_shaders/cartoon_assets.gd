@@ -47,6 +47,22 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _tex_bark()
 		"sand":
 			return _tex_stucco(Color(0.94, 0.85, 0.58), Color(0.86, 0.75, 0.48))
+		"hero_jacket_royal":
+			return _tex_jacket(Color(0.45, 0.37, 0.25), Color(0.30, 0.24, 0.16), Color(0.68, 0.58, 0.38))
+		"hero_jacket_national":
+			return _tex_jacket(Color(0.32, 0.34, 0.38), Color(0.18, 0.19, 0.22), Color(0.65, 0.18, 0.18))
+		"hero_coat_commando":
+			return _tex_jacket(Color(0.19, 0.20, 0.23), Color(0.10, 0.11, 0.13), Color(0.32, 0.24, 0.18))
+		"hero_gunner_vest":
+			return _tex_jacket(Color(0.76, 0.74, 0.68), Color(0.52, 0.50, 0.45), Color(0.40, 0.35, 0.25))
+		"hero_skin":
+			return _tex_skin()
+		"hero_pants_royal":
+			return _tex_stucco(Color(0.42, 0.35, 0.25), Color(0.34, 0.28, 0.19))
+		"hero_pants_national":
+			return _tex_stucco(Color(0.24, 0.25, 0.28), Color(0.18, 0.19, 0.22))
+		"hero_gun_wood":
+			return _tex_stucco(Color(0.50, 0.30, 0.15), Color(0.36, 0.20, 0.09))
 		"flag_royal":
 			return _sprite_flag(true)
 		"flag_national":
@@ -196,6 +212,46 @@ static func _tex_bark() -> ImageTexture:
 	var img := _new_img(64, 64, Color(0.38, 0.26, 0.16))
 	for x in range(4, 64, 10):
 		_draw_rect(img, x, 0, 3, 64, Color(0.28, 0.18, 0.10))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_jacket(base: Color, seam: Color, accent: Color) -> ImageTexture:
+	var img := _new_img(128, 128, base)
+	var shade: Color = base.lerp(seam, 0.45)
+	# Subtle painted cloth fold shadows & waist AO
+	for y in range(128):
+		var vy: float = float(y) / 127.0
+		var row_col: Color = base
+		if vy > 0.80:
+			row_col = seam.lerp(base, 0.45)
+		elif vy < 0.16:
+			row_col = base.lightened(0.08)
+		_draw_rect(img, 0, y, 128, 1, row_col)
+	# Vertical cloth fold shadows under arms (x ~ 32 & x ~ 96) and back center seam (x ~ 64)
+	_draw_rect(img, 63, 18, 2, 95, seam)
+	_draw_rect(img, 29, 28, 6, 82, shade)
+	_draw_rect(img, 93, 28, 6, 82, shade)
+	# Horizontal shoulder yoke on back (seen directly in TPS!)
+	_draw_rect(img, 36, 28, 56, 3, seam)
+	_draw_rect(img, 36, 25, 56, 3, base.lightened(0.10))
+	# Waist belt & back belt loops
+	_draw_rect(img, 0, 104, 128, 12, Color(0.16, 0.13, 0.10))
+	_draw_rect(img, 0, 104, 128, 2, accent)
+	# Front lapels, pockets & buttons near x = 0..26 & 102..127
+	_draw_rect(img, 0, 0, 6, 104, seam)
+	_draw_rect(img, 122, 0, 6, 104, seam)
+	_draw_rect(img, 10, 44, 16, 14, shade)
+	_draw_rect(img, 102, 44, 16, 14, shade)
+	_draw_rect(img, 10, 44, 16, 4, accent)
+	_draw_rect(img, 102, 44, 16, 4, accent)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_skin() -> ImageTexture:
+	var img := _new_img(64, 64, Color(0.95, 0.76, 0.62))
+	# Soft jaw/neck shadow at bottom & subtle warm flush
+	_draw_rect(img, 0, 52, 64, 12, Color(0.80, 0.60, 0.48))
+	_draw_rect(img, 0, 0, 64, 12, Color(0.98, 0.82, 0.68))
 	return ImageTexture.create_from_image(img)
 
 

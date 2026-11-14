@@ -4,11 +4,11 @@ extends Node3D
 ## Tight BFH Over-the-Right-Shoulder TPS camera + 1st-person Sniper Scope transition.
 signal scope_toggled(is_scoped: bool)
 
-const TPS_SHOULDER_OFFSET: Vector3 = Vector3(0.46, 1.54, 0.0)
-const TPS_SPRING_LENGTH: float = 2.25
-const TPS_FOV: float = 68.0
+const TPS_SHOULDER_OFFSET: Vector3 = Vector3(0.24, 2.06, 0.0)
+const TPS_SPRING_LENGTH: float = 1.58
+const TPS_FOV: float = 66.0
 
-const FPS_EYE_OFFSET: Vector3 = Vector3(0.0, 1.58, 0.0)
+const FPS_EYE_OFFSET: Vector3 = Vector3(0.0, 1.62, 0.0)
 const FPS_SCOPE_FOV: float = 22.0
 
 const VEHICLE_SPRING_LENGTH: float = 6.5
@@ -17,7 +17,7 @@ const VEHICLE_OFFSET: Vector3 = Vector3(0.0, 2.35, 0.0)
 var mouse_sensitivity: float = 0.0024
 var scope_sensitivity_mult: float = 0.36
 var yaw: float = 0.0
-var pitch: float = -0.08
+var pitch: float = -0.02
 var is_scoped: bool = false
 var in_vehicle: bool = false
 var recoil_pitch_offset: float = 0.0

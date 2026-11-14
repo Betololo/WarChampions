@@ -172,10 +172,14 @@ func _build_landmarks_and_village() -> void:
 		{"pos": Vector3(68.0, 2.1, 78.0), "size": Vector3(14, 8, 12), "wall": "stucco_cream", "stairs": true},
 		{"pos": Vector3(96.0, 2.1, 78.0), "size": Vector3(13, 7, 12), "wall": "stucco_yellow", "stairs": false},
 		# Outpost Cottages near Base Approaches & Countryside
-		{"pos": Vector3(-115.0, 2.1, 32.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": true},
+		{"pos": Vector3(-165.0, 2.1, 34.0), "size": Vector3(13, 7.0, 11), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(-135.0, 2.1, 34.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": false},
+		{"pos": Vector3(-115.0, 2.1, 78.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": true},
 		{"pos": Vector3(-155.0, 2.1, 78.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": false},
-		{"pos": Vector3(145.0, 2.1, 32.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(145.0, 2.1, 34.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(172.0, 2.1, 34.0), "size": Vector3(13, 7.0, 11), "wall": "stucco_yellow", "stairs": false},
 		{"pos": Vector3(165.0, 2.1, 78.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": false},
+		{"pos": Vector3(132.0, 2.1, 78.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": true},
 		{"pos": Vector3(-55.0, 2.1, -35.0), "size": Vector3(13, 7, 11), "wall": "stucco_cream", "stairs": false},
 		{"pos": Vector3(85.0, 2.1, -40.0), "size": Vector3(13, 7, 11), "wall": "stucco_yellow", "stairs": true},
 		{"pos": Vector3(12.0, 2.1, 130.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": false},
@@ -243,10 +247,10 @@ func _build_trees_and_foliage() -> void:
 			ty = 4.5
 		tree_positions.append(Vector3(tx, ty, tz))
 
-	# Hand-placed boulevard trees right along the town street like Image 1!
-	for bx in [-75.0, -20.0, 18.0, 52.0, 115.0, -125.0, 130.0]:
-		tree_positions.append(Vector3(bx, 2.1, 41.0))
-		tree_positions.append(Vector3(bx + 12.0, 2.1, 69.0))
+	# Hand-placed boulevard trees framing BOTH village approaches right along sidewalks (like Image 2!)
+	for bx in [-178.0, -148.0, -108.0, -75.0, -20.0, 18.0, 52.0, 115.0, 152.0, 182.0]:
+		tree_positions.append(Vector3(bx, 2.1, 41.5))
+		tree_positions.append(Vector3(bx + 10.0, 2.1, 68.5))
 
 	for idx in range(tree_positions.size()):
 		_create_cartoon_tree("Tree_%d" % idx, tree_positions[idx], bark_mat, leaf_mat)
@@ -291,7 +295,13 @@ func _create_cartoon_tree(t_name: String, base_pos: Vector3, bark_mat: Material,
 
 func _build_destructible_props(combat_context: Dictionary) -> void:
 	var prop_spots: Array[Dictionary] = [
-		# Stacked wooden crate cover on cobblestone street (just like Image 1!)
+		# Stacked wooden crate cover on cobblestone street near spawns & town square (just like Image 2!)
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(-168.0, 2.15, 51.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(-166.6, 2.15, 51.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(-167.3, 3.45, 51.0), "rot": 0.08},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(168.0, 2.15, 59.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(166.6, 2.15, 59.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(167.3, 3.45, 59.0), "rot": -0.08},
 		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(14.0, 2.15, 51.0), "rot": 0.0},
 		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(15.4, 2.15, 51.0), "rot": 0.0},
 		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(14.7, 3.45, 51.0), "rot": 0.1},
@@ -332,12 +342,12 @@ func _build_capture_points(conquest: ConquestManager) -> void:
 func _build_spawn_points() -> void:
 	royal_spawns.clear()
 	national_spawns.clear()
-	# 12 Royal & 12 National well-spaced spawn pads (6m apart, clean ground height Y=2.3)
+	# 12 Royal & 12 National spaced spawn pads RIGHT ON THE MAIN TOWN BOULEVARD (6m apart, Y=2.3)
 	for i in range(12):
-		var row: int = i / 4
-		var col: int = i % 4
-		royal_spawns.append(Vector3(-255.0 - float(row) * 6.0, 2.3, 42.0 + float(col) * 6.0))
-		national_spawns.append(Vector3(255.0 + float(row) * 6.0, 2.3, -42.0 - float(col) * 6.0))
+		var row: int = i / 3
+		var col: int = i % 3
+		royal_spawns.append(Vector3(-190.0 - float(row) * 5.5, 2.3, 49.0 + float(col) * 5.0))
+		national_spawns.append(Vector3(190.0 + float(row) * 5.5, 2.3, 61.0 - float(col) * 5.0))
 
 
 func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:
@@ -347,11 +357,11 @@ func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:
 	_next_vehicle_id = 1
 
 	# Land Vehicles (Jeeps & Tanks)
-	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-220.0, 3.0, 48.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-182.0, 3.0, 55.0), -PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-215.0, 3.0, 74.0), -PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_ROYAL, Vector3(-230.0, 3.2, 92.0), -PI * 0.5)
 
-	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(220.0, 3.0, -48.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(182.0, 3.0, 55.0), PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(215.0, 3.0, -74.0), PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_NATIONAL, Vector3(230.0, 3.2, -92.0), PI * 0.5)
 

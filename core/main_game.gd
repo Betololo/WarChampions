@@ -24,6 +24,7 @@ var bot_brains: Dictionary = {}
 var _prev_interact_state: Dictionary = {}
 var _royal_spawn_idx: int = 0
 var _national_spawn_idx: int = 0
+var _switching_mode: bool = false
 
 
 func _ready() -> void:
@@ -91,10 +92,10 @@ func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
 	if hud == null:
 		return
 	if connected and is_srv:
-		hud.add_killfeed("SALA ONLINE ATIVA (0 Bots) — Aguardando jogadores na porta 7777!")
+		hud.add_killfeed("Sala Online pronta (0 Bots, porta %d)" % NetworkManager.DEFAULT_PORT)
 	elif connected:
-		hud.add_killfeed("Conectado ao servidor multiplayer!")
-	else:
+		hud.add_killfeed("Conectado ao servidor!")
+	elif not _switching_mode:
 		hud.add_killfeed("Desconectado da partida.")
 
 
@@ -149,28 +150,38 @@ func _unhandled_input(event: InputEvent) -> void:
 				NetworkManager.sim_latency_ms = 0.0
 				NetworkManager.sim_jitter_ms = 0.0
 				NetworkManager.sim_packet_loss = 0.0
+		elif k.keycode == KEY_M:
+			var music_on: bool = SoundSynthesizer.toggle_music()
+			if hud != null:
+				hud.add_killfeed("Música: ATIVADA" if music_on else "Música: DESATIVADA (M)")
 
 
 func _on_host_online(team: int, class_id: int, port: int) -> void:
+	_switching_mode = true
 	_clear_match_entities()
 	conquest_manager.reset_match()
 	NetworkManager.set_local_loadout("HostHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.start_host(port, false)
+	_switching_mode = false
 	SoundSynthesizer.start_whistle_theme()
 
 
 func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
+	_switching_mode = true
 	_clear_match_entities()
 	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.join_server(ip, port)
+	_switching_mode = false
 	SoundSynthesizer.start_whistle_theme()
 
 
 func _on_play_offline_bots(team: int, class_id: int) -> void:
+	_switching_mode = true
 	_clear_match_entities()
 	conquest_manager.reset_match()
 	NetworkManager.set_local_loadout("Hero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.start_host(NetworkManager.DEFAULT_PORT, true)
+	_switching_mode = false
 	_spawn_12v12_bots(team)
 	SoundSynthesizer.start_whistle_theme()
 
@@ -178,6 +189,8 @@ func _on_play_offline_bots(team: int, class_id: int) -> void:
 func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
+	if hud != null:
+		hud.clear_killfeed()
 	for b in bots_root.get_children():
 		b.queue_free()
 	bot_brains.clear()
@@ -239,7 +252,7 @@ func _physics_process(delta: float) -> void:
 			if hero.is_defeated:
 				if hero.defeat_timer <= 0.0:
 					var sp: Vector3 = _get_next_spawn_pos(hero.team)
-					hero.respawn_at(sp, 0.0 if hero.team == NetworkManager.TEAM_ROYAL else PI)
+					hero.respawn_at(sp, -PI * 0.5 if hero.team == NetworkManager.TEAM_ROYAL else PI * 0.5)
 				continue
 
 			_handle_vehicle_interact(hero)

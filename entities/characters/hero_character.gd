@@ -79,6 +79,8 @@ var _torso_pivot: Node3D
 var _head_pivot: Node3D
 var _arm_l_pivot: Node3D
 var _arm_r_pivot: Node3D
+var _forearm_l_pivot: Node3D
+var _forearm_r_pivot: Node3D
 var _leg_l_pivot: Node3D
 var _leg_r_pivot: Node3D
 var _held_weapon_root: Node3D
@@ -114,6 +116,7 @@ func _ready() -> void:
 		hero_camera = HeroCamera.new()
 		hero_camera.name = "HeroCamera"
 		add_child(hero_camera)
+		hero_camera.yaw = aim_yaw
 		hero_camera.set_active_camera(true)
 		hero_camera.scope_toggled.connect(_on_scope_toggled)
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not DisplayServer.get_name().contains("headless"):
@@ -128,6 +131,9 @@ func setup_identity(p_entity_id: int, p_name: String, p_team: int, p_class_id: i
 	archetype = p_archetype
 	is_local_player = p_local
 	is_bot = p_bot
+	aim_yaw = -PI * 0.5 if team == NetworkManager.TEAM_ROYAL else PI * 0.5
+	if hero_camera != null:
+		hero_camera.yaw = aim_yaw
 	name = "Hero_%d" % entity_id
 	if is_inside_tree():
 		configure_class_loadout()
@@ -212,104 +218,173 @@ func _rebuild_cartoon_visuals() -> void:
 	_mesh_parts.clear()
 
 	var is_royal: bool = (team == NetworkManager.TEAM_ROYAL)
-	var uniform_col: Color = Color(0.32, 0.38, 0.24) if is_royal else Color(0.24, 0.25, 0.28)
 	var trim_col: Color = Color(0.86, 0.72, 0.24) if is_royal else Color(0.76, 0.16, 0.16)
-	var pants_col: Color = Color(0.34, 0.30, 0.22) if is_royal else Color(0.22, 0.22, 0.24)
-	var skin_col := Color(0.95, 0.76, 0.62)
+	var jacket_tex: String = "hero_jacket_royal" if is_royal else "hero_jacket_national"
+	var pants_tex: String = "hero_pants_royal" if is_royal else "hero_pants_national"
+	var hat_col: Color = Color(0.36, 0.23, 0.14) if is_royal else Color(0.24, 0.25, 0.28)
+	var skin_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "hero_skin", 0.72)
+	var hair_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.22, 0.14, 0.09) if is_royal else Color(0.14, 0.13, 0.14), "", 0.80)
+	var pants_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, pants_tex, 0.82)
+	var boot_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.14, 0.12, 0.10), "", 0.55)
+	var trim_mat := HeroMeshBuilder.make_sculpted_mat(trim_col, "", 0.50)
+
+	var torso_tex: String = jacket_tex
+	var arm_tex: String = jacket_tex
+	if class_id == NetworkManager.CLASS_GUNNER:
+		torso_tex = "hero_gunner_vest" if is_royal else "hero_jacket_national"
+		arm_tex = "hero_skin" if is_royal else "hero_jacket_national"
+	elif class_id == NetworkManager.CLASS_COMMANDO:
+		torso_tex = "hero_coat_commando"
+		arm_tex = "hero_coat_commando"
+
+	var torso_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, torso_tex, 0.78)
+	var arm_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, arm_tex, 0.76)
 
 	_hips_pivot = Node3D.new()
 	_hips_pivot.position = Vector3(0.0, 0.76, 0.0)
 	visual_root.add_child(_hips_pivot)
 
-	# Articulated Legs & Boots
-	var hip_x: float = 0.18 if class_id != NetworkManager.CLASS_GUNNER else 0.24
+	# Articulated Sculpted Legs & Boots
+	var hip_x: float = 0.14 if class_id != NetworkManager.CLASS_GUNNER else 0.18
+	var thigh_r: float = 0.115 if class_id == NetworkManager.CLASS_GUNNER else 0.095
+	var leg_mesh: ArrayMesh = HeroMeshBuilder.build_leg_mesh(thigh_r)
+	var boot_mesh: ArrayMesh = HeroMeshBuilder.build_boot_mesh()
+
 	_leg_l_pivot = Node3D.new()
 	_leg_l_pivot.position = Vector3(-hip_x, 0.0, 0.0)
 	_hips_pivot.add_child(_leg_l_pivot)
-	_add_cyl(_leg_l_pivot, 0.11, 0.09, 0.56, Vector3(0.0, -0.28, 0.0), pants_col)
-	_add_box(_leg_l_pivot, Vector3(0.18, 0.16, 0.28), Vector3(0.0, -0.64, -0.04), Color(0.14, 0.12, 0.10))
+	HeroMeshBuilder.add_part(_leg_l_pivot, leg_mesh, Vector3.ZERO, Vector3.ZERO, pants_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_leg_l_pivot, boot_mesh, Vector3(0.0, -0.56, 0.0), Vector3.ZERO, boot_mat, _mesh_parts)
 
 	_leg_r_pivot = Node3D.new()
 	_leg_r_pivot.position = Vector3(hip_x, 0.0, 0.0)
 	_hips_pivot.add_child(_leg_r_pivot)
-	_add_cyl(_leg_r_pivot, 0.11, 0.09, 0.56, Vector3(0.0, -0.28, 0.0), pants_col)
-	_add_box(_leg_r_pivot, Vector3(0.18, 0.16, 0.28), Vector3(0.0, -0.64, -0.04), Color(0.14, 0.12, 0.10))
+	HeroMeshBuilder.add_part(_leg_r_pivot, leg_mesh, Vector3.ZERO, Vector3.ZERO, pants_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_leg_r_pivot, boot_mesh, Vector3(0.0, -0.56, 0.0), Vector3.ZERO, boot_mat, _mesh_parts)
 
-	# Upper Torso (Sculpted V-Tapered Heroic Chest!)
+	# Upper Torso (Sculpted V-Tapered Jacket/Coat/Muscle Chest!)
 	_torso_pivot = Node3D.new()
-	_torso_pivot.position = Vector3(0.0, 0.06, 0.0)
+	_torso_pivot.position = Vector3(0.0, 0.04, 0.0)
 	_hips_pivot.add_child(_torso_pivot)
 
-	var chest_top_r: float = 0.30
-	var chest_bot_r: float = 0.19
-	var torso_col: Color = uniform_col
+	var torso_mesh: ArrayMesh = HeroMeshBuilder.build_torso_mesh(class_id)
+	HeroMeshBuilder.add_part(_torso_pivot, torso_mesh, Vector3.ZERO, Vector3.ZERO, torso_mat, _mesh_parts)
+
+	# Subtle sculpted class details (Epaulets / Canteen pouch / Collar / Bandolier) — NO ugly bricks!
+	var leather_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.24, 0.18, 0.12), "", 0.65)
 	if class_id == NetworkManager.CLASS_GUNNER:
-		chest_top_r = 0.42
-		chest_bot_r = 0.25
-		torso_col = Color(0.92, 0.90, 0.85) if is_royal else Color(0.24, 0.25, 0.28) # Tank top / heavy vest
-	elif class_id == NetworkManager.CLASS_COMMANDO:
-		chest_top_r = 0.26
-		chest_bot_r = 0.17
-		torso_col = Color(0.14, 0.14, 0.16) # Dark trenchcoat
-
-	# Belt + Buckle
-	_add_cyl(_torso_pivot, chest_bot_r * 1.05, chest_bot_r * 1.05, 0.12, Vector3(0.0, 0.06, 0.0), Color(0.16, 0.14, 0.12))
-	_add_box(_torso_pivot, Vector3(0.12, 0.10, 0.06), Vector3(0.0, 0.06, -chest_bot_r), trim_col)
-	# V-Chest
-	_add_cyl(_torso_pivot, chest_top_r, chest_bot_r, 0.62, Vector3(0.0, 0.40, 0.0), torso_col)
-
-	if class_id == NetworkManager.CLASS_COMMANDO:
-		# Trenchcoat tail & bandolier
-		_add_cyl(_torso_pivot, 0.21, 0.28, 0.36, Vector3(0.0, -0.14, 0.02), torso_col)
-		_add_box(_torso_pivot, Vector3(0.08, 0.45, 0.40), Vector3(0.10, 0.42, 0.0), Color(0.32, 0.22, 0.12))
-	elif class_id == NetworkManager.CLASS_GUNNER:
-		# Ammo belt & heavy pack
-		_add_box(_torso_pivot, Vector3(0.46, 0.46, 0.24), Vector3(0.0, 0.42, 0.26), Color(0.25, 0.28, 0.22))
+		var band := CylinderMesh.new()
+		band.top_radius = 0.055
+		band.bottom_radius = 0.055
+		band.height = 0.68
+		HeroMeshBuilder.add_part(_torso_pivot, band, Vector3(0.0, 0.34, 0.02), Vector3(0.1, 0.0, 0.68), leather_mat, _mesh_parts)
+		var pouch := HeroMeshBuilder.make_loft([
+			{"y": -0.10, "rx": 0.12, "rz": 0.07, "p": 2.4},
+			{"y": 0.10, "rx": 0.11, "rz": 0.06, "p": 2.4},
+		], 12)
+		HeroMeshBuilder.add_part(_torso_pivot, pouch, Vector3(0.0, 0.22, 0.18), Vector3.ZERO, leather_mat, _mesh_parts)
 	else:
-		# Officer scarf / tie & lapel badge
-		_add_box(_torso_pivot, Vector3(0.10, 0.20, 0.06), Vector3(0.0, 0.56, -chest_top_r * 0.72), trim_col)
+		# Rear hip canteen/satchel tucked smoothly at waist
+		var pouch := HeroMeshBuilder.make_loft([
+			{"y": -0.07, "rx": 0.08, "rz": 0.05, "p": 2.3},
+			{"y": 0.07, "rx": 0.075, "rz": 0.045, "p": 2.3},
+		], 10)
+		HeroMeshBuilder.add_part(_torso_pivot, pouch, Vector3(-0.14, 0.12, 0.15), Vector3(0.0, 0.0, 0.08), leather_mat, _mesh_parts)
 
-	# Head Pivot (Square-Jaw Cartoon Hero + Class Hat/Mustache/Shades)
+	# Head Pivot (Smooth Sculpted Pixar/BFH Square-Jaw Head, Hair Cap, Ears, Nose & Headgear!)
 	_head_pivot = Node3D.new()
-	_head_pivot.position = Vector3(0.0, 0.74, 0.0)
+	_head_pivot.position = Vector3(0.0, 0.63, 0.0)
 	_torso_pivot.add_child(_head_pivot)
-	_add_cyl(_head_pivot, 0.10, 0.12, 0.12, Vector3(0.0, 0.04, 0.0), skin_col)
-	_add_box(_head_pivot, Vector3(0.26, 0.30, 0.28), Vector3(0.0, 0.22, 0.0), skin_col)
-	# Nose & Brow
-	_add_box(_head_pivot, Vector3(0.06, 0.09, 0.08), Vector3(0.0, 0.22, -0.16), skin_col.darkened(0.08))
-	if class_id == NetworkManager.CLASS_SOLDIER:
-		# Beret + Mustache
-		_add_cyl(_head_pivot, 0.19, 0.16, 0.12, Vector3(-0.02, 0.39, 0.0), Color(0.38, 0.24, 0.14) if is_royal else Color(0.26, 0.26, 0.28))
-		_add_box(_head_pivot, Vector3(0.14, 0.04, 0.05), Vector3(0.0, 0.15, -0.15), Color(0.25, 0.16, 0.10))
-	elif class_id == NetworkManager.CLASS_GUNNER:
-		# Red Beret + Aviator Sunglasses
-		_add_cyl(_head_pivot, 0.20, 0.17, 0.12, Vector3(-0.03, 0.39, 0.0), Color(0.76, 0.14, 0.14) if is_royal else Color(0.25, 0.28, 0.24))
-		_add_box(_head_pivot, Vector3(0.22, 0.07, 0.05), Vector3(0.0, 0.25, -0.15), Color(0.08, 0.08, 0.10))
-	else:
-		# Commando Wide-Brim Hat + Sunglasses
-		_add_cyl(_head_pivot, 0.36, 0.36, 0.04, Vector3(0.0, 0.35, 0.0), Color(0.12, 0.12, 0.14))
-		_add_cyl(_head_pivot, 0.15, 0.17, 0.14, Vector3(0.0, 0.42, 0.0), Color(0.12, 0.12, 0.14))
-		_add_box(_head_pivot, Vector3(0.22, 0.07, 0.05), Vector3(0.0, 0.25, -0.15), Color(0.08, 0.08, 0.10))
 
-	# Articulated Arms & Large Hands
-	var arm_col: Color = skin_col if (class_id == NetworkManager.CLASS_GUNNER and is_royal) else torso_col
-	var arm_x: float = chest_top_r + 0.10
+	HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_head_mesh(), Vector3.ZERO, Vector3.ZERO, skin_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_hair_cap_mesh(), Vector3.ZERO, Vector3.ZERO, hair_mat, _mesh_parts)
+
+	var ear_sph := SphereMesh.new()
+	ear_sph.radius = 0.036
+	ear_sph.height = 0.072
+	HeroMeshBuilder.add_part(_head_pivot, ear_sph, Vector3(-0.125, 0.22, 0.01), Vector3(0.0, 0.0, 0.2), skin_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_head_pivot, ear_sph, Vector3(0.125, 0.22, 0.01), Vector3(0.0, 0.0, -0.2), skin_mat, _mesh_parts)
+
+	var nose_sph := SphereMesh.new()
+	nose_sph.radius = 0.028
+	nose_sph.height = 0.075
+	HeroMeshBuilder.add_part(_head_pivot, nose_sph, Vector3(0.0, 0.21, -0.125), Vector3(-0.25, 0.0, 0.0), HeroMeshBuilder.make_sculpted_mat(Color(0.92, 0.72, 0.58), "", 0.72), _mesh_parts)
+
+	var shade_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.08, 0.09, 0.11), "", 0.25)
+	if class_id == NetworkManager.CLASS_SOLDIER:
+		var beret_mat := HeroMeshBuilder.make_sculpted_mat(hat_col, "", 0.85)
+		HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_beret_mesh(), Vector3(-0.01, 0.34, 0.0), Vector3(0.08, 0.0, 0.16), beret_mat, _mesh_parts)
+		var stache := HeroMeshBuilder.make_loft([
+			{"y": -0.02, "rx": 0.065, "rz": 0.02, "p": 2.2},
+			{"y": 0.015, "rx": 0.04, "rz": 0.018, "p": 2.0},
+		], 10)
+		HeroMeshBuilder.add_part(_head_pivot, stache, Vector3(0.0, 0.155, -0.125), Vector3.ZERO, hair_mat, _mesh_parts)
+	elif class_id == NetworkManager.CLASS_GUNNER:
+		var red_beret_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.76, 0.14, 0.14) if is_royal else Color(0.24, 0.28, 0.22), "", 0.85)
+		HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_beret_mesh(), Vector3(-0.015, 0.34, 0.0), Vector3(0.06, 0.0, 0.20), red_beret_mat, _mesh_parts)
+		HeroMeshBuilder.add_part(_head_pivot, trim_mat_badge_mesh(), Vector3(0.05, 0.38, -0.105), Vector3.ZERO, trim_mat, _mesh_parts)
+		var goggle := HeroMeshBuilder.make_loft([
+			{"y": -0.025, "rx": 0.095, "rz": 0.025, "p": 2.6},
+			{"y": 0.025, "rx": 0.100, "rz": 0.025, "p": 2.6},
+		], 12)
+		HeroMeshBuilder.add_part(_head_pivot, goggle, Vector3(0.0, 0.25, -0.115), Vector3.ZERO, shade_mat, _mesh_parts)
+	else:
+		var fedora_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.11, 0.11, 0.13), "", 0.78)
+		HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_fedora_mesh(), Vector3(0.0, 0.34, -0.005), Vector3(0.10, 0.0, -0.06), fedora_mat, _mesh_parts)
+		var goggle_c := HeroMeshBuilder.make_loft([
+			{"y": -0.022, "rx": 0.092, "rz": 0.022, "p": 2.6},
+			{"y": 0.022, "rx": 0.095, "rz": 0.022, "p": 2.6},
+		], 12)
+		HeroMeshBuilder.add_part(_head_pivot, goggle_c, Vector3(0.0, 0.245, -0.115), Vector3.ZERO, shade_mat, _mesh_parts)
+
+	# Two-Joint Articulated Sculpted Arms (Shoulder sphere -> Upper Arm -> Elbow -> Forearm -> Hand)
+	var sh_x: float = 0.285 if class_id != NetworkManager.CLASS_GUNNER else 0.345
+	var arm_r_scale: float = 1.22 if class_id == NetworkManager.CLASS_GUNNER else 1.0
+	var sh_sph := SphereMesh.new()
+	sh_sph.radius = 0.092 * arm_r_scale
+	sh_sph.height = sh_sph.radius * 2.0
+	var el_sph := SphereMesh.new()
+	el_sph.radius = 0.072 * arm_r_scale
+	el_sph.height = el_sph.radius * 2.0
+	var hand_sph := SphereMesh.new()
+	hand_sph.radius = 0.068 * arm_r_scale
+	hand_sph.height = 0.145
+	var hand_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.22, 0.20, 0.18) if class_id == NetworkManager.CLASS_COMMANDO else Color.WHITE, "" if class_id == NetworkManager.CLASS_COMMANDO else "hero_skin", 0.72)
+
+	var upper_arm_mesh: ArrayMesh = HeroMeshBuilder.build_arm_segment_mesh(0.088 * arm_r_scale, 0.072 * arm_r_scale, 0.27)
+	var forearm_mesh: ArrayMesh = HeroMeshBuilder.build_arm_segment_mesh(0.070 * arm_r_scale, 0.066 * arm_r_scale, 0.25)
+
 	_arm_l_pivot = Node3D.new()
-	_arm_l_pivot.position = Vector3(-arm_x, 0.62, 0.0)
+	_arm_l_pivot.position = Vector3(-sh_x, 0.53, 0.0)
 	_torso_pivot.add_child(_arm_l_pivot)
-	_add_cyl(_arm_l_pivot, 0.09, 0.08, 0.50, Vector3(0.0, -0.25, 0.0), arm_col)
-	_add_box(_arm_l_pivot, Vector3(0.15, 0.16, 0.15), Vector3(0.0, -0.54, 0.0), skin_col)
+	HeroMeshBuilder.add_part(_arm_l_pivot, sh_sph, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_arm_l_pivot, upper_arm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+
+	_forearm_l_pivot = Node3D.new()
+	_forearm_l_pivot.position = Vector3(0.0, -0.27, 0.0)
+	_arm_l_pivot.add_child(_forearm_l_pivot)
+	HeroMeshBuilder.add_part(_forearm_l_pivot, el_sph, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_forearm_l_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_forearm_l_pivot, hand_sph, Vector3(0.0, -0.28, -0.02), Vector3.ZERO, hand_mat, _mesh_parts)
 
 	_arm_r_pivot = Node3D.new()
-	_arm_r_pivot.position = Vector3(arm_x, 0.62, 0.0)
+	_arm_r_pivot.position = Vector3(sh_x, 0.53, 0.0)
 	_torso_pivot.add_child(_arm_r_pivot)
-	_add_cyl(_arm_r_pivot, 0.09, 0.08, 0.50, Vector3(0.0, -0.25, 0.0), arm_col)
-	_add_box(_arm_r_pivot, Vector3(0.15, 0.16, 0.15), Vector3(0.0, -0.54, 0.0), skin_col)
+	HeroMeshBuilder.add_part(_arm_r_pivot, sh_sph, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_arm_r_pivot, upper_arm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
 
+	_forearm_r_pivot = Node3D.new()
+	_forearm_r_pivot.position = Vector3(0.0, -0.27, 0.0)
+	_arm_r_pivot.add_child(_forearm_r_pivot)
+	HeroMeshBuilder.add_part(_forearm_r_pivot, el_sph, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_forearm_r_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_forearm_r_pivot, hand_sph, Vector3(0.0, -0.28, -0.02), Vector3.ZERO, hand_mat, _mesh_parts)
+
+	# Held Weapon Root mounted directly on Torso chest/hip so rifle points forward-left (like Image 2!)
 	_held_weapon_root = Node3D.new()
 	_held_weapon_root.name = "HeldWeaponRoot"
-	_held_weapon_root.position = Vector3(0.0, -0.48, -0.15)
-	_arm_r_pivot.add_child(_held_weapon_root)
+	_held_weapon_root.position = Vector3(0.15, 0.34, -0.20)
+	_torso_pivot.add_child(_held_weapon_root)
 	_shown_weapon_kind = -1
 	_rebuild_held_weapon_mesh()
 
@@ -363,6 +438,13 @@ func _rebuild_cartoon_visuals() -> void:
 	visual_root.add_child(_defeat_prop)
 
 
+func trim_mat_badge_mesh() -> Mesh:
+	var sph := SphereMesh.new()
+	sph.radius = 0.022
+	sph.height = 0.044
+	return sph
+
+
 func _rebuild_held_weapon_mesh() -> void:
 	if _held_weapon_root == null or weapons.is_empty():
 		return
@@ -371,74 +453,7 @@ func _rebuild_held_weapon_mesh() -> void:
 	if w == null or w.weapon_kind == _shown_weapon_kind:
 		return
 	_shown_weapon_kind = w.weapon_kind
-	for c in _held_weapon_root.get_children():
-		c.queue_free()
-
-	var metal := Color(0.22, 0.24, 0.28)
-	var wood := Color(0.48, 0.28, 0.14)
-	match w.weapon_kind:
-		WeaponBase.WeaponKind.SNIPER:
-			_add_raw_box(_held_weapon_root, Vector3(0.08, 0.10, 1.15), Vector3(0.0, 0.0, -0.45), wood)
-			_add_raw_box(_held_weapon_root, Vector3(0.05, 0.05, 0.65), Vector3(0.0, 0.03, -0.95), metal)
-			_add_raw_box(_held_weapon_root, Vector3(0.06, 0.06, 0.32), Vector3(0.0, 0.09, -0.35), metal)
-		WeaponBase.WeaponKind.BAZOOKA:
-			_add_raw_box(_held_weapon_root, Vector3(0.18, 0.18, 1.25), Vector3(0.0, 0.10, -0.25), Color(0.26, 0.38, 0.22))
-		WeaponBase.WeaponKind.MG:
-			_add_raw_box(_held_weapon_root, Vector3(0.14, 0.16, 0.95), Vector3(0.0, 0.0, -0.35), metal)
-			_add_raw_box(_held_weapon_root, Vector3(0.18, 0.18, 0.18), Vector3(-0.10, -0.06, -0.25), Color(0.32, 0.38, 0.22))
-		WeaponBase.WeaponKind.KNIFE:
-			_add_raw_box(_held_weapon_root, Vector3(0.03, 0.05, 0.34), Vector3(0.0, 0.0, -0.18), Color(0.84, 0.88, 0.92))
-		WeaponBase.WeaponKind.TNT:
-			_add_raw_box(_held_weapon_root, Vector3(0.24, 0.16, 0.18), Vector3(0.0, 0.0, -0.15), Color(0.82, 0.16, 0.14))
-		_:
-			# SMG / Shotgun / Pistol
-			var length: float = 0.80 if w.weapon_kind == WeaponBase.WeaponKind.SHOTGUN else (0.62 if w.weapon_kind == WeaponBase.WeaponKind.SMG else 0.32)
-			_add_raw_box(_held_weapon_root, Vector3(0.08, 0.10, length), Vector3(0.0, 0.0, -length * 0.4), wood if w.weapon_kind == WeaponBase.WeaponKind.SHOTGUN else metal)
-
-
-func _add_raw_box(parent: Node3D, size: Vector3, pos: Vector3, col: Color) -> void:
-	var mi := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mi.mesh = box
-	mi.position = pos
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = col
-	mi.material_override = mat
-	parent.add_child(mi)
-
-
-func _add_box(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mi.mesh = box
-	mi.position = pos
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.72
-	mi.material_override = mat
-	parent.add_child(mi)
-	_mesh_parts.append(mi)
-	return mi
-
-
-func _add_cyl(parent: Node3D, top_r: float, bot_r: float, h: float, pos: Vector3, color: Color) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = top_r
-	cyl.bottom_radius = bot_r
-	cyl.height = h
-	cyl.radial_segments = 12
-	mi.mesh = cyl
-	mi.position = pos
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.72
-	mi.material_override = mat
-	parent.add_child(mi)
-	_mesh_parts.append(mi)
-	return mi
+	HeroMeshBuilder.populate_weapon_root(_held_weapon_root, w.weapon_kind)
 
 
 func apply_character_shader(shader: Shader) -> void:
@@ -447,10 +462,17 @@ func apply_character_shader(shader: Shader) -> void:
 	for mi in _mesh_parts:
 		var old_mat := mi.material_override as StandardMaterial3D
 		var base_col: Color = old_mat.albedo_color if old_mat != null else Color.WHITE
+		var tex_key: String = str(old_mat.get_meta("tex_key", "")) if old_mat != null else ""
 		var smat := ShaderMaterial.new()
 		smat.shader = shader
 		smat.set_shader_parameter("albedo_color", base_col)
+		if not tex_key.is_empty():
+			smat.set_shader_parameter("use_tex", true)
+			smat.set_shader_parameter("albedo_tex", CartoonAssets.get_texture(tex_key))
+		else:
+			smat.set_shader_parameter("use_tex", false)
 		smat.set_shader_parameter("rim_color", Color(1.0, 0.96, 0.85))
+		smat.set_shader_parameter("rim_strength", 0.45)
 		smat.set_shader_parameter("cloak_amount", 0.0)
 		mi.material_override = smat
 
@@ -548,23 +570,37 @@ func _animate_character(delta: float) -> void:
 	if is_parachuting:
 		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, 0.35, 10.0 * delta)
 		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.25, 10.0 * delta)
-		_arm_l_pivot.rotation.x = lerpf(_arm_l_pivot.rotation.x, 2.7, 10.0 * delta)
-		_arm_r_pivot.rotation.x = lerpf(_arm_r_pivot.rotation.x, 2.7, 10.0 * delta)
+		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(2.65, 0.0, 0.25), 10.0 * delta)
+		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(2.65, 0.0, -0.25), 10.0 * delta)
+		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
+		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
 		_torso_pivot.rotation.x = 0.12
 	elif is_emoting:
 		emote_timer += delta
 		_leg_l_pivot.rotation.x = 0.0
 		_leg_r_pivot.rotation.x = 0.0
-		_arm_l_pivot.rotation.x = 1.9 + sin(emote_timer * 12.0) * 0.6
-		_arm_r_pivot.rotation.x = 1.2
+		_arm_l_pivot.rotation = Vector3(2.2 + sin(emote_timer * 12.0) * 0.55, 0.0, 0.4)
+		_arm_r_pivot.rotation = Vector3(0.5, 0.0, -0.2)
+		_forearm_l_pivot.rotation = Vector3(0.4, 0.0, 0.0)
+		_forearm_r_pivot.rotation = Vector3(0.8, 0.0, 0.0)
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
 	else:
-		_leg_l_pivot.rotation.x = stride * 0.75 + (-0.55 if is_crouching else 0.0)
-		_leg_r_pivot.rotation.x = -stride * 0.75 + (-0.55 if is_crouching else 0.0)
-		_torso_pivot.rotation.x = aim_pitch * 0.35 + (-0.18 if is_crouching else 0.0)
-		# Right arm raises weapon forward to aim; left arm swings or braces
-		_arm_r_pivot.rotation.x = 1.38 + aim_pitch * 0.7 + _weapon_recoil_anim * 0.28
-		_arm_l_pivot.rotation.x = 1.18 + aim_pitch * 0.5 - stride * 0.25
+		_leg_l_pivot.rotation.x = stride * 0.72 + (-0.55 if is_crouching else 0.0)
+		_leg_r_pivot.rotation.x = -stride * 0.72 + (-0.55 if is_crouching else 0.0)
+		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0)
+		_head_pivot.rotation.x = aim_pitch * 0.35
+		# Natural two-arm BFH rifle stance matching Image 2 (upper arms slightly out, forearms bent across!)
+		_arm_r_pivot.rotation = Vector3(0.45 + aim_pitch * 0.4, 0.0, -0.24)
+		_forearm_r_pivot.rotation = Vector3(1.18 + _weapon_recoil_anim * 0.25, 0.42, 0.08)
+		_arm_l_pivot.rotation = Vector3(0.68 + aim_pitch * 0.4, -0.25, 0.22)
+		_forearm_l_pivot.rotation = Vector3(1.02, -0.58, -0.10)
+		if _held_weapon_root != null:
+			if _shown_weapon_kind == WeaponBase.WeaponKind.BAZOOKA:
+				_held_weapon_root.position = Vector3(0.24, 0.56, -0.06)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.6, 0.04, 0.0)
+			else:
+				_held_weapon_root.position = Vector3(0.15, 0.34, -0.20 + _weapon_recoil_anim * 0.06)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.6 + 0.14 + _weapon_recoil_anim * 0.08, 0.34, 0.0)
 
 
 func _physics_process(delta: float) -> void:
@@ -926,6 +962,8 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
 	aim_yaw = spawn_yaw
+	if hero_camera != null:
+		hero_camera.yaw = spawn_yaw
 	hp = max_hp
 	shield = 0
 	is_defeated = false

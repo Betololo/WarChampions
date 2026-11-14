@@ -19,6 +19,7 @@ func _ready() -> void:
 	_test_vehicles_rear_armor_wing_riding_and_boat()
 	_test_seaside_map_and_12v12_bots_integration()
 	_test_overhaul_net_u32_fall_damage_and_assets()
+	_test_hero_visuals_camera_and_audio()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -461,6 +462,41 @@ func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
 		if CartoonAssets.get_texture(sk) == null:
 			all_ok = false
 	_assert(all_ok, "CartoonAssets procedurally generates all BFH flags, portraits & hotbar sprites")
+
+
+func _test_hero_visuals_camera_and_audio() -> void:
+	var torso0: ArrayMesh = HeroMeshBuilder.build_torso_mesh(0)
+	var torso1: ArrayMesh = HeroMeshBuilder.build_torso_mesh(1)
+	var torso2: ArrayMesh = HeroMeshBuilder.build_torso_mesh(2)
+	var head_m: ArrayMesh = HeroMeshBuilder.build_head_mesh()
+	_assert(
+		torso0.get_surface_count() > 0 and torso1.get_surface_count() > 0 and torso2.get_surface_count() > 0 and head_m.get_surface_count() > 0,
+		"HeroMeshBuilder constructs sculpted loft ArrayMeshes for all 3 classes and head"
+	)
+
+	var hero_tex_keys: Array[String] = [
+		"hero_jacket_royal", "hero_jacket_national", "hero_coat_commando",
+		"hero_gunner_vest", "hero_skin", "hero_pants_royal", "hero_pants_national", "hero_gun_wood"
+	]
+	var tex_ok: bool = true
+	for tk in hero_tex_keys:
+		if CartoonAssets.get_texture(tk) == null:
+			tex_ok = false
+	_assert(tex_ok, "CartoonAssets provides hand-painted hero uniform, skin & rifle textures")
+
+	var w_root := Node3D.new()
+	HeroMeshBuilder.populate_weapon_root(w_root, 4)
+	_assert(w_root.get_child_count() >= 3, "HeroMeshBuilder builds multi-part 3D Sniper Rifle mesh")
+	w_root.free()
+
+	_assert(
+		HeroCamera.TPS_SHOULDER_OFFSET.y >= 2.0 and HeroCamera.TPS_SPRING_LENGTH <= 1.7,
+		"HeroCamera positions TPS pivot above head (Y=%.2f, spring=%.2fm) for clear crosshair" % [HeroCamera.TPS_SHOULDER_OFFSET.y, HeroCamera.TPS_SPRING_LENGTH]
+	)
+
+	var m1: bool = SoundSynthesizer.toggle_music()
+	var m2: bool = SoundSynthesizer.toggle_music()
+	_assert(not m1 and m2 and SoundSynthesizer.music_enabled, "SoundSynthesizer.toggle_music() cleanly mutes and restores music")
 
 
 func _test_scene_compile_and_load() -> void:

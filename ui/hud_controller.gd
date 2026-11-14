@@ -141,6 +141,12 @@ func add_killfeed(text: String) -> void:
 		_killfeed_lbl.text = "\n".join(_killfeed_lines)
 
 
+func clear_killfeed() -> void:
+	_killfeed_lines.clear()
+	if _killfeed_lbl != null:
+		_killfeed_lbl.text = ""
+
+
 func _style_label(lbl: Label, font_size: int, color: Color = Color.WHITE) -> void:
 	lbl.add_theme_font_size_override("font_size", font_size)
 	lbl.add_theme_color_override("font_color", color)
@@ -531,10 +537,11 @@ func _build_hud() -> void:
 	_killfeed_lbl = Label.new()
 	_killfeed_lbl.anchor_left = 1.0
 	_killfeed_lbl.anchor_right = 1.0
-	_killfeed_lbl.offset_left = -380.0
-	_killfeed_lbl.offset_right = -16.0
+	_killfeed_lbl.offset_left = -420.0
+	_killfeed_lbl.offset_right = -18.0
 	_killfeed_lbl.offset_top = 12.0
-	_killfeed_lbl.offset_bottom = 140.0
+	_killfeed_lbl.offset_bottom = 180.0
+	_killfeed_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_killfeed_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_style_label(_killfeed_lbl, 14, Color(0.98, 0.98, 0.98))
 	add_child(_killfeed_lbl)
@@ -646,7 +653,7 @@ func _process(delta: float) -> void:
 		_damage_arc.flash_alpha = 0.0
 		_damage_arc.queue_redraw()
 
-	_ping_lbl.text = "Ping: %dms (Sim %.0fms) | F8: Lag | ESC: Menu" % [int(NetworkManager.ema_rtt_ms), NetworkManager.sim_latency_ms * 2.0]
+	_ping_lbl.text = "Ping: %dms (Sim %.0fms) | F8: Lag | M: Música | ESC: Menu" % [int(NetworkManager.ema_rtt_ms), NetworkManager.sim_latency_ms * 2.0]
 
 	if _conquest != null:
 		_royal_ticket_lbl.text = "%d" % _conquest.royal_tickets

@@ -61,7 +61,7 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 				smat.set_shader_parameter("rim_strength", 1.65)
 			else:
 				smat.set_shader_parameter("rim_color", Color(1.0, 0.95, 0.82))
-				smat.set_shader_parameter("rim_strength", 0.72)
+				smat.set_shader_parameter("rim_strength", 0.42)
 
 
 static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, radius: float = 1.0) -> void:
