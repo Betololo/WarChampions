@@ -282,11 +282,20 @@ func _test_stealth_visibility_and_shader() -> void:
 
 	commando.global_position = Vector3(3.0, 0.0, 0.0)
 	StatusEffectsVFX.update_hero_client_visuals(commando, viewer, 0.016)
-	_assert(commando.visual_root.visible, "Stealthed Commando becomes translucent/visible within close detection radius")
+	var cloaked_mat := (commando._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial
+	_assert(commando.visual_root.visible and cloaked_mat != null and cloaked_mat.shader == StatusEffectsVFX.HERO_CLOAK_SHADER, "Stealthed Commando becomes translucent/visible within close detection radius")
+
+	commando.is_stealthed = false
+	commando.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(commando, viewer, 0.016)
+	var uncloaked_mat := (commando._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial
+	_assert(uncloaked_mat != null and uncloaked_mat.shader == StatusEffectsVFX.HERO_SHADER, "Uncloaked Commando swaps cleanly back to strictly opaque HERO_SHADER")
 
 	var cel_shader: Shader = load("res://vfx_shaders/hero_cel_shader.gdshader")
+	var cloak_shader: Shader = load("res://vfx_shaders/hero_cloak_shader.gdshader")
 	var water_shader: Shader = load("res://vfx_shaders/water_toon.gdshader")
-	_assert(cel_shader != null and water_shader != null, "Cel & Water shaders load cleanly")
+	_assert(cel_shader != null and cloak_shader != null and water_shader != null, "Cel, Cloak & Water shaders load cleanly")
+	_assert(not cel_shader.code.contains("ALPHA") and cloak_shader.code.contains("ALPHA"), "Hero cel shader stays strictly opaque (zero ALPHA) while cloak shader isolates stealth transparency")
 
 	viewer.free()
 	commando.free()
@@ -787,6 +796,7 @@ func _test_hero_visuals_camera_and_audio() -> void:
 	var m1: bool = SoundSynthesizer.toggle_music()
 	var m2: bool = SoundSynthesizer.toggle_music()
 	_assert(not m1 and m2 and SoundSynthesizer.music_enabled, "SoundSynthesizer.toggle_music() cleanly mutes and restores music")
+	SoundSynthesizer.stop_whistle_theme()
 
 
 func _test_ik_weapon_grip_shot_fx_and_scope() -> void:

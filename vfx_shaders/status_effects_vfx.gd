@@ -5,6 +5,7 @@ extends Node3D
 ## Hero Shield bubble, and Stealth visibility/refraction evaluation on clients.
 
 const HERO_SHADER: Shader = preload("res://vfx_shaders/hero_cel_shader.gdshader")
+const HERO_CLOAK_SHADER: Shader = preload("res://vfx_shaders/hero_cloak_shader.gdshader")
 
 
 static func attach_hero_vfx_and_shader(hero: HeroCharacter) -> void:
@@ -63,10 +64,13 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var burning: bool = (hero.active_flags & NetSerializer.SNAP_BURNING) != 0
 	var poisoned: bool = (hero.active_flags & NetSerializer.SNAP_POISONED) != 0
 	var shielded: bool = (hero.active_flags & NetSerializer.SNAP_SHIELDED) != 0
+	var target_shader: Shader = HERO_CLOAK_SHADER if cloak_val > 0.01 else HERO_SHADER
 
 	for part in hero._mesh_parts:
 		if part.material_override is ShaderMaterial:
 			var smat := part.material_override as ShaderMaterial
+			if smat.shader != target_shader:
+				smat.shader = target_shader
 			smat.set_shader_parameter("cloak_amount", cloak_val)
 			if burning:
 				smat.set_shader_parameter("rim_color", Color(1.0, 0.35, 0.05))

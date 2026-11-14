@@ -16,12 +16,10 @@ void fragment() {
 		base *= texture(albedo_tex, UV).rgb;
 	}
 	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), rim_power);
-	vec3 cloak_tint = vec3(0.55, 0.88, 1.0) * (0.4 + 0.6 * sin(TIME * 8.0 + VERTEX.y * 6.0));
-	ALBEDO = mix(base, cloak_tint, cloak_amount * 0.78);
-	EMISSION = rim_color.rgb * fresnel * (rim_strength * 0.14 + cloak_amount * 0.85);
+	ALBEDO = base;
+	EMISSION = rim_color.rgb * fresnel * (rim_strength * 0.14);
 	ROUGHNESS = clamp(specular_roughness, 0.05, 1.0);
 	METALLIC = mix(0.28, 0.0, clamp((ROUGHNESS - 0.18) / 0.32, 0.0, 1.0));
-	ALPHA = mix(1.0, 0.18 + fresnel * 0.45, cloak_amount);
 }
 
 void light() {
