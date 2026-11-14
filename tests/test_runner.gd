@@ -498,6 +498,79 @@ func _test_vehicle_protection_destruction_and_hud() -> void:
 	smg.fire_server(j_cmd, {"lag_compensator": lc, "heroes_by_id": j_heroes})
 	_assert(j_pass.hp < pass_hp_before, "Open Jeep passenger takes direct gunfire while seated (%d -> %d HP)" % [pass_hp_before, j_pass.hp])
 
+	# Static wall in front of open Jeep MUST block gunfire cleanly
+	var block_wall := StaticBody3D.new()
+	block_wall.collision_layer = 1
+	var bw_col := CollisionShape3D.new()
+	var bw_box := BoxShape3D.new()
+	bw_box.size = Vector3(8.0, 6.0, 0.6)
+	bw_col.shape = bw_box
+	block_wall.add_child(bw_col)
+	var mid_pt: Vector3 = (shooter.global_position + j_pass.global_position) * 0.5
+	add_child(block_wall)
+	block_wall.global_position = Vector3(mid_pt.x, 1.5, mid_pt.z)
+	block_wall.look_at(Vector3(j_pass.global_position.x, 1.5, j_pass.global_position.z), Vector3.UP)
+	await get_tree().physics_frame
+	var aim_wall: Dictionary = smg.get_aim_origin_and_dir(j_cmd, get_viewport().get_world_3d().direct_space_state, lc, j_heroes)
+	var wall_trace: Dictionary = lc.trace_rewound_ray(shooter, aim_wall["origin"], aim_wall["dir"], 80.0, 0, NetworkManager.server_tick, j_heroes, get_viewport().get_world_3d())
+	var pass_hp_walled: int = j_pass.hp
+	smg.fire_server(j_cmd, {"lag_compensator": lc, "heroes_by_id": j_heroes})
+	_assert(
+		bool(wall_trace.get("hit", false)) and int(wall_trace.get("target_hero_id", -1)) == -1 and wall_trace.get("target_object", null) == null and j_pass.hp == pass_hp_walled,
+		"Static wall in front of open Jeep cleanly blocks gunfire (hit=%s, target_hero=%d, hp unchanged %d==%d)" % [str(wall_trace.get("hit", false)), int(wall_trace.get("target_hero_id", -1)), j_pass.hp, pass_hp_walled]
+	)
+	block_wall.free()
+
+	# Seated Fighter Plane pilot CAN take direct gunfire (open cockpit)
+	var test_plane := VehiclePlane.new()
+	test_plane.id = 82
+	test_plane.team = NetworkManager.TEAM_NATIONAL
+	add_child(test_plane)
+	test_plane.global_position = Vector3(18.0, 0.0, -18.0)
+	var p_pilot := HeroCharacter.new()
+	p_pilot.setup_identity(806, "Pilot", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(p_pilot)
+	_assert(test_plane.try_enter_hero(p_pilot) == 0 and not test_plane.seats[0].is_enclosed, "Fighter plane pilot seat is open and occupied")
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 22
+	var p_heroes := {802: shooter, 806: p_pilot}
+	lc.record_frame(22, p_heroes)
+	var aim_to_pilot: Vector3 = (p_pilot.global_position + Vector3(0.0, 1.40, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var p_cmd := InputCmd.new()
+	p_cmd.aim_yaw = atan2(-aim_to_pilot.x, -aim_to_pilot.z)
+	p_cmd.aim_pitch = atan2(aim_to_pilot.y, Vector2(aim_to_pilot.x, aim_to_pilot.z).length())
+	var pilot_hp_before: int = p_pilot.hp
+	smg.fire_server(p_cmd, {"lag_compensator": lc, "heroes_by_id": p_heroes})
+	_assert(p_pilot.hp < pilot_hp_before, "Seated Plane Pilot takes direct gunfire damage in open cockpit (%d -> %d HP)" % [pilot_hp_before, p_pilot.hp])
+	test_plane.exit_hero(p_pilot)
+	test_plane.free()
+	p_pilot.free()
+
+	# Seated Aquatic Boat driver CAN take direct gunfire (open helm)
+	var test_boat := VehicleBoat.new()
+	test_boat.id = 83
+	test_boat.team = NetworkManager.TEAM_NATIONAL
+	add_child(test_boat)
+	test_boat.global_position = Vector3(22.0, 0.0, -18.0)
+	var b_driver := HeroCharacter.new()
+	b_driver.setup_identity(807, "BoatDriver", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(b_driver)
+	_assert(test_boat.try_enter_hero(b_driver) == 0 and not test_boat.seats[0].is_enclosed, "Boat driver seat is open and occupied")
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 23
+	var b_heroes := {802: shooter, 807: b_driver}
+	lc.record_frame(23, b_heroes)
+	var aim_to_boat: Vector3 = (b_driver.global_position + Vector3(0.0, 1.40, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var b_cmd := InputCmd.new()
+	b_cmd.aim_yaw = atan2(-aim_to_boat.x, -aim_to_boat.z)
+	b_cmd.aim_pitch = atan2(aim_to_boat.y, Vector2(aim_to_boat.x, aim_to_boat.z).length())
+	var boat_driver_hp_before: int = b_driver.hp
+	smg.fire_server(b_cmd, {"lag_compensator": lc, "heroes_by_id": b_heroes})
+	_assert(b_driver.hp < boat_driver_hp_before, "Seated Boat Driver takes direct gunfire damage at open helm (%d -> %d HP)" % [boat_driver_hp_before, b_driver.hp])
+	test_boat.exit_hero(b_driver)
+	test_boat.free()
+	b_driver.free()
+
 	# Client reconciliation toggles vehicle camera & snaps position on enter/exit
 	var client_hero := HeroCharacter.new()
 	client_hero.setup_identity(805, "RemoteClient", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
@@ -635,6 +708,36 @@ func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
 		if CartoonAssets.get_texture(sk) == null:
 			all_ok = false
 	_assert(all_ok, "CartoonAssets procedurally generates all BFH flags, portraits & hotbar sprites")
+
+	# Verify all 8 weapon icon textures are 96x64 with non-zero opaque pixels
+	var all_w_icons_ok: bool = true
+	for w_i in range(8):
+		var tex := CartoonAssets.get_texture("icon_weapon_%d" % w_i)
+		if tex == null or tex.get_width() != 96 or tex.get_height() != 64:
+			all_w_icons_ok = false
+			break
+		var img := tex.get_image()
+		var has_pixels: bool = false
+		for py in range(64):
+			for px in range(96):
+				if img.get_pixel(px, py).a > 0.1:
+					has_pixels = true
+					break
+			if has_pixels:
+				break
+		if not has_pixels:
+			all_w_icons_ok = false
+			break
+	_assert(all_w_icons_ok, "CartoonAssets generates high-crisp 96x64 weapon icons with distinct silhouettes for all 8 weapons")
+
+	# Verify all 8 HeroMeshBuilder.build_weapon_mesh variants generate non-empty meshes
+	var all_w_meshes_ok: bool = true
+	for w_i in range(8):
+		var w_node := HeroMeshBuilder.build_weapon_mesh(w_i)
+		if w_node == null or w_node.get_child_count() == 0:
+			all_w_meshes_ok = false
+		w_node.free()
+	_assert(all_w_meshes_ok, "HeroMeshBuilder builds multi-part sculpted 3D weapon meshes across all 8 weapon archetypes")
 
 
 func _test_hero_visuals_camera_and_audio() -> void:
@@ -1143,19 +1246,19 @@ func _test_vehicle_sculpted_models_and_animations() -> void:
 	aa.exit_hero(aa_gunner)
 	aa_gunner.free()
 
-	# 6. Verify Plane hollow canopy frame arches, raised crown & tilted wing insignia, plus Boat foredeck/cabin clearance
-	var canopy_front := plane._visual_root.get_node_or_null("CanopyFrameFront") as MeshInstance3D
+	# 6. Verify Plane authentic open cockpit (zero bubble canopy!), coaming & windscreen, tilted wing insignia, and seat enclosure rules
 	var canopy_glass := plane._visual_root.get_node_or_null("CanopyGlass") as MeshInstance3D
+	var cockpit_coaming := plane._visual_root.get_node_or_null("CockpitCoaming") as MeshInstance3D
+	var windscreen := plane._visual_root.get_node_or_null("WindscreenGlass") as MeshInstance3D
 	var royal_roundel := plane._visual_root.get_node_or_null("RoundelOut") as MeshInstance3D
 	var plane_nat := VehiclePlane.new()
 	plane_nat.id = 96
 	plane_nat.team = NetworkManager.TEAM_NATIONAL
 	add_child(plane_nat)
 	var nat_cross := plane_nat._visual_root.get_node_or_null("CrossH") as MeshInstance3D
-	var glass_top_y: float = canopy_glass.position.y + canopy_glass.get_aabb().end.z if canopy_glass != null else 0.0
 	_assert(
-		canopy_front != null and canopy_front.mesh is ArrayMesh and glass_top_y >= 2.48 and royal_roundel != null and absf(royal_roundel.rotation.z) >= 0.039 and royal_roundel.position.y >= 1.095 and nat_cross != null and absf(nat_cross.rotation.z) >= 0.039,
-		"VehiclePlane uses hollow canopy arches, raised bubble crown (%.2fm), and dihedral wing insignia" % glass_top_y
+		canopy_glass == null and cockpit_coaming != null and windscreen != null and royal_roundel != null and absf(royal_roundel.rotation.z) >= 0.039 and royal_roundel.position.y >= 1.095 and nat_cross != null and absf(nat_cross.rotation.z) >= 0.039 and not plane.seats[0].is_enclosed and not boat.seats[0].is_enclosed and tank.seats[0].is_enclosed,
+		"VehiclePlane uses authentic open fighter cockpit (zero CanopyGlass, CockpitCoaming & Windscreen present), and only Tank shields driver"
 	)
 	plane_nat.free()
 
@@ -1291,6 +1394,35 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	# 4. Verify required landmarks, sculpted buildings, watchtowers & 140+ layered trees
 	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier", "RuinArchPillarL", "RuinArchPillarR", "BuntingPost_-36_N", "BuntingPost_36_S", "MainRiverBridge", "SouthRiverBridge", "RiverTownDock", "RiverNorthDock", "Fazenda", "NorthOrchardBarn"]:
 		_assert(map.get_node_or_null(lm_name) != null, "Landmark '%s' exists on map" % lm_name)
+
+	# Verify CentralFountain genuine animated water + GPUParticles3D streams (zero static water cylinders)
+	var fountain := map.get_node_or_null("CentralFountain")
+	_assert(fountain != null, "CentralFountain landmark exists")
+	if fountain != null:
+		var lower_w := fountain.get_node_or_null("LowerWater") as MeshInstance3D
+		var upper_w := fountain.get_node_or_null("UpperWater") as MeshInstance3D
+		_assert(lower_w != null and lower_w.material_override is ShaderMaterial, "CentralFountain LowerWater uses animated ShaderMaterial")
+		_assert(upper_w != null and upper_w.material_override is ShaderMaterial, "CentralFountain UpperWater uses animated ShaderMaterial")
+
+		var plume := fountain.get_node_or_null("FountainPlume") as GPUParticles3D
+		_assert(plume != null, "CentralFountain FountainPlume exists")
+
+		var all_jets_ok: bool = true
+		for j_idx in range(4):
+			var jet := fountain.get_node_or_null("FountainJet_%d" % j_idx) as GPUParticles3D
+			var splash := fountain.get_node_or_null("FountainSplash_%d" % j_idx) as GPUParticles3D
+			if jet == null or splash == null:
+				all_jets_ok = false
+		_assert(all_jets_ok, "CentralFountain has 4 FountainJet streams and 4 FountainSplash emitters")
+
+		# Confirm zero frozen static water cylinder arc segments exist
+		var static_water_cyl_count: int = 0
+		for c in fountain.get_children():
+			if c is MeshInstance3D and (c as MeshInstance3D).mesh is CylinderMesh:
+				var cm: CylinderMesh = (c as MeshInstance3D).mesh as CylinderMesh
+				if cm.height >= 0.50 and cm.height <= 0.60 and cm.top_radius < 0.20:
+					static_water_cyl_count += 1
+		_assert(static_water_cyl_count == 0, "CentralFountain has ZERO frozen static water cylinder arc segments (got %d)" % static_water_cyl_count)
 
 	# Boat headroom clearance under MainRiverBridge and SouthRiverBridge (>= 4.5m along river channel)
 	for br_name in ["MainRiverBridge", "SouthRiverBridge"]:

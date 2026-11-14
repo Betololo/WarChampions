@@ -17,7 +17,7 @@ func _setup_vehicle_stats_and_seats() -> void:
 	max_hp = 380
 	hp = 380
 	mass = 1600.0
-	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.85, 0.35), false, false, true, "sit")
+	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.85, 0.35), false, false, false, "sit")
 	_add_seat(SeatType.PASSENGER, Vector3(-0.72, 0.72, -1.25), true, true, false, "sit")
 	_add_seat(SeatType.PASSENGER, Vector3(0.72, 0.72, -1.25), true, true, false, "sit")
 
@@ -25,9 +25,9 @@ func _setup_vehicle_stats_and_seats() -> void:
 func _build_vehicle_mesh() -> void:
 	var col := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(3.0, 1.4, 6.4)
+	box.size = Vector3(2.9, 0.90, 6.2)
 	col.shape = box
-	col.position = Vector3(0.0, 0.7, 0.0)
+	col.position = Vector3(0.0, 0.45, 0.0)
 	add_child(col)
 	_apply_built_visuals(VehicleMeshBuilder.build_boat_visuals(_visual_root, team))
 

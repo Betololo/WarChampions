@@ -341,35 +341,60 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	var steel_mat: Material = pal["steel_mat"]
 	var dark_mat: Material = pal["dark_metal"]
 
-	# Teardrop lofted fuselage (tail -> nose along -Z; cockpit deck dips slightly so pilot sits inside glass canopy)
-	var fuse_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-		{"y": -3.05, "z": 0.12, "rx": 0.13, "rz": 0.24, "p": 2.0, "col": Color(0.86, 0.86, 0.90)},
-		{"y": -1.85, "z": 0.04, "rx": 0.34, "rz": 0.42, "p": 2.1, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.08},
-		{"y": -0.65, "z": -0.06, "rx": 0.54, "rz": 0.46, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
-		{"y": 0.85, "z": -0.06, "rx": 0.58, "rz": 0.48, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
+	# Sculpted teardrop fuselage split around open cockpit bay (z in [-0.55, 0.35])
+	var fore_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+		{"y": 0.55, "z": -0.06, "rx": 0.58, "rz": 0.48, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
+		{"y": 1.40, "z": -0.04, "rx": 0.56, "rz": 0.49, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
 		{"y": 2.30, "z": 0.00, "rx": 0.52, "rz": 0.50, "p": 2.1, "col": Color(0.96, 0.96, 0.98)},
 		{"y": 2.86, "z": 0.00, "rx": 0.38, "rz": 0.38, "p": 2.0, "col": Color(0.90, 0.90, 0.94)},
 	], 20)
-	add_part(root, fuse_mesh, Vector3(0.0, 1.02, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), body_mat, "Fuselage")
+	add_part(root, fore_mesh, Vector3(0.0, 1.02, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), body_mat, "Fuselage")
+
+	var aft_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+		{"y": -3.05, "z": 0.12, "rx": 0.13, "rz": 0.24, "p": 2.0, "col": Color(0.86, 0.86, 0.90)},
+		{"y": -1.85, "z": 0.04, "rx": 0.34, "rz": 0.42, "p": 2.1, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.08},
+		{"y": -0.75, "z": -0.04, "rx": 0.52, "rz": 0.46, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
+		{"y": -0.35, "z": -0.06, "rx": 0.56, "rz": 0.47, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
+	], 20)
+	add_part(root, aft_mesh, Vector3(0.0, 1.02, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), body_mat, "AftFuselage")
+
 	_add_cyl(root, 0.42, 0.48, 0.32, Vector3(0.0, 1.02, -2.68), Vector3(PI * 0.5, 0.0, 0.0), trim_mat, 18, "NoseTrimBand")
 
-	# Translucent tinted bubble glass canopy over pilot (Vector3(0.0, 0.92, -0.15)) + hollow arch frame hoops
-	var canopy_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-		{"y": -0.96, "z": 0.06, "rx": 0.22, "rz": 0.20, "p": 2.0},
-		{"y": -0.38, "z": 0.44, "rx": 0.45, "rz": 0.64, "p": 2.0},
-		{"y": 0.02, "z": 0.46, "rx": 0.47, "rz": 0.66, "p": 2.0},
-		{"y": 0.46, "z": 0.40, "rx": 0.42, "rz": 0.56, "p": 2.0},
-		{"y": 0.86, "z": 0.06, "rx": 0.24, "rz": 0.16, "p": 2.0},
-	], 18)
-	add_part(root, canopy_mesh, Vector3(0.0, 1.44, -0.12), Vector3(-PI * 0.5, 0.0, 0.0), pal["glass_mat"], "CanopyGlass")
-	var front_arch: ArrayMesh = _make_arch_mesh(0.43, 0.58, 0.034, -0.65, 16, 8)
-	var rear_arch: ArrayMesh = _make_arch_mesh(0.46, 0.66, 0.036, -0.65, 16, 8)
-	add_part(root, front_arch, Vector3(0.0, 1.84, -0.58), Vector3.ZERO, body_mat, "CanopyFrameFront")
-	add_part(root, rear_arch, Vector3(0.0, 1.88, 0.26), Vector3.ZERO, body_mat, "CanopyFrameRear")
-	_add_box(root, Vector3(0.055, 0.04, 0.465), Vector3(0.0, 2.495, -0.36), Vector3(-0.328, 0.0, 0.0), body_mat, "CanopySpineFront")
-	_add_box(root, Vector3(0.055, 0.04, 0.402), Vector3(0.0, 2.555, 0.06), Vector3(0.075, 0.0, 0.0), body_mat, "CanopySpineRear")
-	for sx in [-1.0, 1.0]:
-		_add_box(root, Vector3(0.055, 0.055, 0.92), Vector3(sx * 0.44, 1.46, -0.16), Vector3.ZERO, body_mat, "CanopySill")
+	# Open fighter Cockpit tub: deep belly floor, side walls, dark tub, seat backrest & controls
+	_add_box(root, Vector3(0.98, 0.48, 0.92), Vector3(0.0, 0.74, -0.10), Vector3.ZERO, body_mat, "CockpitBelly")
+	_add_box(root, Vector3(0.14, 0.42, 0.92), Vector3(-0.43, 1.15, -0.10), Vector3.ZERO, body_mat, "CockpitWallL")
+	_add_box(root, Vector3(0.14, 0.42, 0.92), Vector3(0.43, 1.15, -0.10), Vector3.ZERO, body_mat, "CockpitWallR")
+	_add_box(root, Vector3(0.70, 0.06, 0.88), Vector3(0.0, 0.80, -0.10), Vector3.ZERO, dark_mat, "CockpitFloor")
+
+	var leather_mat := make_mat(Color(0.28, 0.18, 0.11), "", 0.70, 0.08)
+	_add_box(root, Vector3(0.48, 0.46, 0.12), Vector3(0.0, 1.22, 0.32), Vector3(0.14, 0.0, 0.0), leather_mat, "PilotSeatBack")
+	_add_box(root, Vector3(0.58, 0.32, 0.08), Vector3(0.0, 1.25, -0.52), Vector3(-0.16, 0.0, 0.0), dark_mat, "DashboardPanel")
+	var white_gauge_mat := make_mat(Color(0.95, 0.96, 0.98), "", 0.42, 0.12)
+	_add_cyl(root, 0.055, 0.055, 0.02, Vector3(-0.14, 1.27, -0.50), Vector3(-0.16, 0.0, 0.0), white_gauge_mat, 10, "DialL")
+	_add_cyl(root, 0.070, 0.070, 0.02, Vector3(0.0, 1.29, -0.50), Vector3(-0.16, 0.0, 0.0), trim_mat, 12, "DialC")
+	_add_cyl(root, 0.055, 0.055, 0.02, Vector3(0.14, 1.27, -0.50), Vector3(-0.16, 0.0, 0.0), white_gauge_mat, 10, "DialR")
+	_add_cyl(root, 0.022, 0.018, 0.34, Vector3(0.0, 0.96, -0.32), Vector3(0.18, 0.0, 0.0), steel_mat, 8, "ControlStick")
+	_add_cyl(root, 0.028, 0.028, 0.08, Vector3(0.0, 1.12, -0.29), Vector3(0.18, 0.0, 0.0), dark_mat, 8, "StickGrip")
+
+	# Quilted padded leather coaming collar around cockpit rim
+	var coaming_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+		{"y": -0.44, "rx": 0.44, "rz": 0.055, "p": 2.2, "col": Color(0.32, 0.20, 0.12)},
+		{"y": 0.00, "rx": 0.46, "rz": 0.060, "p": 2.2, "col": Color(0.36, 0.24, 0.14)},
+		{"y": 0.44, "rx": 0.44, "rz": 0.055, "p": 2.2, "col": Color(0.32, 0.20, 0.12)},
+	], 16)
+	add_part(root, coaming_mesh, Vector3(0.0, 1.34, -0.10), Vector3.ZERO, leather_mat, "CockpitCoaming")
+	_add_cyl(root, 0.045, 0.045, 0.90, Vector3(-0.43, 1.34, -0.10), Vector3(PI * 0.5, 0.0, 0.0), leather_mat, 10, "CoamingL")
+	_add_cyl(root, 0.045, 0.045, 0.90, Vector3(0.43, 1.34, -0.10), Vector3(PI * 0.5, 0.0, 0.0), leather_mat, 10, "CoamingR")
+	_add_cyl(root, 0.048, 0.048, 0.70, Vector3(0.0, 1.36, 0.33), Vector3(0.0, 0.0, PI * 0.5), leather_mat, 10, "CoamingAft")
+
+	# Compact angled fighter windscreen ahead of pilot (leaving top, sides & rear 100% open)
+	var screen_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+		{"y": -0.16, "rx": 0.34, "rz": 0.024, "p": 2.0},
+		{"y": 0.00, "rx": 0.32, "rz": 0.024, "p": 2.0},
+		{"y": 0.16, "rx": 0.28, "rz": 0.024, "p": 2.0},
+	], 12)
+	add_part(root, screen_mesh, Vector3(0.0, 1.48, -0.58), Vector3(-0.50, 0.0, 0.0), pal["glass_mat"], "WindscreenGlass")
+	_add_box(root, Vector3(0.50, 0.028, 0.028), Vector3(0.0, 1.61, -0.52), Vector3(-0.50, 0.0, 0.0), body_mat, "WindscreenFrameTop")
 
 	# Nose spinner + spinning 3-blade propeller
 	var prop := Node3D.new()

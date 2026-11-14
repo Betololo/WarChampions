@@ -102,11 +102,14 @@ static func find_closest_hero_hit_in_frame(
 	ray_dir: Vector3,
 	max_dist: float,
 	frame: FrameRecord,
-	heroes_by_id: Dictionary
+	heroes_by_id: Dictionary,
+	hit_veh: VehicleBase = null,
+	unblocked_max_dist: float = -1.0
 ) -> Dictionary:
 	var dir: Vector3 = ray_dir.normalized()
-	var best_dist: float = max_dist
-	var best_pos: Vector3 = ray_origin + dir * max_dist
+	var cap_dist: float = unblocked_max_dist if unblocked_max_dist > 0.0 else max_dist
+	var best_dist: float = cap_dist
+	var best_pos: Vector3 = ray_origin + dir * cap_dist
 	var best_hero_id: int = -1
 	var best_headshot: bool = false
 
@@ -118,8 +121,17 @@ static func find_closest_hero_hit_in_frame(
 			var live_h: HeroCharacter = heroes_by_id.get(snap.entity_id, null) as HeroCharacter
 			if live_h != null and (live_h.is_defeated or (live_h.current_vehicle_id >= 0 and live_h.current_seat_enclosed)):
 				continue
+
+			var is_open_seat_in_hit_veh: bool = false
+			if hit_veh != null and live_h != null and live_h.current_vehicle_id == hit_veh.id and not live_h.current_seat_enclosed:
+				is_open_seat_in_hit_veh = true
+
+			var allowed_max: float = best_dist
+			if not is_open_seat_in_hit_veh:
+				allowed_max = minf(allowed_max, max_dist)
+
 			var h_res: Dictionary = _hit_test_hero_bounds(
-				ray_origin, dir, best_dist,
+				ray_origin, dir, allowed_max,
 				snap.head_center, snap.head_radius,
 				snap.body_bottom, snap.body_top, snap.body_radius
 			)
@@ -138,9 +150,18 @@ static func find_closest_hero_hit_in_frame(
 				continue
 			if shooter != null and (h.entity_id == shooter.entity_id or h.team == shooter.team):
 				continue
+
+			var is_open_seat_in_hit_veh: bool = false
+			if hit_veh != null and h.current_vehicle_id == hit_veh.id and not h.current_seat_enclosed:
+				is_open_seat_in_hit_veh = true
+
+			var allowed_max: float = best_dist
+			if not is_open_seat_in_hit_veh:
+				allowed_max = minf(allowed_max, max_dist)
+
 			var bnd: Dictionary = _compute_hero_bounds(h)
 			var h_res: Dictionary = _hit_test_hero_bounds(
-				ray_origin, dir, best_dist,
+				ray_origin, dir, allowed_max,
 				bnd["head_center"], float(bnd["head_radius"]),
 				bnd["body_bottom"], bnd["body_top"], float(bnd["body_radius"])
 			)
@@ -271,6 +292,7 @@ func _trace_segment(
 	var best_pos: Vector3 = seg_end
 	var hit_object: Node = null
 	var hit_world: bool = false
+	var hit_veh: VehicleBase = null
 
 	# 1. Check static world + vehicles + destructibles at current state
 	if world_3d != null:
@@ -296,13 +318,31 @@ func _trace_segment(
 				best_dist = seg_start.distance_to(best_pos)
 				hit_world = true
 				var collider: Object = res.get("collider", null)
-				if collider is Node and ((collider as Node).is_in_group("vehicles") or (collider as Node).is_in_group("destructible")):
-					hit_object = collider as Node
+				if collider is Node:
+					var c_node: Node = collider as Node
+					if c_node.is_in_group("vehicles") or c_node.is_in_group("destructible"):
+						hit_object = c_node
+					if c_node is VehicleBase:
+						hit_veh = c_node as VehicleBase
+						hit_object = c_node
+					elif c_node.get_parent() is VehicleBase:
+						hit_veh = c_node.get_parent() as VehicleBase
+						hit_object = hit_veh
 
-	# 2. Check rewound player hitboxes (or live fallback) closer than wall/vehicle hit
+	# 2. Check rewound player hitboxes (or live fallback)
+	# For heroes seated in an open seat of hit_veh, hit_veh does not block the shot!
+	var hero_hit: Dictionary = find_closest_hero_hit_in_frame(
+		shooter,
+		seg_start,
+		dir,
+		best_dist,
+		frame,
+		heroes_by_id,
+		hit_veh,
+		seg_len
+	)
 	var best_hero_id: int = -1
 	var best_headshot: bool = false
-	var hero_hit: Dictionary = find_closest_hero_hit_in_frame(shooter, seg_start, dir, best_dist, frame, heroes_by_id)
 	if bool(hero_hit.get("hit", false)):
 		best_dist = float(hero_hit["dist"])
 		best_pos = hero_hit["pos"]

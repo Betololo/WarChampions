@@ -704,34 +704,190 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
+static func _apply_cartoon_outline(src: Image, outline_col: Color, radius: int = 2) -> Image:
+	var w: int = src.get_width()
+	var h: int = src.get_height()
+	var out := _new_img(w, h, Color(0, 0, 0, 0))
+	var r2: int = radius * radius
+
+	for y in range(h):
+		for x in range(w):
+			if src.get_pixel(x, y).a > 0.05:
+				for dy in range(-radius, radius + 1):
+					var ny: int = y + dy
+					if ny < 0 or ny >= h:
+						continue
+					for dx in range(-radius, radius + 1):
+						var nx: int = x + dx
+						if nx < 0 or nx >= w:
+							continue
+						if dx * dx + dy * dy <= r2:
+							if out.get_pixel(nx, ny).a < 0.05:
+								out.set_pixel(nx, ny, outline_col)
+
+	for y in range(h):
+		for x in range(w):
+			var c: Color = src.get_pixel(x, y)
+			if c.a > 0.05:
+				out.set_pixel(x, y, c)
+
+	return out
+
+
 static func _sprite_weapon(kind_str: String) -> ImageTexture:
-	var img := _new_img(48, 32, Color(0, 0, 0, 0))
-	var gun := Color(0.94, 0.96, 1.0)
+	var img := _new_img(96, 64, Color(0, 0, 0, 0))
+	var steel_hi := Color(0.85, 0.90, 0.98)
+	var steel_mid := Color(0.55, 0.60, 0.68)
+	var steel_dark := Color(0.24, 0.28, 0.35)
+	var walnut_hi := Color(0.76, 0.48, 0.26)
+	var walnut_mid := Color(0.52, 0.30, 0.15)
+	var walnut_dark := Color(0.32, 0.18, 0.08)
+	var brass_hi := Color(0.96, 0.84, 0.36)
+	var brass_mid := Color(0.78, 0.60, 0.20)
+	var olive_hi := Color(0.50, 0.68, 0.35)
+	var olive_dark := Color(0.28, 0.44, 0.20)
+	var red_hi := Color(0.94, 0.28, 0.24)
+	var red_dark := Color(0.68, 0.14, 0.12)
+	var glass_cyan := Color(0.55, 0.85, 0.98)
+	var white := Color(0.98, 0.98, 0.98)
+
 	match kind_str:
-		"0", "1": # SMG / MG
-			_draw_rect(img, 6, 12, 34, 6, gun)
-			_draw_rect(img, 18, 18, 6, 10, gun)
-			_draw_rect(img, 4, 14, 6, 10, Color(0.75, 0.55, 0.25))
-		"2": # Shotgun
-			_draw_rect(img, 4, 13, 40, 5, gun)
-			_draw_rect(img, 6, 16, 10, 7, Color(0.75, 0.45, 0.22))
-		"3": # Pistol
-			_draw_rect(img, 14, 10, 22, 6, gun)
-			_draw_rect(img, 14, 16, 7, 10, gun)
-		"4": # Sniper
-			_draw_rect(img, 3, 14, 42, 4, gun)
-			_draw_rect(img, 18, 8, 14, 4, Color(0.8, 0.9, 1.0))
-			_draw_rect(img, 4, 16, 12, 6, Color(0.72, 0.44, 0.22))
-		"5": # Knife
-			_draw_line(img, Vector2(10, 24), Vector2(36, 6), 5.0, gun)
-			_draw_rect(img, 8, 20, 8, 6, Color(0.65, 0.42, 0.22))
-		"6": # Bazooka
-			_draw_rect(img, 4, 10, 40, 10, Color(0.45, 0.65, 0.35))
-			_draw_rect(img, 38, 8, 6, 14, Color(0.95, 0.65, 0.2))
-		"7": # TNT
-			_draw_rect(img, 12, 8, 24, 18, Color(0.90, 0.20, 0.16))
-			_draw_rect(img, 18, 4, 12, 4, Color(1.0, 0.85, 0.2))
-	return ImageTexture.create_from_image(img)
+		"0": # SMG (walnut stock, beveled receiver, perforated shroud, curved banana mag)
+			_draw_rect(img, 8, 28, 22, 5, walnut_hi)
+			_draw_rect(img, 8, 33, 22, 7, walnut_dark)
+			_draw_rect(img, 6, 26, 5, 16, steel_dark)
+			_draw_rect(img, 28, 38, 7, 12, walnut_mid)
+			_draw_rect(img, 30, 42, 5, 8, walnut_dark)
+			_draw_rect(img, 28, 24, 30, 6, steel_hi)
+			_draw_rect(img, 28, 30, 30, 8, steel_dark)
+			_draw_rect(img, 38, 20, 6, 4, steel_mid)
+			_draw_rect(img, 58, 27, 26, 3, steel_hi)
+			_draw_rect(img, 58, 30, 26, 4, steel_dark)
+			_draw_rect(img, 80, 22, 3, 5, steel_dark)
+			_draw_line(img, Vector2(44, 38), Vector2(40, 56), 7.0, steel_dark)
+			_draw_line(img, Vector2(44, 38), Vector2(40, 56), 4.0, steel_mid)
+
+		"1": # Heavy MG (cooling jacket with muzzle bell, drum mag with brass rim, carry handle)
+			_draw_rect(img, 6, 26, 18, 6, walnut_hi)
+			_draw_rect(img, 6, 32, 18, 8, walnut_dark)
+			_draw_rect(img, 24, 38, 7, 12, walnut_mid)
+			_draw_rect(img, 24, 22, 34, 7, steel_hi)
+			_draw_rect(img, 24, 29, 34, 9, steel_dark)
+			_draw_rect(img, 58, 22, 26, 6, steel_mid)
+			_draw_rect(img, 58, 28, 26, 8, steel_dark)
+			_draw_rect(img, 84, 20, 6, 18, steel_hi)
+			_draw_rect(img, 86, 23, 4, 12, steel_dark)
+			_draw_circle(img, 42, 44, 13.0, olive_dark)
+			_draw_circle(img, 42, 44, 10.0, olive_hi)
+			_draw_ring(img, 42, 44, 13.0, 11.0, brass_hi)
+			_draw_rect(img, 36, 26, 12, 6, brass_hi)
+			_draw_rect(img, 36, 14, 16, 4, walnut_hi)
+			_draw_rect(img, 36, 18, 4, 4, steel_dark)
+			_draw_rect(img, 48, 18, 4, 4, steel_dark)
+
+		"2": # Shotgun (walnut stock + comb, receiver with ejection port, pump slide, bead sight)
+			_draw_rect(img, 6, 28, 26, 6, walnut_hi)
+			_draw_rect(img, 6, 34, 26, 8, walnut_dark)
+			_draw_rect(img, 14, 24, 12, 4, walnut_hi)
+			_draw_rect(img, 30, 38, 7, 12, walnut_mid)
+			_draw_rect(img, 32, 26, 24, 6, steel_hi)
+			_draw_rect(img, 32, 32, 24, 7, steel_dark)
+			_draw_rect(img, 42, 28, 8, 4, steel_mid)
+			_draw_rect(img, 56, 26, 34, 3, steel_hi)
+			_draw_rect(img, 56, 29, 34, 3, steel_dark)
+			_draw_rect(img, 56, 33, 26, 4, steel_dark)
+			_draw_circle(img, 88, 24, 2.0, brass_hi)
+			_draw_rect(img, 58, 32, 16, 8, walnut_hi)
+			for rx in [62, 66, 70]:
+				_draw_rect(img, rx, 32, 2, 8, walnut_dark)
+
+		"3": # Service Pistol (checkered grip, slide with rear/front sights, trigger guard)
+			_draw_rect(img, 32, 32, 14, 18, walnut_dark)
+			_draw_rect(img, 34, 34, 10, 14, walnut_hi)
+			_draw_ring(img, 46, 40, 6.0, 4.0, steel_dark)
+			_draw_rect(img, 45, 38, 2, 5, brass_hi)
+			_draw_rect(img, 28, 20, 46, 6, steel_hi)
+			_draw_rect(img, 28, 26, 46, 7, steel_dark)
+			_draw_rect(img, 30, 16, 4, 4, steel_dark)
+			_draw_rect(img, 68, 16, 3, 4, steel_dark)
+
+		"4": # Sniper (walnut stock + comb, bolt, long barrel with crown, brass scope with lenses)
+			_draw_rect(img, 6, 30, 28, 5, walnut_hi)
+			_draw_rect(img, 6, 35, 28, 8, walnut_dark)
+			_draw_rect(img, 12, 26, 14, 4, walnut_hi)
+			_draw_rect(img, 32, 38, 6, 11, walnut_mid)
+			_draw_rect(img, 34, 26, 22, 6, steel_hi)
+			_draw_rect(img, 34, 32, 22, 6, steel_dark)
+			_draw_rect(img, 42, 22, 5, 4, steel_hi)
+			_draw_rect(img, 56, 28, 34, 3, steel_hi)
+			_draw_rect(img, 56, 31, 34, 3, steel_dark)
+			_draw_rect(img, 88, 27, 4, 9, steel_hi)
+			_draw_rect(img, 32, 14, 36, 4, brass_hi)
+			_draw_rect(img, 32, 18, 36, 4, brass_mid)
+			_draw_rect(img, 38, 22, 4, 4, steel_dark)
+			_draw_rect(img, 58, 22, 4, 4, steel_dark)
+			_draw_rect(img, 30, 12, 3, 12, brass_hi)
+			_draw_rect(img, 67, 12, 3, 12, brass_hi)
+			_draw_rect(img, 31, 14, 2, 8, glass_cyan)
+			_draw_rect(img, 66, 14, 2, 8, glass_cyan)
+
+		"5": # Commando Knife (brass pommel, leather handle rings, S-crossguard, fuller dagger)
+			_draw_circle(img, 16, 38, 5.0, brass_hi)
+			_draw_rect(img, 20, 34, 18, 8, walnut_dark)
+			for hx in [24, 28, 32]:
+				_draw_rect(img, hx, 34, 2, 8, walnut_hi)
+			_draw_rect(img, 38, 24, 5, 28, brass_hi)
+			_draw_rect(img, 36, 22, 4, 5, brass_hi)
+			_draw_rect(img, 41, 49, 4, 5, brass_hi)
+			_draw_line(img, Vector2(43, 38), Vector2(84, 38), 10.0, steel_mid)
+			_draw_line(img, Vector2(43, 36), Vector2(80, 36), 4.0, steel_hi)
+			_draw_line(img, Vector2(43, 40), Vector2(80, 40), 4.0, steel_hi)
+			_draw_line(img, Vector2(45, 38), Vector2(72, 38), 2.0, steel_dark)
+			_draw_line(img, Vector2(80, 36), Vector2(86, 38), 3.0, steel_hi)
+			_draw_line(img, Vector2(80, 40), Vector2(86, 38), 3.0, steel_hi)
+
+		"6": # Bazooka (olive tube, flared venturi funnel, bell cone, warhead tip, dual bands)
+			_draw_rect(img, 12, 25, 72, 6, olive_hi)
+			_draw_rect(img, 12, 31, 72, 8, olive_dark)
+			_draw_rect(img, 6, 21, 8, 22, olive_hi)
+			_draw_rect(img, 6, 26, 4, 12, steel_dark)
+			_draw_rect(img, 82, 21, 6, 22, olive_hi)
+			_draw_line(img, Vector2(88, 32), Vector2(93, 32), 8.0, steel_dark)
+			_draw_line(img, Vector2(88, 30), Vector2(93, 32), 4.0, steel_hi)
+			_draw_rect(img, 28, 23, 5, 18, steel_dark)
+			_draw_rect(img, 64, 23, 5, 18, steel_dark)
+			_draw_ring(img, 76, 18, 5.0, 3.0, steel_mid)
+			_draw_rect(img, 40, 39, 7, 14, walnut_hi)
+			_draw_rect(img, 58, 39, 7, 13, walnut_hi)
+
+		"7": # TNT (bundle of 4 red dynamite sticks, leather straps, brass timer dial, copper fuse)
+			_draw_rect(img, 14, 20, 56, 6, red_hi)
+			_draw_rect(img, 14, 26, 56, 7, red_dark)
+			_draw_rect(img, 14, 33, 56, 6, red_hi)
+			_draw_rect(img, 14, 39, 56, 7, red_dark)
+			_draw_rect(img, 24, 18, 7, 30, walnut_dark)
+			_draw_rect(img, 52, 18, 7, 30, walnut_dark)
+			_draw_rect(img, 25, 18, 5, 5, brass_hi)
+			_draw_rect(img, 53, 18, 5, 5, brass_hi)
+			_draw_circle(img, 39, 32, 11.0, brass_hi)
+			_draw_circle(img, 39, 32, 9.0, white)
+			_draw_line(img, Vector2(39, 32), Vector2(39, 26), 2.0, steel_dark)
+			_draw_line(img, Vector2(39, 32), Vector2(44, 32), 2.0, steel_dark)
+			_draw_circle(img, 39, 32, 2.0, brass_mid)
+			_draw_line(img, Vector2(68, 24), Vector2(76, 18), 3.0, brass_mid)
+			_draw_line(img, Vector2(76, 18), Vector2(82, 25), 3.0, brass_mid)
+			_draw_line(img, Vector2(82, 25), Vector2(78, 32), 3.0, brass_mid)
+
+		_: # Default to Pistol
+			_draw_rect(img, 32, 32, 14, 18, walnut_dark)
+			_draw_rect(img, 34, 34, 10, 14, walnut_hi)
+			_draw_ring(img, 46, 40, 6.0, 4.0, steel_dark)
+			_draw_rect(img, 45, 38, 2, 5, brass_hi)
+			_draw_rect(img, 28, 20, 46, 6, steel_hi)
+			_draw_rect(img, 28, 26, 46, 7, steel_dark)
+
+	var outlined_img := _apply_cartoon_outline(img, Color(0.08, 0.08, 0.10, 1.0), 2)
+	return ImageTexture.create_from_image(outlined_img)
 
 
 static func _sprite_skill(slot_str: String) -> ImageTexture:

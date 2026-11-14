@@ -11,6 +11,8 @@ extends RefCounted
 ## - Every HeroMeshBuilder.make_loft call keeps y strictly ascending and positive radii (bad_vol == 0).
 ## - Local front direction is +Z (yaw = 0 faces +Z South, PI faces -Z North, PI/2 faces +X East, -PI/2 faces -X West).
 
+const FOUNTAIN_WATER_SHADER: Shader = preload("res://vfx_shaders/fountain_water.gdshader")
+
 
 static func make_mat(
 	col: Color,
@@ -540,8 +542,12 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 		_add_box(body, Vector3(0.68, 0.85, 3.85), seg_pos, Vector3(0.0, -a, 0.0), mats["stone_trim"])
 	_add_cyl_col(body, 5.1, 1.05, Vector3(0.0, 0.52, 0.0))
 
-	# Sparkling translucent lower water pool (TRANSPARENCY_ALPHA strictly on water)
-	_add_cyl(body, 4.35, 4.35, 0.18, Vector3(0.0, 0.74, 0.0), Vector3.ZERO, mats["water"], 16, "LowerWater")
+	# Animated rippling water ShaderMaterial for fountain pools
+	var fountain_shader_mat := ShaderMaterial.new()
+	fountain_shader_mat.shader = FOUNTAIN_WATER_SHADER
+
+	# Sparkling translucent lower water pool (ShaderMaterial with concentric ripples & foam crests)
+	_add_cyl(body, 4.35, 4.35, 0.18, Vector3(0.0, 0.74, 0.0), Vector3.ZERO, fountain_shader_mat, 16, "LowerWater")
 
 	# Sculpted central carved pedestal + upper bowl + finial spout
 	var ped_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
@@ -553,7 +559,7 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 	], 16)
 	_add_mesh(body, ped_mesh, Vector3.ZERO, Vector3.ZERO, mats["stone_trim"], "CenterPedestal")
 	_add_cyl_col(body, 1.4, 3.6, Vector3(0.0, 1.8, 0.0))
-	_add_cyl(body, 1.85, 1.85, 0.10, Vector3(0.0, 3.19, 0.0), Vector3.ZERO, mats["water"], 14, "UpperWater")
+	_add_cyl(body, 1.85, 1.85, 0.10, Vector3(0.0, 3.19, 0.0), Vector3.ZERO, fountain_shader_mat, 14, "UpperWater")
 
 	var spout_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
 		{"y": 3.05, "rx": 0.65, "rz": 0.65, "p": 2.0, "col": Color(0.90, 0.88, 0.85)},
@@ -562,15 +568,87 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 	], 12)
 	_add_mesh(body, spout_mesh, Vector3.ZERO, Vector3.ZERO, mats["stone_trim"], "TopSpout")
 
-	# 4 falling sparkling water arc jets from upper bowl into lower basin
+	# Shared water droplet & splash particle materials + meshes
+	var droplet_mat := StandardMaterial3D.new()
+	droplet_mat.albedo_color = Color(0.82, 0.95, 1.0, 0.85)
+	droplet_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	droplet_mat.roughness = 0.15
+	droplet_mat.emission_enabled = true
+	droplet_mat.emission = Color(0.65, 0.88, 1.0)
+	droplet_mat.emission_energy_multiplier = 0.4
+
+	var droplet_mesh := SphereMesh.new()
+	droplet_mesh.radius = 0.05
+	droplet_mesh.height = 0.10
+	droplet_mesh.radial_segments = 6
+	droplet_mesh.rings = 4
+	droplet_mesh.material = droplet_mat
+
+	var splash_mesh := SphereMesh.new()
+	splash_mesh.radius = 0.07
+	splash_mesh.height = 0.14
+	splash_mesh.radial_segments = 6
+	splash_mesh.rings = 4
+	splash_mesh.material = droplet_mat
+
+	# 4 parabolic animated water stream jets from upper bowl rim arcing cleanly into lower pool
 	for i in range(4):
 		var ang: float = float(i) * PI * 0.5 + PI * 0.25
-		var dir := Vector3(cos(ang), 0.0, sin(ang))
-		for s in range(5):
-			var t: float = (float(s) + 0.5) / 5.0
-			var r_dist: float = lerpf(1.75, 3.35, t)
-			var y_arc: float = lerpf(3.18, 0.85, t * t)
-			_add_cyl(body, 0.10, 0.14, 0.55, dir * r_dist + Vector3(0.0, y_arc, 0.0), Vector3(0.0, -ang, 0.45 + t * 0.75), mats["water"], 8)
+		var rim_pos := Vector3(cos(ang) * 1.95, 3.20, sin(ang) * 1.95)
+		var jet_dir := Vector3(cos(ang), 0.50, sin(ang)).normalized()
+		var jet := GPUParticles3D.new()
+		jet.name = "FountainJet_%d" % i
+		jet.position = rim_pos
+		jet.amount = 36
+		jet.lifetime = 0.85
+		jet.explosiveness = 0.0
+		jet.draw_pass_1 = droplet_mesh
+		var proc := ParticleProcessMaterial.new()
+		proc.direction = jet_dir
+		proc.spread = 5.0
+		proc.initial_velocity_min = 2.6
+		proc.initial_velocity_max = 3.2
+		proc.gravity = Vector3(0.0, -12.0, 0.0)
+		jet.process_material = proc
+		body.add_child(jet, true)
+
+	# 1 central finial spray plume shooting upward from TopSpout
+	var plume := GPUParticles3D.new()
+	plume.name = "FountainPlume"
+	plume.position = Vector3(0.0, 4.48, 0.0)
+	plume.amount = 36
+	plume.lifetime = 0.80
+	plume.explosiveness = 0.0
+	plume.draw_pass_1 = droplet_mesh
+	var plume_proc := ParticleProcessMaterial.new()
+	plume_proc.direction = Vector3(0.0, 1.0, 0.0)
+	plume_proc.spread = 14.0
+	plume_proc.initial_velocity_min = 3.2
+	plume_proc.initial_velocity_max = 4.2
+	plume_proc.gravity = Vector3(0.0, -9.8, 0.0)
+	plume.process_material = plume_proc
+	body.add_child(plume, true)
+
+	# 4 lower basin impact splash emitters
+	for i in range(4):
+		var ang: float = float(i) * PI * 0.5 + PI * 0.25
+		var splash_pos := Vector3(cos(ang) * 3.35, 0.76, sin(ang) * 3.35)
+		var splash := GPUParticles3D.new()
+		splash.name = "FountainSplash_%d" % i
+		splash.position = splash_pos
+		splash.amount = 28
+		splash.lifetime = 0.45
+		splash.explosiveness = 0.0
+		splash.draw_pass_1 = splash_mesh
+		var splash_proc := ParticleProcessMaterial.new()
+		splash_proc.direction = Vector3(0.0, 1.0, 0.0)
+		splash_proc.spread = 45.0
+		splash_proc.initial_velocity_min = 1.2
+		splash_proc.initial_velocity_max = 2.2
+		splash_proc.gravity = Vector3(0.0, -12.0, 0.0)
+		splash.process_material = splash_proc
+		body.add_child(splash, true)
+
 	return body
 
 

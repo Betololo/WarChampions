@@ -129,7 +129,7 @@
    - Add CentralFountain animation check (zero frozen arc cylinders, `LowerWater` animated `ShaderMaterial`, active `GPUParticles3D` water jet emitters!).
    - Verify all 8 `HeroMeshBuilder.build_weapon_mesh` variants + `CartoonAssets._sprite_weapon` (`96x64`, opaque pixels > 0, no runtime errors).
 
-- [ ] Implement Task 13 changes, run full `--headless` and Vulkan Forward+ suites, inspect live scene/screenshots if needed, inspect diff, review with Spec & Quality Reviewer.
+- [x] Implement Task 13 changes, run full `--headless` and Vulkan Forward+ suites, inspect live scene/screenshots if needed, inspect diff, review with Spec & Quality Reviewer.
 
 ---
 
