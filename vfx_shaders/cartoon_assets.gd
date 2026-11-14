@@ -52,13 +52,27 @@ static func _generate_texture(key: String) -> ImageTexture:
 		"hero_jacket_national":
 			return _tex_jacket(Color(0.32, 0.34, 0.38), Color(0.18, 0.19, 0.22), Color(0.65, 0.18, 0.18))
 		"hero_coat_commando":
-			return _tex_jacket(Color(0.19, 0.20, 0.23), Color(0.10, 0.11, 0.13), Color(0.32, 0.24, 0.18))
+			return _tex_jacket(Color(0.18, 0.19, 0.22), Color(0.09, 0.10, 0.12), Color(0.58, 0.18, 0.18))
+		"hero_coat_commando_royal":
+			return _tex_jacket(Color(0.46, 0.45, 0.30), Color(0.28, 0.28, 0.18), Color(0.70, 0.60, 0.36))
 		"hero_gunner_vest":
 			return _tex_jacket(Color(0.76, 0.74, 0.68), Color(0.52, 0.50, 0.45), Color(0.40, 0.35, 0.25))
+		"hero_cloth_royal":
+			return _tex_cloth(Color(0.45, 0.37, 0.25), Color(0.30, 0.24, 0.16), Color(0.68, 0.58, 0.38))
+		"hero_cloth_national":
+			return _tex_cloth(Color(0.32, 0.34, 0.38), Color(0.18, 0.19, 0.22), Color(0.65, 0.18, 0.18))
+		"hero_cloth_commando_royal":
+			return _tex_cloth(Color(0.46, 0.45, 0.30), Color(0.28, 0.28, 0.18), Color(0.70, 0.60, 0.36))
+		"hero_cloth_commando_national":
+			return _tex_cloth(Color(0.18, 0.19, 0.22), Color(0.09, 0.10, 0.12), Color(0.58, 0.18, 0.18))
+		"hero_cloth_gunner_royal":
+			return _tex_cloth(Color(0.76, 0.74, 0.68), Color(0.52, 0.50, 0.45), Color(0.40, 0.35, 0.25))
 		"hero_skin":
 			return _tex_skin()
 		"hero_arm_tattoo":
 			return _tex_arm_tattoo()
+		"hero_arm_forearm_wrap":
+			return _tex_arm_forearm_wrap()
 		"hero_rucksack":
 			return _tex_rucksack()
 		"hero_leather":
@@ -231,14 +245,8 @@ static func _draw_dashed_v(img: Image, x: int, y0: int, y1: int, step: int, col:
 		_draw_rect(img, x, y, 1, maxi(1, step / 2), col)
 
 
-static func _tex_jacket(base: Color, seam: Color, accent: Color) -> ImageTexture:
+static func _new_cloth_canvas(base: Color, seam: Color, highlight: Color) -> Image:
 	var img := _new_img(128, 128, base)
-	var shade: Color = base.lerp(seam, 0.48)
-	var highlight: Color = base.lightened(0.11)
-	var stitch: Color = accent.lerp(highlight, 0.45)
-	var brass: Color = Color(0.88, 0.72, 0.28)
-
-	# Vertical painterly lighting + subtle herringbone cloth weave
 	for y in range(128):
 		var vy: float = float(y) / 127.0
 		var row_col: Color = base
@@ -250,6 +258,28 @@ static func _tex_jacket(base: Color, seam: Color, accent: Color) -> ImageTexture
 		if y % 4 == 0:
 			for x in range((y % 8), 128, 8):
 				_draw_rect(img, x, y, 3, 1, row_col.lightened(0.04))
+	return img
+
+
+## Clean herringbone weave & seam stitching for sleeves, collars, epaulets & coat tails (zero chest buttons/pockets).
+static func _tex_cloth(base: Color, seam: Color, accent: Color) -> ImageTexture:
+	var highlight: Color = base.lightened(0.11)
+	var shade: Color = base.lerp(seam, 0.45)
+	var stitch: Color = accent.lerp(highlight, 0.45)
+	var img := _new_cloth_canvas(base, seam, highlight)
+	for px in [31, 63, 95]:
+		_draw_rect(img, px, 0, 2, 128, shade)
+	_draw_dashed_v(img, 61, 8, 124, 5, stitch)
+	_draw_dashed_h(img, 0, 128, 118, 4, stitch)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_jacket(base: Color, seam: Color, accent: Color) -> ImageTexture:
+	var shade: Color = base.lerp(seam, 0.48)
+	var highlight: Color = base.lightened(0.11)
+	var stitch: Color = accent.lerp(highlight, 0.45)
+	var brass: Color = Color(0.88, 0.72, 0.28)
+	var img := _new_cloth_canvas(base, seam, highlight)
 
 	# Horizontal shoulder yoke & topstitching across back (visible in TPS)
 	_draw_rect(img, 30, 23, 68, 3, highlight)
@@ -323,34 +353,52 @@ static func _tex_pants(base: Color, shadow: Color, accent: Color) -> ImageTextur
 
 
 static func _tex_skin() -> ImageTexture:
-	var img := _new_img(128, 128, Color(0.95, 0.76, 0.62))
+	var img := _new_img(128, 128, Color(0.92, 0.72, 0.58))
 	# Warm crown/forehead highlight, subtle cheek blush & soft jaw/neck shadow
-	_draw_rect(img, 0, 0, 128, 28, Color(0.98, 0.82, 0.68))
-	_draw_rect(img, 0, 96, 128, 32, Color(0.80, 0.60, 0.48))
+	_draw_rect(img, 0, 0, 128, 28, Color(0.96, 0.78, 0.64))
+	_draw_rect(img, 0, 96, 128, 32, Color(0.78, 0.58, 0.46))
 	for cx in [18, 110]:
-		_draw_circle(img, cx, 56, 12.0, Color(0.95, 0.68, 0.56))
-	_draw_rect(img, 0, 40, 128, 6, Color(0.88, 0.68, 0.55)) # subtle brow crease
+		_draw_circle(img, cx, 56, 12.0, Color(0.92, 0.64, 0.52))
+	_draw_rect(img, 0, 40, 128, 6, Color(0.85, 0.65, 0.52)) # subtle brow crease
 	return ImageTexture.create_from_image(img)
 
 
 static func _tex_arm_tattoo() -> ImageTexture:
-	var img := _new_img(128, 128, Color(0.95, 0.76, 0.62))
-	_draw_rect(img, 0, 0, 128, 22, Color(0.98, 0.82, 0.68))
-	_draw_rect(img, 0, 96, 128, 32, Color(0.84, 0.64, 0.50))
-	var ink := Color(0.24, 0.30, 0.36)
-	var ink_hi := Color(0.38, 0.42, 0.46)
-	# Twin bicep armbands & stylized nautical anchor-wing tattoos on outer arms (u ~ 0.25 & 0.75)
-	_draw_rect(img, 0, 32, 128, 5, ink)
-	_draw_rect(img, 0, 40, 128, 3, ink_hi)
+	var img := _new_img(128, 128, Color(0.92, 0.72, 0.58))
+	_draw_rect(img, 0, 0, 128, 20, Color(0.96, 0.78, 0.64))
+	_draw_rect(img, 0, 102, 128, 26, Color(0.84, 0.64, 0.50))
+	var ink := Color(0.22, 0.28, 0.34)
+	var ink_hi := Color(0.36, 0.40, 0.44)
+	# Twin bicep armbands & stylized nautical anchor-wing tattoos on outer upper arms (u ~ 0.25 & 0.75)
+	_draw_rect(img, 0, 30, 128, 5, ink)
+	_draw_rect(img, 0, 38, 128, 3, ink_hi)
 	for cx in [32, 96]:
 		for s in range(-12, 13, 6):
-			_draw_line(img, Vector2(cx + s, 32), Vector2(cx + s + 3, 25), 2.5, ink)
-		# Stylized anchor + wing crest
-		_draw_line(img, Vector2(cx, 54), Vector2(cx, 88), 3.6, ink)
-		_draw_line(img, Vector2(cx - 10, 62), Vector2(cx + 10, 62), 3.2, ink)
-		_draw_line(img, Vector2(cx - 12, 78), Vector2(cx, 90), 3.4, ink)
-		_draw_line(img, Vector2(cx + 12, 78), Vector2(cx, 90), 3.4, ink)
-		_draw_circle(img, cx, 52, 4.0, ink_hi)
+			_draw_line(img, Vector2(cx + s, 30), Vector2(cx + s + 3, 23), 2.5, ink)
+		_draw_line(img, Vector2(cx, 52), Vector2(cx, 84), 3.4, ink)
+		_draw_line(img, Vector2(cx - 10, 60), Vector2(cx + 10, 60), 3.0, ink)
+		_draw_line(img, Vector2(cx - 12, 75), Vector2(cx, 86), 3.2, ink)
+		_draw_line(img, Vector2(cx + 12, 75), Vector2(cx, 86), 3.2, ink)
+		_draw_circle(img, cx, 50, 3.8, ink_hi)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_arm_forearm_wrap() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.92, 0.72, 0.58))
+	# Bare tanned forearm skin blending from elbow with a rugged leather-strapped wrist bracer wrap
+	_draw_rect(img, 0, 0, 128, 24, Color(0.85, 0.65, 0.51))
+	_draw_rect(img, 0, 24, 128, 58, Color(0.92, 0.72, 0.58))
+	var wrap_base := Color(0.34, 0.23, 0.15)
+	var wrap_dark := Color(0.22, 0.15, 0.10)
+	var stitch := Color(0.68, 0.56, 0.36)
+	_draw_rect(img, 0, 84, 128, 38, wrap_base)
+	for wy in [86, 98, 110]:
+		_draw_rect(img, 0, wy, 128, 2, wrap_dark)
+	_draw_dashed_h(img, 2, 126, 85, 4, stitch)
+	_draw_dashed_h(img, 2, 126, 120, 4, stitch)
+	for bx in [32, 96]:
+		_draw_rect(img, bx - 5, 92, 10, 14, wrap_dark)
+		_draw_rect(img, bx - 3, 95, 6, 8, Color(0.86, 0.70, 0.28))
 	return ImageTexture.create_from_image(img)
 
 

@@ -617,6 +617,7 @@ func _test_hero_visuals_camera_and_audio() -> void:
 		HeroMeshBuilder.build_backpack_mesh(0),
 		HeroMeshBuilder.build_backpack_mesh(1),
 		HeroMeshBuilder.build_backpack_mesh(2),
+		HeroMeshBuilder.build_coat_tail_flap_mesh(),
 		HeroMeshBuilder.build_belt_pouch_mesh(),
 		HeroMeshBuilder.build_head_mesh(),
 		HeroMeshBuilder.build_helmet_mesh(true),
@@ -634,19 +635,22 @@ func _test_hero_visuals_camera_and_audio() -> void:
 	_assert(meshes_ok, "HeroMeshBuilder constructs sculpted loft ArrayMeshes for torsos, collars, backpacks, headgear, faces, arms & hands")
 
 	var hero_tex_keys: Array[String] = [
-		"hero_jacket_royal", "hero_jacket_national", "hero_coat_commando",
-		"hero_gunner_vest", "hero_skin", "hero_pants_royal", "hero_pants_national",
-		"hero_gun_wood", "hero_arm_tattoo", "hero_rucksack", "hero_leather",
+		"hero_jacket_royal", "hero_jacket_national", "hero_coat_commando", "hero_coat_commando_royal",
+		"hero_cloth_royal", "hero_cloth_national", "hero_cloth_commando_royal", "hero_cloth_commando_national",
+		"hero_cloth_gunner_royal", "hero_gunner_vest", "hero_skin", "hero_pants_royal", "hero_pants_national",
+		"hero_gun_wood", "hero_arm_tattoo", "hero_arm_forearm_wrap", "hero_rucksack", "hero_leather",
 	]
 	var tex_ok: bool = true
 	for tk in hero_tex_keys:
 		if CartoonAssets.get_texture(tk) == null:
 			tex_ok = false
-	_assert(tex_ok, "CartoonAssets provides all 11 hand-painted hero uniform, tattoo, rucksack, leather, skin & rifle textures")
+	_assert(tex_ok, "CartoonAssets provides all %d hand-painted hero uniform, cloth, tattoo, forearm, rucksack, leather, skin & rifle textures" % hero_tex_keys.size())
 
 	var all_rigs_rich: bool = true
 	var no_ball_joints: bool = true
 	var all_ik_accurate: bool = true
+	var clean_textures_and_roughness: bool = true
+	var clearances_ok: bool = true
 	var max_ik_err: float = 0.0
 	var min_parts: int = 999
 	for t_id in [NetworkManager.TEAM_ROYAL, NetworkManager.TEAM_NATIONAL]:
@@ -662,6 +666,85 @@ func _test_hero_visuals_camera_and_audio() -> void:
 				for child in arm_piv.get_children():
 					if child is MeshInstance3D and (child as MeshInstance3D).mesh is SphereMesh:
 						no_ball_joints = false
+			var button_tex_count: int = 0
+			for mi in hero_v._mesh_parts:
+				var smat := mi.material_override as ShaderMaterial
+				if smat == null:
+					clean_textures_and_roughness = false
+					continue
+				var tkey: String = str(smat.get_meta("tex_key", ""))
+				var rough: float = float(smat.get_shader_parameter("specular_roughness"))
+				if tkey.begins_with("hero_jacket_") or tkey.begins_with("hero_coat_") or tkey == "hero_gunner_vest":
+					button_tex_count += 1
+					if rough < 0.55:
+						clean_textures_and_roughness = false
+				if tkey == "hero_skin" or tkey == "hero_rucksack" or tkey.begins_with("hero_cloth_") or tkey.begins_with("hero_pants_") or tkey.begins_with("hero_arm_"):
+					if rough < 0.55:
+						clean_textures_and_roughness = false
+				if tkey == "hero_leather" and mi.get_parent() == hero_v._forearm_r_pivot and rough < 0.55:
+					clean_textures_and_roughness = false
+			if button_tex_count != 1:
+				clean_textures_and_roughness = false
+			for arm_piv in [hero_v._arm_l_pivot, hero_v._arm_r_pivot]:
+				for child in arm_piv.get_children():
+					if child is MeshInstance3D and (child as MeshInstance3D).material_override != null:
+						var arm_tkey: String = str((child as MeshInstance3D).material_override.get_meta("tex_key", ""))
+						if arm_tkey.begins_with("hero_jacket_") or arm_tkey.begins_with("hero_coat_"):
+							clean_textures_and_roughness = false
+			if t_id == NetworkManager.TEAM_ROYAL and c_id == NetworkManager.CLASS_GUNNER:
+				var u_key: String = str((hero_v._arm_r_pivot.get_child(0) as MeshInstance3D).material_override.get_meta("tex_key", ""))
+				var f_key: String = str((hero_v._forearm_r_pivot.get_child(0) as MeshInstance3D).material_override.get_meta("tex_key", ""))
+				if u_key != "hero_arm_tattoo" or f_key != "hero_arm_forearm_wrap":
+					clean_textures_and_roughness = false
+			if t_id == NetworkManager.TEAM_NATIONAL:
+				for child in hero_v._torso_pivot.get_children():
+					if child is MeshInstance3D and absf((child as MeshInstance3D).position.x) < 0.02 and absf((child as MeshInstance3D).position.y - 0.075) < 0.01:
+						var bmat := (child as MeshInstance3D).material_override as ShaderMaterial
+						var bcol: Color = bmat.get_shader_parameter("albedo_color")
+						if bcol.r > 0.65 or absf(bcol.r - bcol.b) > 0.12 or float(bmat.get_shader_parameter("specular_roughness")) > 0.48:
+							clean_textures_and_roughness = false
+				if c_id == NetworkManager.CLASS_GUNNER:
+					for child in hero_v._head_pivot.get_children():
+						if child is MeshInstance3D and (child as MeshInstance3D).position.y > 0.32 and (child as MeshInstance3D).position.z < -0.10:
+							var bdmat := (child as MeshInstance3D).material_override as ShaderMaterial
+							var bdcol: Color = bdmat.get_shader_parameter("albedo_color")
+							if bdcol.r > 0.68 or absf(bdcol.r - bdcol.b) > 0.12 or float(bdmat.get_shader_parameter("specular_roughness")) > 0.48:
+								clean_textures_and_roughness = false
+			if c_id == NetworkManager.CLASS_COMMANDO:
+				var found_fedora: bool = false
+				for child in hero_v._head_pivot.get_children():
+					if child is MeshInstance3D and (child as MeshInstance3D).position.y > 0.28:
+						found_fedora = true
+						if (child as MeshInstance3D).rotation.x >= 0.0:
+							clearances_ok = false
+				if not found_fedora:
+					clearances_ok = false
+			if t_id == NetworkManager.TEAM_ROYAL and c_id == NetworkManager.CLASS_SOLDIER:
+				var eye_min_z: float = 0.0
+				var beard_min_z: float = 0.0
+				for child in hero_v._head_pivot.get_children():
+					if child is MeshInstance3D:
+						var mi_h := child as MeshInstance3D
+						if absf(mi_h.position.y - 0.248) < 0.01:
+							for v in mi_h.mesh.get_faces():
+								eye_min_z = minf(eye_min_z, (mi_h.transform * v).z)
+						elif absf(mi_h.position.y - 0.152) < 0.01:
+							for v in mi_h.mesh.get_faces():
+								beard_min_z = minf(beard_min_z, (mi_h.transform * v).z)
+				if eye_min_z > -0.148 or beard_min_z > -0.150:
+					clearances_ok = false
+			if c_id == NetworkManager.CLASS_GUNNER:
+				var band_faces := HeroMeshBuilder.build_bandolier_mesh(1).get_faces()
+				var band_belly_z: float = 0.0
+				for v in band_faces:
+					if v.y >= 0.14 and v.y <= 0.18 and v.z < -0.05:
+						band_belly_z = minf(band_belly_z, v.z)
+				var gun_hem_rx: float = 0.0
+				for v in HeroMeshBuilder.build_torso_mesh(1).get_faces():
+					if v.y <= -0.08:
+						gun_hem_rx = maxf(gun_hem_rx, absf(v.x))
+				if band_belly_z > -0.160 or gun_hem_rx < 0.290:
+					clearances_ok = false
 			var hr: Vector3 = hero_v._arm_r_pivot.transform * hero_v._forearm_r_pivot.transform * Vector3(0.0, -hero_v._forearm_len, 0.0)
 			var hl: Vector3 = hero_v._arm_l_pivot.transform * hero_v._forearm_l_pivot.transform * Vector3(0.0, -hero_v._forearm_len, 0.0)
 			var gr: Vector3 = hero_v._held_weapon_root.transform * hero_v._weapon_grip_local
@@ -673,7 +756,22 @@ func _test_hero_visuals_camera_and_audio() -> void:
 				all_ik_accurate = false
 			hero_v.free()
 
+	var royal_coat_px: Color = CartoonAssets.get_texture("hero_coat_commando_royal").get_image().get_pixel(20, 48)
+	var nat_coat_px: Color = CartoonAssets.get_texture("hero_coat_commando").get_image().get_pixel(20, 48)
+	if Vector3(royal_coat_px.r - nat_coat_px.r, royal_coat_px.g - nat_coat_px.g, royal_coat_px.b - nat_coat_px.b).length() < 0.18:
+		clean_textures_and_roughness = false
+
+	var off_cap_faces := HeroMeshBuilder.build_officer_cap_mesh().get_faces()
+	var brim_tip_y: float = 999.0
+	for v in off_cap_faces:
+		if v.z < -0.17:
+			brim_tip_y = minf(brim_tip_y, v.y)
+	if brim_tip_y >= -0.015:
+		clearances_ok = false
+
 	_assert(no_ball_joints, "Hero arm & forearm pivots contain zero standalone SphereMesh ball-joint protrusions")
+	_assert(clean_textures_and_roughness, "Hero sleeves/collars avoid chest buttons, Royal Gunner forearm avoids duplicate tattoo, National buckles/badges use metal, and matte/gloss roughness is cleanly gated")
+	_assert(clearances_ok, "Hero hat brims tilt forward-down, eyes & Royal beard clear jaw/cheeks, Gunner bandolier & coat hem clear torso/thighs")
 	_assert(all_rigs_rich and all_ik_accurate, "All 6 class/faction rigs build >=18 sculpted parts (min=%d) with IK error <0.025m (max=%.4fm)" % [min_parts, max_ik_err])
 
 	var w_root := Node3D.new()
