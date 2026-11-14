@@ -3,7 +3,11 @@ extends VehicleBase
 
 ## Aquatic Patrol / Landing Boat: Buoyancy over ocean (Y = 0.0),
 ## 1 Driver + 2 open deck Passengers who can fire weapons, skills & Wrench.
-const MAX_WATER_SPEED: float = 22.0
+const MAX_WATER_SPEED: float = 24.0
+const ACCEL: float = 34.0
+const TURN_RATE: float = 2.75
+const LATERAL_GRIP: float = 10.0
+const IDLE_DRAG: float = 3.5
 const BUOYANCY_STIFFNESS: float = 36.0
 const WATER_DRAG: float = 2.8
 
@@ -55,19 +59,15 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 	var water_y: float = HeroCharacter.WATER_LEVEL
 	var in_water: bool = global_position.y <= water_y + 0.65
 
-	if in_water and driver != null:
-		var forward: Vector3 = -global_transform.basis.z
-		var flat_fwd := Vector3(forward.x, 0.0, forward.z).normalized()
-		var cmd: InputCmd = driver.latest_server_input
-		var throttle: float = -cmd.move_dir.y
-		var steer: float = -cmd.move_dir.x
-		if absf(throttle) > 0.05 and linear_velocity.length() < MAX_WATER_SPEED:
-			apply_central_force(flat_fwd * throttle * 26.0 * mass)
-		if absf(steer) > 0.05:
-			angular_velocity.y = lerpf(angular_velocity.y, steer * 2.6, 5.0 * delta)
-		# Bow light gun on fire
-		if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
-			_driver_fire_cd = 0.14
-			var fire_dir: Vector3 = -Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0)).z.normalized()
-			var muzzle: Vector3 = global_position + Vector3(0.0, 1.9, 0.0) + fire_dir * 2.5
-			_fire_ballistic_mg(driver, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)
+	if in_water:
+		var cmd: InputCmd = driver.latest_server_input if driver != null else null
+		_apply_arcade_drive(delta, cmd, MAX_WATER_SPEED, ACCEL, TURN_RATE, LATERAL_GRIP, IDLE_DRAG, 0.65)
+		_process_roadkill(driver, context, Vector2(1.5, 3.2), 5.5)
+
+		if driver != null and cmd != null:
+			# Bow light gun on fire
+			if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
+				_driver_fire_cd = 0.14
+				var fire_dir: Vector3 = -Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0)).z.normalized()
+				var muzzle: Vector3 = global_position + Vector3(0.0, 1.9, 0.0) + fire_dir * 2.5
+				_fire_ballistic_mg(driver, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)

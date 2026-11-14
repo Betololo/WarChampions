@@ -30,6 +30,7 @@ func _ready() -> void:
 	await _test_sfx_priority_and_bot_anti_wallhack()
 	_test_parachute_delay_death_collapse_and_knockback()
 	_test_smooth_sync_packet_sequencing_and_menus()
+	await _test_step_climb_vehicle_arcade_and_roadkill()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -2550,3 +2551,300 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 func _test_scene_compile_and_load() -> void:
 	var main_scene: PackedScene = load("res://scenes/main.tscn")
 	_assert(main_scene != null, "Main scene res://scenes/main.tscn loads cleanly")
+
+
+func _test_step_climb_vehicle_arcade_and_roadkill() -> void:
+	# 1. HeroCharacter climbing a 0.38m vertical BoxShape3D step/curb
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var f_shape := CollisionShape3D.new()
+	var f_box := BoxShape3D.new()
+	f_box.size = Vector3(40.0, 1.0, 40.0)
+	f_shape.shape = f_box
+	floor_body.add_child(f_shape)
+	floor_body.position = Vector3(0.0, -0.5, 0.0)
+	add_child(floor_body)
+
+	var curb_body := StaticBody3D.new()
+	curb_body.collision_layer = 1
+	var c_shape := CollisionShape3D.new()
+	var c_box := BoxShape3D.new()
+	c_box.size = Vector3(10.0, 0.38, 4.0)
+	c_shape.shape = c_box
+	curb_body.add_child(c_shape)
+	# Center y = 0.19 -> top at y = 0.38m, center z = -3.0 -> front face at z = -1.0
+	curb_body.position = Vector3(0.0, 0.19, -3.0)
+	add_child(curb_body)
+
+	await get_tree().physics_frame
+
+	var step_hero := HeroCharacter.new()
+	step_hero.setup_identity(710, "StepHero", 0, 0, 0, false, false)
+	add_child(step_hero)
+	step_hero.global_position = Vector3(0.0, 0.0, -0.4)
+	step_hero.velocity = Vector3.ZERO
+
+	await get_tree().physics_frame
+
+	var walk_cmd := InputCmd.new()
+	walk_cmd.move_dir = Vector2(0.0, -1.0) # Forward (-Z)
+	walk_cmd.aim_yaw = 0.0
+
+	for _i in range(35):
+		step_hero.simulate_movement(walk_cmd, 1.0 / 60.0)
+		step_hero._curr_phys_pos = step_hero.global_position
+
+	_assert(
+		step_hero.global_position.y >= 0.36 and step_hero.global_position.z < -1.1,
+		"HeroCharacter walking across 0.38m curb climbs cleanly onto top (y=%.2fm >= 0.36m, z=%.2fm)" % [step_hero.global_position.y, step_hero.global_position.z]
+	)
+
+	# 2. VehicleJeep climbing a 0.30m curb/step
+	var v_curb := StaticBody3D.new()
+	v_curb.collision_layer = 1
+	var vc_shape := CollisionShape3D.new()
+	var vc_box := BoxShape3D.new()
+	vc_box.size = Vector3(10.0, 0.30, 6.0)
+	vc_shape.shape = vc_box
+	v_curb.add_child(vc_shape)
+	v_curb.position = Vector3(10.0, 0.15, -6.0) # front face at z = -3.0
+	add_child(v_curb)
+
+	var v_driver := HeroCharacter.new()
+	v_driver.setup_identity(711, "JeepClimber", 0, 0, 0, false, false)
+	add_child(v_driver)
+
+	var climb_jeep := VehicleJeep.new()
+	climb_jeep.id = 72
+	add_child(climb_jeep)
+	climb_jeep.global_position = Vector3(10.0, 0.0, -0.5)
+	climb_jeep.try_enter_hero(v_driver)
+
+	await get_tree().physics_frame
+
+	var climb_cmd := InputCmd.new()
+	climb_cmd.move_dir = Vector2(0.0, -1.0)
+	v_driver.latest_server_input = climb_cmd
+
+	# Drive into the curb: test _assist_curb_climb triggers bounded lift and rolls onto curb
+	var lift_detected: bool = false
+	for _i in range(30):
+		climb_jeep.step_vehicle_server(1.0 / 60.0, {711: v_driver}, {})
+		if climb_jeep.linear_velocity.y >= 2.0:
+			lift_detected = true
+		if climb_jeep.global_position.y > 0.0:
+			climb_jeep.linear_velocity.y -= 9.8 * (1.0 / 60.0)
+		climb_jeep.global_position += climb_jeep.linear_velocity * (1.0 / 60.0)
+		if climb_jeep.global_position.z <= -3.0:
+			if climb_jeep.global_position.y < 0.30:
+				climb_jeep.global_position.y = 0.30
+				climb_jeep.linear_velocity.y = maxf(0.0, climb_jeep.linear_velocity.y)
+		elif climb_jeep.global_position.y < 0.0:
+			climb_jeep.global_position.y = 0.0
+			climb_jeep.linear_velocity.y = maxf(0.0, climb_jeep.linear_velocity.y)
+
+	_assert(
+		lift_detected and climb_jeep.global_position.y >= 0.28 and climb_jeep.global_position.y <= 0.72,
+		"VehicleJeep driving into 0.30m curb climbs smoothly onto it (lift=%s, y=%.2fm in [0.28, 0.72])" % [str(lift_detected), climb_jeep.global_position.y]
+	)
+
+	# Verify that driving into a 10-degree ramp does NOT trigger trampoline hopping
+	var ramp_body := StaticBody3D.new()
+	ramp_body.collision_layer = 1
+	var ramp_shape := CollisionShape3D.new()
+	var ramp_box := BoxShape3D.new()
+	ramp_box.size = Vector3(10.0, 0.40, 10.0)
+	ramp_shape.shape = ramp_box
+	ramp_body.add_child(ramp_shape)
+	ramp_body.rotation.x = deg_to_rad(-10.0)
+	ramp_body.position = Vector3(20.0, 0.20, -6.0)
+	add_child(ramp_body)
+
+	var r_driver := HeroCharacter.new()
+	r_driver.setup_identity(719, "RampDriver", 0, 0, 0, false, false)
+	add_child(r_driver)
+
+	var ramp_jeep := VehicleJeep.new()
+	ramp_jeep.id = 78
+	add_child(ramp_jeep)
+	ramp_jeep.global_position = Vector3(20.0, 0.0, -1.0)
+	ramp_jeep.try_enter_hero(r_driver)
+	r_driver.latest_server_input = climb_cmd
+
+	await get_tree().physics_frame
+
+	var ramp_max_vy: float = 0.0
+	for _i in range(25):
+		ramp_jeep.step_vehicle_server(1.0 / 60.0, {719: r_driver}, {})
+		ramp_max_vy = maxf(ramp_max_vy, ramp_jeep.linear_velocity.y)
+		ramp_jeep.global_position += ramp_jeep.linear_velocity * (1.0 / 60.0)
+
+	_assert(
+		ramp_max_vy < 1.0,
+		"VehicleJeep driving up 10-degree ramp does NOT trigger trampoline hopping (max_vy=%.2fm/s < 1.0m/s)" % ramp_max_vy
+	)
+
+	# 3. VehicleJeep & VehicleBoat crisp arcade turning: lateral speed < 25% within 0.35s
+	var test_jeep := VehicleJeep.new()
+	test_jeep.id = 73
+	add_child(test_jeep)
+	test_jeep.global_position = Vector3(-15.0, 0.0, 0.0)
+	# Accelerating forward along -Z, then turn heading by 45 degrees
+	test_jeep.linear_velocity = Vector3(0.0, 0.0, -20.0)
+	test_jeep.rotation.y = PI * 0.25 # Heading rotated by 45 deg
+
+	var fwd_cmd := InputCmd.new()
+	fwd_cmd.move_dir = Vector2(0.0, -1.0) # Holding forward
+
+	for _i in range(21): # 21 ticks = 0.35s at 60Hz
+		test_jeep._apply_arcade_drive(1.0 / 60.0, fwd_cmd, VehicleJeep.MAX_SPEED, VehicleJeep.ACCEL, VehicleJeep.STEER_RATE, VehicleJeep.LATERAL_GRIP, VehicleJeep.IDLE_DRAG, 0.65)
+
+	var jeep_fwd: float = absf(test_jeep.linear_velocity.dot(-test_jeep.global_transform.basis.z.normalized()))
+	var jeep_side: float = absf(test_jeep.linear_velocity.dot(test_jeep.global_transform.basis.x.normalized()))
+	var jeep_slip_ratio: float = jeep_side / maxf(0.1, jeep_fwd)
+	_assert(
+		jeep_slip_ratio < 0.25,
+		"VehicleJeep crisp arcade turning cancels lateral slip (lateral/fwd ratio=%.3f < 0.25 within 0.35s)" % jeep_slip_ratio
+	)
+
+	var test_boat := VehicleBoat.new()
+	test_boat.id = 74
+	add_child(test_boat)
+	test_boat.global_position = Vector3(-25.0, 0.0, 0.0)
+	test_boat.linear_velocity = Vector3(0.0, 0.0, -18.0)
+	test_boat.rotation.y = PI * 0.25
+
+	for _i in range(21):
+		test_boat._apply_arcade_drive(1.0 / 60.0, fwd_cmd, VehicleBoat.MAX_WATER_SPEED, VehicleBoat.ACCEL, VehicleBoat.TURN_RATE, VehicleBoat.LATERAL_GRIP, VehicleBoat.IDLE_DRAG, 0.65)
+
+	var boat_fwd: float = absf(test_boat.linear_velocity.dot(-test_boat.global_transform.basis.z.normalized()))
+	var boat_side: float = absf(test_boat.linear_velocity.dot(test_boat.global_transform.basis.x.normalized()))
+	var boat_slip_ratio: float = boat_side / maxf(0.1, boat_fwd)
+	_assert(
+		boat_slip_ratio < 0.25,
+		"VehicleBoat crisp arcade turning cancels lateral slip (lateral/fwd ratio=%.3f < 0.25 within 0.35s)" % boat_slip_ratio
+	)
+
+	# 4. Seated Jeep Driver visual_root rotates smoothly with turning Jeep
+	var turn_jeep := VehicleJeep.new()
+	turn_jeep.id = 75
+	add_child(turn_jeep)
+	turn_jeep.global_position = Vector3(25.0, 0.0, 0.0)
+	turn_jeep.rotation.y = 1.15 # Turn Jeep body to 1.15 rad
+
+	var seated_driver := HeroCharacter.new()
+	seated_driver.setup_identity(712, "SeatedRotDriver", 0, 0, 0, false, false)
+	add_child(seated_driver)
+	turn_jeep.try_enter_hero(seated_driver)
+
+	seated_driver.aim_yaw = 1.45 # Camera aiming slightly offset
+	seated_driver._process(0.016)
+
+	var yaw_diff: float = absf(angle_difference(seated_driver.visual_root.global_rotation.y, turn_jeep.global_rotation.y))
+	_assert(
+		yaw_diff < 0.05,
+		"Seated Jeep Driver visual_root rotates smoothly with turning Jeep (diff=%.4f rad < 0.05)" % yaw_diff
+	)
+
+	# 5. Moving VehicleJeep & VehicleTank roadkill: defeats enemy at >= 8 m/s, zero friendly fire
+	var rk_driver := HeroCharacter.new()
+	rk_driver.setup_identity(713, "Roadkiller", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_driver)
+
+	var rk_enemy := HeroCharacter.new()
+	rk_enemy.setup_identity(714, "VictimEnemy", NetworkManager.TEAM_NATIONAL, 0, 0, false, false)
+	add_child(rk_enemy)
+	rk_enemy.global_position = Vector3(0.0, 0.0, -14.0)
+
+	var rk_friend := HeroCharacter.new()
+	rk_friend.setup_identity(715, "FriendlyPed", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_friend)
+	rk_friend.global_position = Vector3(0.8, 0.0, -14.0)
+
+	var rk_jeep := VehicleJeep.new()
+	rk_jeep.id = 76
+	rk_jeep.team = NetworkManager.TEAM_ROYAL
+	add_child(rk_jeep)
+	rk_jeep.global_position = Vector3(0.4, 0.0, -12.5) # ~1.5m away from pedestrian
+	rk_jeep.try_enter_hero(rk_driver)
+	rk_jeep.linear_velocity = Vector3(0.0, 0.0, -14.0) # 14 m/s >= 8 m/s
+
+	var heroes_map: Dictionary = {
+		713: rk_driver,
+		714: rk_enemy,
+		715: rk_friend,
+	}
+
+	rk_jeep.step_vehicle_server(1.0 / 60.0, {713: rk_driver}, {"heroes_by_id": heroes_map})
+
+	_assert(
+		rk_enemy.is_defeated and rk_enemy.hp <= 0,
+		"Moving VehicleJeep at >= 8 m/s reliably roadkills enemy pedestrian (enemy hp=%d, defeated=%s)" % [rk_enemy.hp, str(rk_enemy.is_defeated)]
+	)
+	_assert(
+		not rk_friend.is_defeated and rk_friend.hp == rk_friend.max_hp,
+		"Moving VehicleJeep deals 0 roadkill damage to friendly pedestrian (friend hp=%d/%d, defeated=%s)" % [rk_friend.hp, rk_friend.max_hp, str(rk_friend.is_defeated)]
+	)
+
+	# Also verify VehicleTank roadkill
+	var rk_enemy2 := HeroCharacter.new()
+	rk_enemy2.setup_identity(716, "TankVictim", NetworkManager.TEAM_NATIONAL, 0, 0, false, false)
+	add_child(rk_enemy2)
+	rk_enemy2.global_position = Vector3(40.0, 0.0, -14.0)
+
+	var rk_friend2 := HeroCharacter.new()
+	rk_friend2.setup_identity(717, "TankFriend", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_friend2)
+	rk_friend2.global_position = Vector3(40.8, 0.0, -14.0)
+
+	var rk_tank_driver := HeroCharacter.new()
+	rk_tank_driver.setup_identity(718, "TankRoadkiller", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_tank_driver)
+
+	var rk_tank := VehicleTank.new()
+	rk_tank.id = 77
+	rk_tank.team = NetworkManager.TEAM_ROYAL
+	add_child(rk_tank)
+	rk_tank.global_position = Vector3(40.4, 0.0, -12.5)
+	rk_tank.try_enter_hero(rk_tank_driver)
+	rk_tank.linear_velocity = Vector3(0.0, 0.0, -10.0) # 10 m/s >= 8 m/s
+
+	var tank_heroes_map: Dictionary = {
+		718: rk_tank_driver,
+		716: rk_enemy2,
+		717: rk_friend2,
+	}
+
+	rk_tank.step_vehicle_server(1.0 / 60.0, {718: rk_tank_driver}, {"heroes_by_id": tank_heroes_map})
+
+	_assert(
+		rk_enemy2.is_defeated and rk_enemy2.hp <= 0,
+		"Moving VehicleTank at >= 8 m/s reliably roadkills enemy pedestrian (enemy hp=%d, defeated=%s)" % [rk_enemy2.hp, str(rk_enemy2.is_defeated)]
+	)
+	_assert(
+		not rk_friend2.is_defeated and rk_friend2.hp == rk_friend2.max_hp,
+		"Moving VehicleTank deals 0 roadkill damage to friendly pedestrian (friend hp=%d/%d, defeated=%s)" % [rk_friend2.hp, rk_friend2.max_hp, str(rk_friend2.is_defeated)]
+	)
+
+	# Cleanup test nodes
+	floor_body.queue_free()
+	curb_body.queue_free()
+	step_hero.queue_free()
+	v_curb.queue_free()
+	v_driver.queue_free()
+	climb_jeep.queue_free()
+	test_jeep.queue_free()
+	test_boat.queue_free()
+	turn_jeep.queue_free()
+	seated_driver.queue_free()
+	rk_driver.queue_free()
+	rk_enemy.queue_free()
+	rk_friend.queue_free()
+	rk_jeep.queue_free()
+	rk_enemy2.queue_free()
+	rk_friend2.queue_free()
+	rk_tank_driver.queue_free()
+	rk_tank.queue_free()
+	ramp_body.queue_free()
+	r_driver.queue_free()
+	ramp_jeep.queue_free()

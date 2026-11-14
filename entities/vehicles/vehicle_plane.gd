@@ -59,6 +59,10 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 		linear_velocity = forward * cur_speed + Vector3(0.0, lift_y, 0.0)
 		angular_velocity = Vector3.ZERO
 
+		# Roadkill check when skimming near ground
+		if global_position.y < 4.5:
+			_process_roadkill(driver, context, Vector2(1.4, 2.8), 12.0)
+
 		# Dual front MGs
 		if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
 			_driver_fire_cd = MG_FIRE_INTERVAL
