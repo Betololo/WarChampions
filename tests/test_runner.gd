@@ -22,6 +22,7 @@ func _ready() -> void:
 	_test_overhaul_net_u32_fall_damage_and_assets()
 	_test_hero_visuals_camera_and_audio()
 	_test_ik_weapon_grip_shot_fx_and_scope()
+	_test_ballistic_bullet_drop_and_tracers()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -461,7 +462,7 @@ func _test_vehicle_protection_destruction_and_hud() -> void:
 	NetworkManager.server_tick = 21
 	var j_heroes := {802: shooter, 804: j_pass}
 	lc.record_frame(21, j_heroes)
-	var aim_to_pass: Vector3 = (j_pass.global_position + Vector3(0.0, 1.1, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var aim_to_pass: Vector3 = (j_pass.global_position + Vector3(0.0, 1.38, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
 	var j_cmd := InputCmd.new()
 	j_cmd.aim_yaw = atan2(-aim_to_pass.x, -aim_to_pass.z)
 	j_cmd.aim_pitch = atan2(aim_to_pass.y, Vector2(aim_to_pass.x, aim_to_pass.z).length())
@@ -630,8 +631,8 @@ func _test_hero_visuals_camera_and_audio() -> void:
 	w_root.free()
 
 	_assert(
-		HeroCamera.TPS_SHOULDER_OFFSET.y >= 2.0 and HeroCamera.TPS_SPRING_LENGTH <= 1.7,
-		"HeroCamera positions TPS pivot above head (Y=%.2f, spring=%.2fm) for clear crosshair" % [HeroCamera.TPS_SHOULDER_OFFSET.y, HeroCamera.TPS_SPRING_LENGTH]
+		HeroCamera.TPS_SHOULDER_OFFSET.y >= 1.9 and HeroCamera.TPS_SPRING_LENGTH >= 2.2 and HeroCamera.TPS_SPRING_LENGTH <= 2.8,
+		"HeroCamera positions pulled-back TPS pivot (Y=%.2f, spring=%.2fm) for clear framing" % [HeroCamera.TPS_SHOULDER_OFFSET.y, HeroCamera.TPS_SPRING_LENGTH]
 	)
 
 	var m1: bool = SoundSynthesizer.toggle_music()
@@ -699,6 +700,108 @@ func _test_ik_weapon_grip_shot_fx_and_scope() -> void:
 	lc.free()
 	target.free()
 	hero.free()
+
+
+func _test_ballistic_bullet_drop_and_tracers() -> void:
+	# 1. Verify LagCompensator.trace_ballistic_arc curves downward and hits dropped targets while missing straight high ray targets
+	var lc := LagCompensator.new()
+	var shooter := HeroCharacter.new()
+	shooter.setup_identity(901, "BallisticShooter", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	var low_target := HeroCharacter.new()
+	low_target.setup_identity(902, "DroppedTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var high_target := HeroCharacter.new()
+	high_target.setup_identity(903, "StraightTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(shooter)
+	add_child(low_target)
+	add_child(high_target)
+
+	shooter.global_position = Vector3.ZERO
+	low_target.global_position = Vector3(0.0, -14.0, -240.0)
+	high_target.global_position = Vector3(0.0, 0.0, -240.0)
+
+	NetworkManager.server_tick = 15
+	lc.record_frame(15, {901: shooter, 902: low_target, 903: high_target})
+
+	var origin := Vector3(0.0, 0.8, 0.0)
+	var sky_arc: Dictionary = lc.trace_ballistic_arc(shooter, origin, Vector3(0.0, 0.0, -195.0), 18.0, 260.0, 12.0, 0, 15, {901: shooter}, null)
+	var pts: PackedVector3Array = sky_arc.get("arc_points", PackedVector3Array())
+	_assert(pts.size() >= 10 and pts[pts.size() - 1].y < origin.y - 10.0, "trace_ballistic_arc drops >10m over 260m horizontal shot (end y=%.2f)" % pts[pts.size() - 1].y)
+
+	var arc_hit: Dictionary = lc.trace_ballistic_arc(shooter, origin, Vector3(0.0, 0.0, -195.0), 18.0, 260.0, 12.0, 0, 15, {901: shooter, 902: low_target, 903: high_target}, null)
+	var straight_hit: Dictionary = lc.trace_rewound_ray(shooter, origin, Vector3(0.0, 0.0, -1.0), 260.0, 0, 15, {901: shooter, 902: low_target, 903: high_target}, null)
+	_assert(
+		int(arc_hit.get("target_hero_id", -1)) == 902 and int(straight_hit.get("target_hero_id", -1)) == 903,
+		"Ballistic arc hits dropped target (902) while straight ray hits un-dropped target (903)"
+	)
+
+	# 2. Verify ProjectileEntity BAZOOKA_ROCKET & TANK_SHELL gravity_scale >= 0.7 and drop visibly over 10 ticks
+	var proj_root := Node3D.new()
+	add_child(proj_root)
+	var seen_proj_vfx: Array[int] = [0]
+	var seen_arcs: Array[int] = [0]
+	var ev_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "proj_vfx":
+			seen_proj_vfx[0] += 1
+		elif ev_type == "shot_vfx" and not (payload.get("arcs", []) as Array).is_empty():
+			seen_arcs[0] += 1
+	NetworkManager.game_event_received.connect(ev_cb)
+
+	var rocket := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET,
+		901,
+		NetworkManager.TEAM_ROYAL,
+		Vector3(0.0, 30.0, 0.0),
+		Vector3(0.0, 0.0, -42.0),
+		{"projectiles_root": proj_root}
+	)
+	var shell := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.TANK_SHELL,
+		901,
+		NetworkManager.TEAM_ROYAL,
+		Vector3(2.0, 30.0, 0.0),
+		Vector3(0.0, 0.0, -62.0),
+		{"projectiles_root": proj_root}
+	)
+	_assert(rocket.gravity_scale >= 0.7 and shell.gravity_scale >= 0.7, "BAZOOKA_ROCKET (%.2f) and TANK_SHELL (%.2f) configure gravity_scale >= 0.7" % [rocket.gravity_scale, shell.gravity_scale])
+
+	for _tick in range(10):
+		rocket._physics_process(0.1)
+		shell._physics_process(0.1)
+	_assert(
+		rocket.velocity.y < -5.0 and rocket.global_position.y < 25.0 and shell.velocity.y < -5.0 and shell.global_position.y < 25.0,
+		"Bazooka rocket (y=%.2f, vy=%.2f) and Tank shell (y=%.2f, vy=%.2f) drop along parabolic path" % [rocket.global_position.y, rocket.velocity.y, shell.global_position.y, shell.velocity.y]
+	)
+
+	# 3. Verify all firearm classes have ballistic drop stats and HitscanWeapon emits shot_vfx arcs
+	var firearm_kinds: Array[int] = [
+		WeaponBase.WeaponKind.SMG,
+		WeaponBase.WeaponKind.MG,
+		WeaponBase.WeaponKind.SHOTGUN,
+		WeaponBase.WeaponKind.PISTOL,
+		WeaponBase.WeaponKind.SNIPER,
+	]
+	var all_ballistic: bool = true
+	for fk in firearm_kinds:
+		var fw := HitscanWeapon.new()
+		fw.configure(shooter, fk, NetworkManager.ARCHETYPE_BALANCED)
+		if fw.bullet_speed_mps <= 0.0 or fw.bullet_gravity_scale <= 0.0:
+			all_ballistic = false
+		if fk == WeaponBase.WeaponKind.SNIPER:
+			fw.spread_rad = 0.0
+			fw.fire_server(InputCmd.new(), {"lag_compensator": lc, "heroes_by_id": {901: shooter}})
+		fw.free()
+	NetworkManager.game_event_received.disconnect(ev_cb)
+
+	_assert(all_ballistic, "All firearm classes (SMG, MG, Shotgun, Pistol, Sniper) configure positive bullet_speed_mps & bullet_gravity_scale")
+	_assert(seen_proj_vfx[0] >= 2 and seen_arcs[0] >= 1, "Projectiles emit proj_vfx (%d) and HitscanWeapon emits curved arcs (%d)" % [seen_proj_vfx[0], seen_arcs[0]])
+
+	for child in proj_root.get_children():
+		child.free()
+	proj_root.free()
+	lc.free()
+	shooter.free()
+	low_target.free()
+	high_target.free()
 
 
 func _test_scene_compile_and_load() -> void:

@@ -382,6 +382,74 @@ func build_snapshot_dict() -> Dictionary:
 	}
 
 
+func _fire_ballistic_mg(
+	driver: HeroCharacter,
+	muzzle: Vector3,
+	fire_dir: Vector3,
+	speed: float,
+	gravity_mps2: float,
+	max_range: float,
+	hero_dmg: int,
+	obj_dmg: int,
+	context: Dictionary
+) -> void:
+	var lag_comp: LagCompensator = context.get("lag_compensator", null)
+	if lag_comp == null or driver == null:
+		return
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
+	var res: Dictionary = lag_comp.trace_ballistic_arc(
+		driver,
+		muzzle,
+		fire_dir * speed,
+		gravity_mps2,
+		max_range,
+		12.0,
+		driver.latest_server_input.view_interp_tick_delta,
+		NetworkManager.server_tick,
+		heroes_by_id,
+		get_world_3d(),
+		[get_rid()]
+	)
+	var hit_pos: Vector3 = res.get("hit_pos", muzzle + fire_dir * max_range)
+	var arc: PackedVector3Array = res.get("arc_points", PackedVector3Array([muzzle, hit_pos]))
+	var tid: int = int(res.get("target_hero_id", -1))
+	if tid >= 0 and heroes_by_id.has(tid):
+		var victim: HeroCharacter = heroes_by_id[tid] as HeroCharacter
+		var vehicles_by_id: Dictionary = context.get("vehicles_by_id", {})
+		if victim != null and not VehicleBase.is_hero_enclosed(victim, vehicles_by_id) and not (victim.current_vehicle_id >= 0 and victim.current_seat_enclosed):
+			var is_hs: bool = bool(res.get("is_headshot", false))
+			var dealt: int = victim.apply_damage_server(hero_dmg, driver.entity_id, false)
+			if dealt > 0:
+				NetworkManager.broadcast_game_event("hit_vfx", {
+					"pos": hit_pos,
+					"kind": "spark",
+					"attacker_id": driver.entity_id,
+					"victim_id": tid,
+					"damage": dealt,
+					"headshot": is_hs,
+				})
+	else:
+		var obj: Variant = res.get("target_object", null)
+		if obj != null and obj is Node and obj != self and (obj as Node).has_method("apply_damage_server"):
+			(obj as Node).apply_damage_server(obj_dmg, driver.entity_id, fire_dir, hit_pos, false)
+		elif bool(res.get("hit", false)):
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": hit_pos,
+				"kind": "dust",
+				"attacker_id": driver.entity_id,
+			})
+
+	NetworkManager.broadcast_game_event("shot_vfx", {
+		"shooter_id": driver.entity_id,
+		"weapon_kind": WeaponBase.WeaponKind.MG,
+		"origin": muzzle,
+		"dir": fire_dir,
+		"hits": [hit_pos],
+		"arcs": [arc],
+		"vehicle_shot": true,
+	})
+
+
 func _add_box_part(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var box := BoxMesh.new()

@@ -44,14 +44,12 @@ func record_frame(server_tick: int, heroes_by_id: Dictionary) -> void:
 		var snap := HeroHitboxSnapshot.new()
 		snap.entity_id = hero.entity_id
 		snap.team = hero.team
-		var h_pos: Vector3 = hero.global_position if hero.is_inside_tree() else hero.position
-		var height: float = HeroCharacter.CROUCH_HEIGHT if hero.is_crouching else HeroCharacter.STAND_HEIGHT
-		var r: float = hero.capsule_radius
-		snap.body_radius = r
-		snap.body_bottom = h_pos + Vector3(0.0, r, 0.0)
-		snap.body_top = h_pos + Vector3(0.0, maxf(r + 0.1, height - r), 0.0)
-		snap.head_center = h_pos + Vector3(0.0, height - 0.14, 0.0)
-		snap.head_radius = 0.24
+		var bounds: Dictionary = _compute_hero_bounds(hero)
+		snap.body_radius = float(bounds["body_radius"])
+		snap.body_bottom = bounds["body_bottom"]
+		snap.body_top = bounds["body_top"]
+		snap.head_center = bounds["head_center"]
+		snap.head_radius = float(bounds["head_radius"])
 		slot.entries[hero.entity_id] = snap
 
 
@@ -64,7 +62,7 @@ func get_frame(target_tick: int, current_tick: int) -> FrameRecord:
 
 
 ## Evaluates a rewound hitscan ray against World/Vehicle geometry and rewound opponent hitboxes.
-## Returns {hit: bool, target_hero_id: int, target_vehicle: Node, is_headshot: bool, hit_pos: Vector3, distance: float}
+## Returns {hit: bool, target_hero_id: int, target_object: Node, is_headshot: bool, hit_pos: Vector3, distance: float}
 func trace_rewound_ray(
 	shooter: HeroCharacter,
 	ray_origin: Vector3,
@@ -73,12 +71,126 @@ func trace_rewound_ray(
 	view_tick_delta: int,
 	current_tick: int,
 	heroes_by_id: Dictionary,
-	world_3d: World3D
+	world_3d: World3D,
+	exclude_rids: Array[RID] = []
 ) -> Dictionary:
 	var dir: Vector3 = ray_dir.normalized()
-	var best_dist: float = max_range
-	var best_pos: Vector3 = ray_origin + dir * max_range
-	var hit_vehicle: Node = null
+	var target_tick: int = current_tick - clampi(view_tick_delta, 0, MAX_REWIND_TICKS)
+	var frame: FrameRecord = get_frame(target_tick, current_tick)
+	return _trace_segment(shooter, ray_origin, ray_origin + dir * max_range, frame, heroes_by_id, world_3d, exclude_rids)
+
+
+## Evaluates a gravity-curved ballistic arc against World/Vehicle geometry and rewound opponent hitboxes.
+## Returns {hit: bool, target_hero_id: int, target_object: Node, is_headshot: bool, hit_pos: Vector3, distance: float, arc_points: PackedVector3Array}
+func trace_ballistic_arc(
+	shooter: HeroCharacter,
+	ray_origin: Vector3,
+	initial_vel: Vector3,
+	gravity_mps2: float,
+	max_range: float,
+	step_distance: float,
+	view_tick_delta: int,
+	current_tick: int,
+	heroes_by_id: Dictionary,
+	world_3d: World3D,
+	exclude_rids: Array[RID] = []
+) -> Dictionary:
+	var arc_points := PackedVector3Array([ray_origin])
+	if max_range <= 0.0 or initial_vel.length_squared() < 0.0001:
+		return {
+			"hit": false,
+			"target_hero_id": -1,
+			"target_object": null,
+			"is_headshot": false,
+			"hit_pos": ray_origin,
+			"distance": 0.0,
+			"arc_points": arc_points,
+		}
+
+	var target_tick: int = current_tick - clampi(view_tick_delta, 0, MAX_REWIND_TICKS)
+	var frame: FrameRecord = get_frame(target_tick, current_tick)
+
+	if gravity_mps2 <= 0.001:
+		var straight_dir: Vector3 = initial_vel.normalized()
+		var straight_res: Dictionary = _trace_segment(
+			shooter,
+			ray_origin,
+			ray_origin + straight_dir * max_range,
+			frame,
+			heroes_by_id,
+			world_3d,
+			exclude_rids
+		)
+		arc_points.append(straight_res.get("hit_pos", ray_origin + straight_dir * max_range))
+		straight_res["arc_points"] = arc_points
+		return straight_res
+
+	var seg_step: float = clampf(step_distance, 4.0, 32.0) if step_distance > 0.0 else 12.0
+	var pos: Vector3 = ray_origin
+	var vel: Vector3 = initial_vel
+	var traveled: float = 0.0
+	var steps: int = 0
+
+	while traveled < max_range and steps < 64:
+		steps += 1
+		var cur_speed: float = maxf(10.0, vel.length())
+		var rem_dist: float = maxf(0.0, max_range - traveled)
+		var dt: float = minf(seg_step / cur_speed, rem_dist / cur_speed)
+		dt = clampf(dt, 0.005, 0.14)
+		var vel_next: Vector3 = vel + Vector3(0.0, -gravity_mps2 * dt, 0.0)
+		var next_pos: Vector3 = pos + (vel + vel_next) * 0.5 * dt
+
+		var seg_res: Dictionary = _trace_segment(shooter, pos, next_pos, frame, heroes_by_id, world_3d, exclude_rids)
+		if bool(seg_res.get("hit", false)):
+			var hit_pos: Vector3 = seg_res["hit_pos"]
+			arc_points.append(hit_pos)
+			seg_res["distance"] = traveled + pos.distance_to(hit_pos)
+			seg_res["arc_points"] = arc_points
+			return seg_res
+
+		arc_points.append(next_pos)
+		traveled += pos.distance_to(next_pos)
+		pos = next_pos
+		vel = vel_next
+		if pos.y < -25.0:
+			break
+
+	return {
+		"hit": false,
+		"target_hero_id": -1,
+		"target_object": null,
+		"is_headshot": false,
+		"hit_pos": pos,
+		"distance": traveled,
+		"arc_points": arc_points,
+	}
+
+
+func _trace_segment(
+	shooter: HeroCharacter,
+	seg_start: Vector3,
+	seg_end: Vector3,
+	frame: FrameRecord,
+	heroes_by_id: Dictionary,
+	world_3d: World3D,
+	exclude_rids: Array[RID] = []
+) -> Dictionary:
+	var seg_vec: Vector3 = seg_end - seg_start
+	var seg_len: float = seg_vec.length()
+	if seg_len <= 0.0001:
+		return {
+			"hit": false,
+			"target_hero_id": -1,
+			"target_object": null,
+			"is_headshot": false,
+			"hit_pos": seg_end,
+			"distance": 0.0,
+		}
+
+	var dir: Vector3 = seg_vec / seg_len
+	var best_dist: float = seg_len
+	var best_pos: Vector3 = seg_end
+	var hit_object: Node = null
 	var hit_world: bool = false
 
 	# 1. Check static world + vehicles + destructibles at current state
@@ -86,26 +198,28 @@ func trace_rewound_ray(
 		var space: PhysicsDirectSpaceState3D = world_3d.direct_space_state
 		if space != null:
 			var query := PhysicsRayQueryParameters3D.create(
-				ray_origin,
-				ray_origin + dir * max_range,
+				seg_start,
+				seg_end,
 				1 | 8 | 64 # Layer 1 World (1) + Layer 4 Vehicle (8) + Layer 7 Destructible (64)
 			)
+			var excludes: Array[RID] = []
 			if shooter != null:
-				query.exclude = [shooter.get_rid()]
+				excludes.append(shooter.get_rid())
+			for rid in exclude_rids:
+				if not excludes.has(rid):
+					excludes.append(rid)
+			if not excludes.is_empty():
+				query.exclude = excludes
 			var res: Dictionary = space.intersect_ray(query)
 			if not res.is_empty():
 				best_pos = res["position"]
-				best_dist = ray_origin.distance_to(best_pos)
+				best_dist = seg_start.distance_to(best_pos)
 				hit_world = true
 				var collider: Object = res.get("collider", null)
-				if collider is Node and (collider as Node).is_in_group("vehicles"):
-					hit_vehicle = collider as Node
-				elif collider is Node and (collider as Node).is_in_group("destructible"):
-					hit_vehicle = collider as Node
+				if collider is Node and ((collider as Node).is_in_group("vehicles") or (collider as Node).is_in_group("destructible")):
+					hit_object = collider as Node
 
-	# 2. Check rewound player hitboxes closer than wall/vehicle hit
-	var target_tick: int = current_tick - clampi(view_tick_delta, 0, MAX_REWIND_TICKS)
-	var frame: FrameRecord = get_frame(target_tick, current_tick)
+	# 2. Check rewound player hitboxes (or live fallback) closer than wall/vehicle hit
 	var best_hero_id: int = -1
 	var best_headshot: bool = false
 
@@ -117,22 +231,17 @@ func trace_rewound_ray(
 			var live_h: HeroCharacter = heroes_by_id.get(snap.entity_id, null) as HeroCharacter
 			if live_h != null and live_h.current_vehicle_id >= 0 and live_h.current_seat_enclosed:
 				continue
-			var t_head: float = ray_intersect_sphere(ray_origin, dir, snap.head_center, snap.head_radius)
-			if t_head >= 0.0 and t_head < best_dist:
-				best_dist = t_head
-				best_pos = ray_origin + dir * t_head
+			var h_res: Dictionary = _hit_test_hero_bounds(
+				seg_start, dir, best_dist,
+				snap.head_center, snap.head_radius,
+				snap.body_bottom, snap.body_top, snap.body_radius
+			)
+			if bool(h_res["hit"]):
+				best_dist = float(h_res["dist"])
+				best_pos = seg_start + dir * best_dist
 				best_hero_id = snap.entity_id
-				best_headshot = true
-				hit_vehicle = null
-				continue
-
-			var t_body: float = ray_intersect_capsule(ray_origin, dir, snap.body_bottom, snap.body_top, snap.body_radius)
-			if t_body >= 0.0 and t_body < best_dist:
-				best_dist = t_body
-				best_pos = ray_origin + dir * t_body
-				best_hero_id = snap.entity_id
-				best_headshot = false
-				hit_vehicle = null
+				best_headshot = bool(h_res["headshot"])
+				hit_object = null
 	else:
 		# Fallback to live hero bounds if buffer hasn't reached target_tick yet
 		for id_key in heroes_by_id.keys():
@@ -143,35 +252,59 @@ func trace_rewound_ray(
 				continue
 			if shooter != null and (h.entity_id == shooter.entity_id or h.team == shooter.team):
 				continue
-			var height: float = HeroCharacter.CROUCH_HEIGHT if h.is_crouching else HeroCharacter.STAND_HEIGHT
-			var r: float = h.capsule_radius
-			var b := h.global_position + Vector3(0.0, r, 0.0)
-			var t := h.global_position + Vector3(0.0, maxf(r + 0.1, height - r), 0.0)
-			var hc := h.global_position + Vector3(0.0, height - 0.14, 0.0)
-			var t_head: float = ray_intersect_sphere(ray_origin, dir, hc, 0.24)
-			if t_head >= 0.0 and t_head < best_dist:
-				best_dist = t_head
-				best_pos = ray_origin + dir * t_head
+			var bnd: Dictionary = _compute_hero_bounds(h)
+			var h_res: Dictionary = _hit_test_hero_bounds(
+				seg_start, dir, best_dist,
+				bnd["head_center"], float(bnd["head_radius"]),
+				bnd["body_bottom"], bnd["body_top"], float(bnd["body_radius"])
+			)
+			if bool(h_res["hit"]):
+				best_dist = float(h_res["dist"])
+				best_pos = seg_start + dir * best_dist
 				best_hero_id = h.entity_id
-				best_headshot = true
-				hit_vehicle = null
-				continue
-			var t_body: float = ray_intersect_capsule(ray_origin, dir, b, t, r)
-			if t_body >= 0.0 and t_body < best_dist:
-				best_dist = t_body
-				best_pos = ray_origin + dir * t_body
-				best_hero_id = h.entity_id
-				best_headshot = false
-				hit_vehicle = null
+				best_headshot = bool(h_res["headshot"])
+				hit_object = null
 
 	return {
-		"hit": best_hero_id >= 0 or hit_world or hit_vehicle != null,
+		"hit": best_hero_id >= 0 or hit_world or hit_object != null,
 		"target_hero_id": best_hero_id,
-		"target_object": hit_vehicle,
+		"target_object": hit_object,
 		"is_headshot": best_headshot,
 		"hit_pos": best_pos,
 		"distance": best_dist,
 	}
+
+
+static func _compute_hero_bounds(hero: HeroCharacter) -> Dictionary:
+	var h_pos: Vector3 = hero.global_position if hero.is_inside_tree() else hero.position
+	var height: float = HeroCharacter.CROUCH_HEIGHT if hero.is_crouching else HeroCharacter.STAND_HEIGHT
+	var r: float = hero.capsule_radius
+	return {
+		"body_radius": r,
+		"body_bottom": h_pos + Vector3(0.0, r, 0.0),
+		"body_top": h_pos + Vector3(0.0, maxf(r + 0.1, height - r), 0.0),
+		"head_center": h_pos + Vector3(0.0, height - 0.14, 0.0),
+		"head_radius": 0.24,
+	}
+
+
+static func _hit_test_hero_bounds(
+	origin: Vector3,
+	dir: Vector3,
+	max_dist: float,
+	head_center: Vector3,
+	head_radius: float,
+	body_bottom: Vector3,
+	body_top: Vector3,
+	body_radius: float
+) -> Dictionary:
+	var t_head: float = ray_intersect_sphere(origin, dir, head_center, head_radius)
+	if t_head >= 0.0 and t_head < max_dist:
+		return {"hit": true, "dist": t_head, "headshot": true}
+	var t_body: float = ray_intersect_capsule(origin, dir, body_bottom, body_top, body_radius)
+	if t_body >= 0.0 and t_body < max_dist:
+		return {"hit": true, "dist": t_body, "headshot": false}
+	return {"hit": false}
 
 
 static func ray_intersect_sphere(origin: Vector3, dir: Vector3, center: Vector3, radius: float) -> float:

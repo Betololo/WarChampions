@@ -100,6 +100,17 @@ class SniperScopeOverlay extends Control:
 			draw_line(Vector2(center.x - 4.0, center.y + off), Vector2(center.x + 4.0, center.y + off), wire_col, 1.8)
 			draw_line(Vector2(center.x - 3.0, center.y - off), Vector2(center.x + 3.0, center.y - off), wire_col, 1.6)
 
+		# Bullet-drop holdover mil-dot elevation hash ticks below center reticle
+		var holdover_drops: Array[float] = [24.0, 52.0, 88.0]
+		var holdover_widths: Array[float] = [9.0, 13.0, 17.0]
+		var hold_col := Color(0.95, 0.42, 0.20, 0.70)
+		for idx in range(holdover_drops.size()):
+			var dy: float = holdover_drops[idx]
+			var hw: float = holdover_widths[idx]
+			if dy < radius * 0.85:
+				draw_line(Vector2(center.x - hw, center.y + dy), Vector2(center.x + hw, center.y + dy), wire_col, 1.8)
+				draw_circle(Vector2(center.x, center.y + dy), 2.0, hold_col)
+
 		# Razor pinpoint glowing center reticle dot
 		draw_circle(center, 3.2, Color(1.0, 0.30, 0.14, 0.98))
 		draw_circle(center, 1.4, Color(1.0, 0.92, 0.55, 1.0))

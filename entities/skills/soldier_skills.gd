@@ -14,7 +14,6 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 	if owner_hero == null:
 		return false
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-	var projectiles_root: Node = context.get("projectiles_root", owner_hero.get_parent())
 
 	match slot_idx:
 		0: # Combat Medicine: AoE instant heal to self + nearby allies
@@ -42,17 +41,16 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 			for i in range(count):
 				var spread_t: float = 0.0 if count == 1 else (float(i) / float(count - 1) - 0.5) * 0.65
 				var throw_dir: Vector3 = (forward + right * spread_t + Vector3(0.0, 0.48, 0.0)).normalized()
-				var gren := ProjectileEntity.new()
-				gren.setup(
+				ProjectileEntity.spawn_server_projectile(
 					ProjectileEntity.ProjectileKind.FRAG_GRENADE,
 					owner_hero.entity_id,
 					owner_hero.team,
 					owner_hero.global_position + Vector3(0.0, 1.5, 0.0) + forward * 0.8,
 					throw_dir * (18.0 + float(i) * 0.8),
-					context
+					context,
+					-1.0,
+					owner_hero.get_parent()
 				)
-				if projectiles_root != null:
-					projectiles_root.add_child(gren)
 			return true
 
 		3: # Blasting Strike: Shockwave with massive knockback on enemies & light vehicles

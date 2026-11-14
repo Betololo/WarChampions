@@ -83,15 +83,5 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 
 
 func _fire_front_mgs(driver: HeroCharacter, forward: Vector3, context: Dictionary) -> void:
-	var lag_comp: LagCompensator = context.get("lag_compensator", null)
-	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 	var origin: Vector3 = global_position + forward * 3.6
-	if lag_comp != null:
-		var res: Dictionary = lag_comp.trace_rewound_ray(driver, origin, forward, 240.0, driver.latest_server_input.view_interp_tick_delta, NetworkManager.server_tick, heroes_by_id, get_world_3d())
-		var tid: int = int(res.get("target_hero_id", -1))
-		if tid >= 0 and heroes_by_id.has(tid):
-			(heroes_by_id[tid] as HeroCharacter).apply_damage_server(18, driver.entity_id, false)
-		var obj: Variant = res.get("target_object", null)
-		if obj != null and obj is Node and obj != self and (obj as Node).has_method("apply_damage_server"):
-			(obj as Node).apply_damage_server(24, driver.entity_id, forward, res.get("hit_pos", origin), true)
-		NetworkManager.broadcast_game_event("hit_vfx", {"pos": res.get("hit_pos", origin + forward * 80.0), "kind": "spark", "attacker_id": driver.entity_id})
+	_fire_ballistic_mg(driver, origin, forward, 165.0, 12.0, 240.0, 18, 24, context)

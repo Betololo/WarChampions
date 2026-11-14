@@ -14,7 +14,6 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 	if owner_hero == null:
 		return false
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-	var projectiles_root: Node = context.get("projectiles_root", owner_hero.get_parent())
 
 	match slot_idx:
 		0: # Hero Shield: Blue energy absorption shield
@@ -37,18 +36,16 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 
 		2: # Explosive Keg: Heavy rolling barrel with splash & concussion slow
 			var forward: Vector3 = -Basis(Vector3.UP, cmd.aim_yaw).z.normalized()
-			var keg := ProjectileEntity.new()
-			keg.setup(
+			ProjectileEntity.spawn_server_projectile(
 				ProjectileEntity.ProjectileKind.EXPLOSIVE_KEG,
 				owner_hero.entity_id,
 				owner_hero.team,
 				owner_hero.global_position + Vector3(0.0, 1.4, 0.0) + forward * 1.1,
 				(forward + Vector3(0.0, 0.35, 0.0)).normalized() * (14.0 + float(rank) * 1.2),
-				context
+				context,
+				45.0 + float(rank) * 10.0,
+				owner_hero.get_parent()
 			)
-			keg.base_damage = 45.0 + float(rank) * 10.0
-			if projectiles_root != null:
-				projectiles_root.add_child(keg)
 			return true
 
 		3: # Frenzy Fire: Tighter MG accuracy + heal every 4th accurate shot

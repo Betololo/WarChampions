@@ -33,6 +33,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 	var world_3d: World3D = owner_hero.get_world_3d() if owner_hero.is_inside_tree() else null
 	var pellet_hits: Array[Vector3] = []
+	var pellet_arcs: Array[PackedVector3Array] = []
 	var dmg_by_victim: Dictionary = {}
 	var pos_by_victim: Dictionary = {}
 	var crit_by_victim: Dictionary = {}
@@ -41,21 +42,34 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		var shot_dir: Vector3 = apply_spread(base_dir, spread_mult)
 		var trace: Dictionary
 		if lag_comp != null:
-			trace = lag_comp.trace_rewound_ray(
+			trace = lag_comp.trace_ballistic_arc(
 				owner_hero,
 				origin,
-				shot_dir,
+				shot_dir * bullet_speed_mps,
+				base_gravity_mps2 * bullet_gravity_scale,
 				max_range_m,
+				12.0,
 				cmd.view_interp_tick_delta,
 				NetworkManager.server_tick,
 				heroes_by_id,
 				world_3d
 			)
 		else:
-			trace = {"hit": false, "target_hero_id": -1, "target_object": null, "is_headshot": false, "hit_pos": origin + shot_dir * max_range_m, "distance": max_range_m}
+			var fallback_end: Vector3 = origin + shot_dir * max_range_m
+			trace = {
+				"hit": false,
+				"target_hero_id": -1,
+				"target_object": null,
+				"is_headshot": false,
+				"hit_pos": fallback_end,
+				"distance": max_range_m,
+				"arc_points": PackedVector3Array([origin, fallback_end]),
+			}
 
 		var hit_pos: Vector3 = trace.get("hit_pos", origin + shot_dir * max_range_m)
+		var arc_pts: PackedVector3Array = trace.get("arc_points", PackedVector3Array([origin, hit_pos]))
 		pellet_hits.append(hit_pos)
+		pellet_arcs.append(arc_pts)
 		fired.emit(weapon_kind, origin, hit_pos)
 
 		var target_id: int = int(trace.get("target_hero_id", -1))
@@ -91,7 +105,12 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var is_veh: bool = (obj != null and obj is Node and (obj as Node).is_in_group("vehicles"))
 			if obj != null and obj is Node and (obj as Node).has_method("apply_damage_server"):
 				var obj_dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), false, dmg_mult)
-				(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, shot_dir, hit_pos, false)
+				var impact_dir: Vector3 = shot_dir
+				if arc_pts.size() >= 2:
+					var seg_d: Vector3 = arc_pts[arc_pts.size() - 1] - arc_pts[arc_pts.size() - 2]
+					if seg_d.length_squared() > 0.0001:
+						impact_dir = seg_d.normalized()
+				(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, impact_dir, hit_pos, false)
 				if not is_veh:
 					NetworkManager.broadcast_game_event("hit_vfx", {
 						"pos": hit_pos,
@@ -122,4 +141,5 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		"origin": origin,
 		"dir": base_dir,
 		"hits": pellet_hits,
+		"arcs": pellet_arcs,
 	})

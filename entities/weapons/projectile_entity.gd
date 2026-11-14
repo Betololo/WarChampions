@@ -27,8 +27,44 @@ var proximity_air_radius: float = 0.0 # > 0 for AA Flak
 var hp: int = 20 # Shootable mid-air (e.g. Explosive Keg)
 
 var _exploded: bool = false
-var _mesh: MeshInstance3D
+var _mesh: Node3D
 var _context: Dictionary = {}
+var _trail_timer: float = 0.0
+
+
+static func spawn_server_projectile(
+	p_kind: int,
+	p_owner_id: int,
+	p_team: int,
+	p_pos: Vector3,
+	p_vel: Vector3,
+	p_context: Dictionary,
+	damage_override: float = -1.0,
+	fallback_parent: Node = null
+) -> ProjectileEntity:
+	var proj := ProjectileEntity.new()
+	proj.setup(p_kind, p_owner_id, p_team, p_pos, p_vel, p_context)
+	if damage_override >= 0.0:
+		proj.base_damage = damage_override
+	var parent_node: Node = p_context.get("projectiles_root", null) as Node
+	if parent_node == null:
+		var heroes: Dictionary = p_context.get("heroes_by_id", {})
+		var owner_node: Node = heroes.get(p_owner_id, null) as Node
+		if owner_node != null:
+			parent_node = owner_node.get_parent()
+	if parent_node == null:
+		parent_node = fallback_parent
+	if parent_node != null:
+		parent_node.add_child(proj)
+	NetworkManager.broadcast_game_event("proj_vfx", {
+		"kind": p_kind,
+		"pos": p_pos,
+		"vel": p_vel,
+		"gravity_scale": proj.gravity_scale,
+		"lifetime": proj.lifetime,
+		"damage_override": damage_override,
+	})
+	return proj
 
 
 func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vector3, p_context: Dictionary) -> void:
@@ -41,14 +77,14 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 
 	match kind:
 		ProjectileKind.BAZOOKA_ROCKET:
-			gravity_scale = 0.15
+			gravity_scale = 0.72
 			splash_radius = 5.5
 			base_damage = 68.0
 			knockback_force = 12.0
 			lifetime = 5.0
 			explode_on_impact = true
 		ProjectileKind.TNT_SATCHEL:
-			gravity_scale = 1.0
+			gravity_scale = 1.05
 			splash_radius = 6.5
 			base_damage = 90.0
 			knockback_force = 15.0
@@ -56,7 +92,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			bounce_restitution = 0.1
 			explode_on_impact = false
 		ProjectileKind.FRAG_GRENADE:
-			gravity_scale = 1.0
+			gravity_scale = 1.05
 			splash_radius = 5.0
 			base_damage = 42.0
 			knockback_force = 10.0
@@ -64,7 +100,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			bounce_restitution = 0.45
 			explode_on_impact = false
 		ProjectileKind.EXPLOSIVE_KEG:
-			gravity_scale = 1.0
+			gravity_scale = 1.05
 			splash_radius = 7.0
 			base_damage = 55.0
 			knockback_force = 14.0
@@ -73,14 +109,14 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			explode_on_impact = false
 			apply_keg_slow = true
 		ProjectileKind.TANK_SHELL:
-			gravity_scale = 0.85
+			gravity_scale = 1.08
 			splash_radius = 7.5
 			base_damage = 95.0
 			knockback_force = 16.0
 			lifetime = 6.0
 			explode_on_impact = true
 		ProjectileKind.AA_FLAK:
-			gravity_scale = 0.1
+			gravity_scale = 0.38
 			splash_radius = 8.0
 			base_damage = 32.0
 			knockback_force = 6.0
@@ -90,37 +126,115 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 
 
 func _ready() -> void:
-	add_to_group("destructible")
+	if not bool(get_meta("visual_only", false)):
+		add_to_group("destructible")
 	_build_visual()
+	_align_mesh_to_velocity()
+
+
+func _add_visual_part(mesh: Mesh, pos: Vector3, rot: Vector3, color: Color, emissive: bool = false) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.position = pos
+	mi.rotation = rot
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	if emissive:
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = mat
+	_mesh.add_child(mi)
+	return mi
 
 
 func _build_visual() -> void:
-	_mesh = MeshInstance3D.new()
-	var mat := StandardMaterial3D.new()
-	if kind == ProjectileKind.EXPLOSIVE_KEG:
-		var cyl := CylinderMesh.new()
-		cyl.top_radius = 0.42
-		cyl.bottom_radius = 0.42
-		cyl.height = 0.95
-		_mesh.mesh = cyl
-		mat.albedo_color = Color(0.82, 0.18, 0.12)
-	elif kind == ProjectileKind.TNT_SATCHEL:
-		var box := BoxMesh.new()
-		box.size = Vector3(0.4, 0.25, 0.3)
-		_mesh.mesh = box
-		mat.albedo_color = Color(0.75, 0.12, 0.12)
-	else:
-		var sph := SphereMesh.new()
-		sph.radius = 0.22 if kind != ProjectileKind.FRAG_GRENADE else 0.16
-		sph.height = sph.radius * 2.0
-		_mesh.mesh = sph
-		mat.albedo_color = Color(0.2, 0.25, 0.2) if kind == ProjectileKind.FRAG_GRENADE else Color(0.95, 0.55, 0.1)
-	_mesh.material_override = mat
+	_mesh = Node3D.new()
 	add_child(_mesh)
+	match kind:
+		ProjectileKind.EXPLOSIVE_KEG:
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.42
+			cyl.bottom_radius = 0.42
+			cyl.height = 0.95
+			_add_visual_part(cyl, Vector3.ZERO, Vector3.ZERO, Color(0.82, 0.18, 0.12))
+			var band := CylinderMesh.new()
+			band.top_radius = 0.435
+			band.bottom_radius = 0.435
+			band.height = 0.09
+			_add_visual_part(band, Vector3(0.0, 0.28, 0.0), Vector3.ZERO, Color(0.18, 0.18, 0.2))
+			_add_visual_part(band, Vector3(0.0, -0.28, 0.0), Vector3.ZERO, Color(0.18, 0.18, 0.2))
+		ProjectileKind.TNT_SATCHEL:
+			var box := BoxMesh.new()
+			box.size = Vector3(0.4, 0.25, 0.3)
+			_add_visual_part(box, Vector3.ZERO, Vector3.ZERO, Color(0.75, 0.12, 0.12))
+			var cap := BoxMesh.new()
+			cap.size = Vector3(0.12, 0.08, 0.12)
+			_add_visual_part(cap, Vector3(0.0, 0.15, 0.0), Vector3.ZERO, Color(0.22, 0.22, 0.24))
+		ProjectileKind.FRAG_GRENADE:
+			var sph := SphereMesh.new()
+			sph.radius = 0.16
+			sph.height = 0.32
+			_add_visual_part(sph, Vector3.ZERO, Vector3.ZERO, Color(0.22, 0.28, 0.20))
+			var pin := BoxMesh.new()
+			pin.size = Vector3(0.07, 0.09, 0.07)
+			_add_visual_part(pin, Vector3(0.0, 0.17, 0.0), Vector3.ZERO, Color(0.78, 0.65, 0.24))
+		ProjectileKind.BAZOOKA_ROCKET:
+			var body := CylinderMesh.new()
+			body.top_radius = 0.085
+			body.bottom_radius = 0.095
+			body.height = 0.56
+			_add_visual_part(body, Vector3.ZERO, Vector3(-PI * 0.5, 0.0, 0.0), Color(0.24, 0.32, 0.20))
+			var cone := CylinderMesh.new()
+			cone.top_radius = 0.012
+			cone.bottom_radius = 0.095
+			cone.height = 0.24
+			_add_visual_part(cone, Vector3(0.0, 0.0, -0.39), Vector3(-PI * 0.5, 0.0, 0.0), Color(0.78, 0.22, 0.14))
+			var fin_h := BoxMesh.new()
+			fin_h.size = Vector3(0.32, 0.02, 0.18)
+			_add_visual_part(fin_h, Vector3(0.0, 0.0, 0.23), Vector3.ZERO, Color(0.35, 0.36, 0.38))
+			var fin_v := BoxMesh.new()
+			fin_v.size = Vector3(0.02, 0.32, 0.18)
+			_add_visual_part(fin_v, Vector3(0.0, 0.0, 0.23), Vector3.ZERO, Color(0.35, 0.36, 0.38))
+			var flame := CylinderMesh.new()
+			flame.top_radius = 0.075
+			flame.bottom_radius = 0.01
+			flame.height = 0.34
+			_add_visual_part(flame, Vector3(0.0, 0.0, 0.44), Vector3(-PI * 0.5, 0.0, 0.0), Color(1.0, 0.55, 0.08), true)
+		ProjectileKind.TANK_SHELL:
+			var shell_body := CylinderMesh.new()
+			shell_body.top_radius = 0.11
+			shell_body.bottom_radius = 0.11
+			shell_body.height = 0.36
+			_add_visual_part(shell_body, Vector3(0.0, 0.0, 0.05), Vector3(-PI * 0.5, 0.0, 0.0), Color(0.88, 0.68, 0.24))
+			var shell_tip := CylinderMesh.new()
+			shell_tip.top_radius = 0.015
+			shell_tip.bottom_radius = 0.11
+			shell_tip.height = 0.28
+			_add_visual_part(shell_tip, Vector3(0.0, 0.0, -0.26), Vector3(-PI * 0.5, 0.0, 0.0), Color(1.0, 0.72, 0.22), true)
+			var tracer_tail := SphereMesh.new()
+			tracer_tail.radius = 0.11
+			tracer_tail.height = 0.22
+			_add_visual_part(tracer_tail, Vector3(0.0, 0.0, 0.26), Vector3.ZERO, Color(1.0, 0.45, 0.08), true)
+		ProjectileKind.AA_FLAK:
+			var flak_orb := SphereMesh.new()
+			flak_orb.radius = 0.20
+			flak_orb.height = 0.40
+			_add_visual_part(flak_orb, Vector3.ZERO, Vector3.ZERO, Color(1.0, 0.85, 0.18), true)
+
+
+func _align_mesh_to_velocity() -> void:
+	if _mesh == null or not is_inside_tree():
+		return
+	if kind != ProjectileKind.BAZOOKA_ROCKET and kind != ProjectileKind.TANK_SHELL:
+		return
+	if velocity.length_squared() <= 0.25:
+		return
+	var vel_dir: Vector3 = velocity.normalized()
+	if absf(vel_dir.dot(Vector3.UP)) < 0.99:
+		_mesh.look_at(global_position + vel_dir, Vector3.UP)
 
 
 func apply_damage_server(amount: int, _attacker_id: int, _dir: Vector3, _hit_pos: Vector3, _is_explosive: bool) -> void:
-	if _exploded or not NetworkManager.is_server_authority():
+	if _exploded or bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority():
 		return
 	hp -= amount
 	if hp <= 0:
@@ -131,9 +245,11 @@ func _physics_process(delta: float) -> void:
 	if _exploded:
 		return
 
+	var is_visual_only: bool = bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority()
+
 	lifetime -= delta
 	if lifetime <= 0.0:
-		if NetworkManager.is_server_authority():
+		if not is_visual_only:
 			_detonate()
 		else:
 			queue_free()
@@ -142,9 +258,9 @@ func _physics_process(delta: float) -> void:
 	velocity.y -= 18.0 * gravity_scale * delta
 	var next_pos: Vector3 = global_position + velocity * delta
 
-	if NetworkManager.is_server_authority() and is_inside_tree():
+	if is_inside_tree():
 		# Proximity fuse for AA Flak against planes/airborne targets
-		if proximity_air_radius > 0.0:
+		if not is_visual_only and proximity_air_radius > 0.0:
 			var vehicles: Array[Node] = get_tree().get_nodes_in_group("vehicles")
 			for v in vehicles:
 				if v is Node3D and (v as Node3D).global_position.distance_to(next_pos) <= proximity_air_radius:
@@ -155,17 +271,21 @@ func _physics_process(delta: float) -> void:
 
 		var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 		if space != null:
-			var query := PhysicsRayQueryParameters3D.create(global_position, next_pos, 1 | 2 | 8 | 64)
+			var mask: int = (1 | 8 | 64) if is_visual_only else (1 | 2 | 8 | 64)
+			var query := PhysicsRayQueryParameters3D.create(global_position, next_pos, mask)
 			var res: Dictionary = space.intersect_ray(query)
 			if not res.is_empty():
 				var hit_pos: Vector3 = res["position"]
 				var hit_normal: Vector3 = res.get("normal", Vector3.UP)
 				var collider: Object = res.get("collider", null)
-				var hit_enemy_hero: bool = (collider is HeroCharacter and (collider as HeroCharacter).team != owner_team)
+				var hit_enemy_hero: bool = (not is_visual_only) and (collider is HeroCharacter and (collider as HeroCharacter).team != owner_team)
 				var hit_vehicle: bool = (collider is Node and (collider as Node).is_in_group("vehicles"))
 				if explode_on_impact or hit_enemy_hero or hit_vehicle:
-					global_position = hit_pos
-					_detonate()
+					if is_visual_only:
+						queue_free()
+					else:
+						global_position = hit_pos
+						_detonate()
 					return
 				else:
 					# Bounce / roll (Grenades, Keg, TNT)
@@ -179,10 +299,18 @@ func _physics_process(delta: float) -> void:
 	global_position = next_pos
 	if kind == ProjectileKind.EXPLOSIVE_KEG and _mesh != null:
 		_mesh.rotation.x += 8.0 * delta
+	else:
+		_align_mesh_to_velocity()
+
+	if (kind == ProjectileKind.BAZOOKA_ROCKET or kind == ProjectileKind.TANK_SHELL) and not DisplayServer.get_name().contains("headless"):
+		_trail_timer -= delta
+		if _trail_timer <= 0.0:
+			_trail_timer = 0.055
+			StatusEffectsVFX.spawn_cartoon_burst(get_parent(), global_position, "smoke", 0.32)
 
 
 func _detonate() -> void:
-	if _exploded:
+	if _exploded or bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority():
 		return
 	_exploded = true
 
@@ -221,6 +349,8 @@ func _detonate() -> void:
 				if h.entity_id == owner_id:
 					dmg = int(roundf(float(dmg) * 0.35))
 				var dealt: int = h.apply_damage_server(dmg, owner_id, true)
+				if dealt <= 0:
+					continue
 				var kb_dir: Vector3 = (h.global_position - global_position + Vector3(0.0, 0.75, 0.0)).normalized()
 				h.apply_knockback(kb_dir * knockback_force * falloff)
 

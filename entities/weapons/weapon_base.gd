@@ -39,6 +39,9 @@ var is_automatic: bool = true
 var is_melee: bool = false
 var is_sniper: bool = false
 var is_explosive_weapon: bool = false
+var bullet_speed_mps: float = 150.0
+var bullet_gravity_scale: float = 1.0
+var base_gravity_mps2: float = 18.0
 
 ## Runtime state (Infinite reserve ammo!)
 var damage_max: float = 16.0
@@ -79,6 +82,8 @@ func _load_weapon_stats() -> void:
 			base_spread_rad = 0.024
 			recoil_rad = 0.012
 			is_automatic = true
+			bullet_speed_mps = 135.0
+			bullet_gravity_scale = 1.0
 		WeaponKind.MG:
 			weapon_name = "Heavy Machine Gun"
 			base_damage_max = 15.0
@@ -92,6 +97,8 @@ func _load_weapon_stats() -> void:
 			base_spread_rad = 0.032
 			recoil_rad = 0.016
 			is_automatic = true
+			bullet_speed_mps = 145.0
+			bullet_gravity_scale = 1.0
 		WeaponKind.SHOTGUN:
 			weapon_name = "Combat Shotgun"
 			base_damage_max = 10.0
@@ -106,6 +113,8 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.055
 			pellet_count = 8
 			is_automatic = false
+			bullet_speed_mps = 105.0
+			bullet_gravity_scale = 1.1
 		WeaponKind.PISTOL:
 			weapon_name = "Service Pistol"
 			base_damage_max = 19.0
@@ -119,6 +128,8 @@ func _load_weapon_stats() -> void:
 			base_spread_rad = 0.015
 			recoil_rad = 0.022
 			is_automatic = false
+			bullet_speed_mps = 120.0
+			bullet_gravity_scale = 1.0
 		WeaponKind.SNIPER:
 			weapon_name = "Sniper Rifle"
 			base_damage_max = 46.0
@@ -133,6 +144,8 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.06
 			is_automatic = false
 			is_sniper = true
+			bullet_speed_mps = 195.0
+			bullet_gravity_scale = 1.0
 		WeaponKind.KNIFE:
 			weapon_name = "Commando Knife"
 			base_damage_max = 42.0
@@ -147,6 +160,8 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.0
 			is_automatic = false
 			is_melee = true
+			bullet_speed_mps = 100.0
+			bullet_gravity_scale = 0.0
 		WeaponKind.BAZOOKA:
 			weapon_name = "Bazooka"
 			base_damage_max = 65.0

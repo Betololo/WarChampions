@@ -224,6 +224,7 @@ func _build_combat_context() -> Dictionary:
 		"heroes_by_id": heroes_by_id,
 		"projectiles_root": projectiles_root,
 		"vehicles": vehicles_by_id.values(),
+		"vehicles_by_id": vehicles_by_id,
 		"on_damage_dealt": _on_damage_dealt_xp,
 	}
 
@@ -489,23 +490,52 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			var w_kind: int = int(payload.get("weapon_kind", 0))
 			var shooter: HeroCharacter = heroes_by_id.get(shooter_id, null)
 			var origin_fallback: Vector3 = payload.get("origin", Vector3.ZERO)
-			var muzzle_pos: Vector3 = shooter.get_muzzle_world_position() if shooter != null else origin_fallback
+			var is_vehicle_shot: bool = bool(payload.get("vehicle_shot", false))
+			var use_origin: bool = is_vehicle_shot or shooter == null or shooter.current_vehicle_id >= 0
+			var muzzle_pos: Vector3 = origin_fallback if use_origin else shooter.get_muzzle_world_position()
 			var aim_dir: Vector3 = payload.get("dir", Vector3.FORWARD)
 			var is_remote_client_own_shot: bool = (shooter_id == NetworkManager.local_peer_id and not NetworkManager.is_server_authority())
 
-			if not is_remote_client_own_shot:
+			if not is_remote_client_own_shot or is_vehicle_shot:
 				var local_hero: HeroCharacter = heroes_by_id.get(NetworkManager.local_peer_id, null)
 				var dist_m: float = 0.0
 				if shooter_id != NetworkManager.local_peer_id and local_hero != null:
 					dist_m = local_hero.global_position.distance_to(muzzle_pos)
 				SoundSynthesizer.play_weapon_fire(w_kind, dist_m)
-				if shooter != null:
+				if shooter != null and not is_vehicle_shot:
 					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot)
 				StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
 
-			for hp_var in payload.get("hits", []):
-				if hp_var is Vector3:
-					StatusEffectsVFX.spawn_bullet_tracer(projectiles_root, muzzle_pos, hp_var as Vector3, w_kind)
+			var arcs: Array = payload.get("arcs", [])
+			if not arcs.is_empty():
+				for arc_var in arcs:
+					if arc_var is PackedVector3Array or arc_var is Array:
+						var arc_pts: PackedVector3Array = arc_var if arc_var is PackedVector3Array else PackedVector3Array(arc_var)
+						if arc_pts.size() >= 2 and muzzle_pos.distance_to(arc_pts[arc_pts.size() - 1]) > 1.5 and muzzle_pos.distance_to(arc_pts[0]) < 3.0:
+							arc_pts = arc_pts.duplicate()
+							arc_pts[0] = muzzle_pos
+						StatusEffectsVFX.spawn_curved_tracer(projectiles_root, arc_pts, w_kind)
+			else:
+				for hp_var in payload.get("hits", []):
+					if hp_var is Vector3:
+						StatusEffectsVFX.spawn_bullet_tracer(projectiles_root, muzzle_pos, hp_var as Vector3, w_kind)
+		"proj_vfx":
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				var vp := ProjectileEntity.new()
+				vp.set_meta("visual_only", true)
+				vp.setup(
+					int(payload.get("kind", 0)),
+					-1,
+					-1,
+					payload.get("pos", Vector3.ZERO),
+					payload.get("vel", Vector3.ZERO),
+					{}
+				)
+				if payload.has("gravity_scale"):
+					vp.gravity_scale = float(payload["gravity_scale"])
+				if payload.has("lifetime"):
+					vp.lifetime = float(payload["lifetime"])
+				projectiles_root.add_child(vp)
 		"hit_vfx":
 			var hit_pos: Vector3 = payload.get("pos", Vector3.ZERO)
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, hit_pos, str(payload.get("kind", "dust")), 0.4)

@@ -176,18 +176,25 @@ static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector
 	tw.chain().tween_callback(flash_root.queue_free)
 
 
-static func spawn_bullet_tracer(parent: Node, start_pos: Vector3, end_pos: Vector3, weapon_kind: int) -> void:
+static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, weapon_kind: int) -> void:
 	if parent == null or DisplayServer.get_name().contains("headless"):
 		return
 	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 6:
 		return
-	var diff: Vector3 = end_pos - start_pos
-	var full_len: float = diff.length()
-	if full_len < 0.6:
+	if arc_points.size() < 2:
 		return
-	var dir: Vector3 = diff / full_len
-	var seg_len: float = clampf(full_len * 0.38, 1.4, 14.0 if weapon_kind == 4 else 7.5)
 
+	var cum_dist := PackedFloat32Array()
+	cum_dist.resize(arc_points.size())
+	cum_dist[0] = 0.0
+	var total_len: float = 0.0
+	for i in range(1, arc_points.size()):
+		total_len += arc_points[i - 1].distance_to(arc_points[i])
+		cum_dist[i] = total_len
+	if total_len < 0.6:
+		return
+
+	var seg_len: float = clampf(total_len * 0.25, 1.2, 9.0 if weapon_kind == 4 else 5.5)
 	var tracer := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	var thick: float = 0.036 if weapon_kind == 4 else 0.024
@@ -200,16 +207,37 @@ static func spawn_bullet_tracer(parent: Node, start_pos: Vector3, end_pos: Vecto
 	mat.albedo_color = Color(1.0, 0.94, 0.58, 0.88) if weapon_kind == 4 else Color(1.0, 0.86, 0.35, 0.80)
 	tracer.material_override = mat
 
-	var p_a: Vector3 = start_pos + dir * (seg_len * 0.5 + 0.15)
-	var p_b: Vector3 = end_pos - dir * minf(full_len * 0.15, seg_len * 0.35)
-	tracer.position = p_a
+	var start_d: float = minf(total_len * 0.5, seg_len * 0.5 + 0.15)
+	var end_d: float = maxf(start_d, total_len - minf(total_len * 0.12, seg_len * 0.35))
 	parent.add_child(tracer)
-	if absf(dir.dot(Vector3.UP)) < 0.98:
-		tracer.look_at(p_a + dir, Vector3.UP)
 
-	var travel_t: float = clampf(full_len / 260.0, 0.055, 0.14)
+	var update_pose := func(d: float) -> void:
+		if not is_instance_valid(tracer) or not tracer.is_inside_tree():
+			return
+		var seg_idx: int = 0
+		for i in range(arc_points.size() - 1):
+			if d <= cum_dist[i + 1] or i == arc_points.size() - 2:
+				seg_idx = i
+				break
+		var seg_span: float = maxf(0.001, cum_dist[seg_idx + 1] - cum_dist[seg_idx])
+		var local_t: float = clampf((d - cum_dist[seg_idx]) / seg_span, 0.0, 1.0)
+		var pos: Vector3 = arc_points[seg_idx].lerp(arc_points[seg_idx + 1], local_t)
+		var seg_dir: Vector3 = arc_points[seg_idx + 1] - arc_points[seg_idx]
+		tracer.position = pos
+		if seg_dir.length_squared() > 0.0001:
+			var dir_n: Vector3 = seg_dir.normalized()
+			if absf(dir_n.dot(Vector3.UP)) < 0.98:
+				tracer.look_at(pos + dir_n, Vector3.UP)
+
+	update_pose.call(start_d)
+
+	var travel_t: float = clampf(total_len / 300.0, 0.055, 0.36)
 	var tw: Tween = parent.create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(tracer, "position", p_b, travel_t)
+	tw.tween_method(update_pose, start_d, end_d, travel_t)
 	tw.tween_property(mat, "albedo_color:a", 0.0, travel_t)
 	tw.chain().tween_callback(tracer.queue_free)
+
+
+static func spawn_bullet_tracer(parent: Node, start_pos: Vector3, end_pos: Vector3, weapon_kind: int) -> void:
+	spawn_curved_tracer(parent, PackedVector3Array([start_pos, end_pos]), weapon_kind)

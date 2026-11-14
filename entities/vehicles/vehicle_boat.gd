@@ -54,16 +54,9 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 			# Bow light gun on fire
 			if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
 				_driver_fire_cd = 0.14
-				var lag_comp: LagCompensator = context.get("lag_compensator", null)
-				var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 				var fire_dir: Vector3 = -Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0)).z.normalized()
 				var muzzle: Vector3 = global_position + Vector3(0.0, 1.9, 0.0) + fire_dir * 2.5
-				if lag_comp != null:
-					var res: Dictionary = lag_comp.trace_rewound_ray(driver, muzzle, fire_dir, 140.0, cmd.view_interp_tick_delta, NetworkManager.server_tick, heroes_by_id, get_world_3d())
-					var tid: int = int(res.get("target_hero_id", -1))
-					if tid >= 0 and heroes_by_id.has(tid):
-						(heroes_by_id[tid] as HeroCharacter).apply_damage_server(14, driver.entity_id, false)
-					NetworkManager.broadcast_game_event("hit_vfx", {"pos": res.get("hit_pos", muzzle + fire_dir * 40.0), "kind": "spark", "attacker_id": driver.entity_id})
+				_fire_ballistic_mg(driver, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)
 		else:
 			linear_velocity.x = lerpf(linear_velocity.x, 0.0, WATER_DRAG * delta)
 			linear_velocity.z = lerpf(linear_velocity.z, 0.0, WATER_DRAG * delta)

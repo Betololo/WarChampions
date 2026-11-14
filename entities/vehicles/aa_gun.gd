@@ -3,7 +3,7 @@ extends VehicleBase
 
 ## Fixed Anti-Aircraft Flak emplacement firing proximity-fuse shells against planes.
 const FLAK_COOLDOWN: float = 0.38
-const FLAK_SPEED: float = 95.0
+const FLAK_SPEED: float = 98.0
 
 
 func _setup_vehicle_stats_and_seats() -> void:
@@ -43,8 +43,13 @@ func _drive_physics(driver: HeroCharacter, _delta: float, context: Dictionary) -
 		var aim_basis := Basis.from_euler(Vector3(cmd.aim_pitch, turret_yaw, 0.0))
 		var fire_dir: Vector3 = -aim_basis.z.normalized()
 		var muzzle: Vector3 = global_position + Vector3(0.0, 1.8, 0.0) + fire_dir * 2.5
-		var flak := ProjectileEntity.new()
-		flak.setup(ProjectileEntity.ProjectileKind.AA_FLAK, driver.entity_id, driver.team, muzzle, fire_dir * FLAK_SPEED, context)
-		var projectiles_root: Node = context.get("projectiles_root", get_parent())
-		if projectiles_root != null:
-			projectiles_root.add_child(flak)
+		ProjectileEntity.spawn_server_projectile(
+			ProjectileEntity.ProjectileKind.AA_FLAK,
+			driver.entity_id,
+			driver.team,
+			muzzle,
+			fire_dir * FLAK_SPEED,
+			context,
+			-1.0,
+			get_parent()
+		)

@@ -5,7 +5,7 @@ extends VehicleBase
 ## 2.0x rear armor damage, and external rear passenger/repair seat.
 const MAX_SPEED: float = 12.5
 const CANNON_COOLDOWN: float = 1.85
-const SHELL_SPEED: float = 58.0
+const SHELL_SPEED: float = 62.0
 
 
 func _setup_vehicle_stats_and_seats() -> void:
@@ -61,18 +61,24 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 			var aim_basis := Basis.from_euler(Vector3(cmd.aim_pitch, turret_yaw, 0.0))
 			var fire_dir: Vector3 = -aim_basis.z.normalized()
 			var muzzle_pos: Vector3 = global_position + Vector3(0.0, 2.2, 0.0) + fire_dir * 3.8
-			var shell := ProjectileEntity.new()
-			shell.setup(
+			ProjectileEntity.spawn_server_projectile(
 				ProjectileEntity.ProjectileKind.TANK_SHELL,
 				driver.entity_id,
 				driver.team,
 				muzzle_pos,
-				fire_dir * SHELL_SPEED + Vector3(0.0, 2.5, 0.0),
-				context
+				fire_dir * SHELL_SPEED + Vector3(0.0, 1.2, 0.0),
+				context,
+				-1.0,
+				get_parent()
 			)
-			var projectiles_root: Node = context.get("projectiles_root", get_parent())
-			if projectiles_root != null:
-				projectiles_root.add_child(shell)
+			NetworkManager.broadcast_game_event("shot_vfx", {
+				"shooter_id": driver.entity_id,
+				"weapon_kind": WeaponBase.WeaponKind.BAZOOKA,
+				"origin": muzzle_pos,
+				"dir": fire_dir,
+				"hits": [],
+				"vehicle_shot": true,
+			})
 	else:
 		linear_velocity.x = lerpf(linear_velocity.x, 0.0, 4.0 * delta)
 		linear_velocity.z = lerpf(linear_velocity.z, 0.0, 4.0 * delta)
