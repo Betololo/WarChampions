@@ -1,0 +1,13 @@
+# Godot 4+ specific ignores
+.godot/
+*.tmp
+*.bak
+*.log
+export_presets.cfg
+.import/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
