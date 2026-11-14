@@ -40,6 +40,7 @@ var team: int = -1 # -1 = neutral/capturable, 0 = Royal, 1 = National
 var max_hp: int = 350
 var hp: int = 350
 var turret_yaw: float = 0.0
+var turret_pitch: float = 0.0
 var is_destroyed: bool = false
 var respawn_delay: float = 25.0
 var _respawn_timer: float = 0.0
@@ -49,6 +50,9 @@ var seats: Array[SeatSlot] = []
 var snapshot_interpolator: SnapshotInterpolator = SnapshotInterpolator.new()
 var _visual_root: Node3D
 var _turret_node: Node3D
+var _barrel_pivot: Node3D
+var _propeller_node: Node3D
+var _wheels: Array[Node3D] = []
 var _driver_fire_cd: float = 0.0
 var _last_heroes_by_id: Dictionary = {}
 var _damage_smoke_timer: float = 0.0
@@ -117,22 +121,28 @@ func _seat_world_pos(s: SeatSlot) -> Vector3:
 	return transform * s.local_offset
 
 
-func _sync_hero_seat_state(hero: HeroCharacter, s: SeatSlot) -> void:
-	var seat_world: Vector3 = _seat_world_pos(s)
+func _place_hero_at(hero: HeroCharacter, world_pos: Vector3, vel: Vector3) -> void:
 	if hero.is_inside_tree():
-		hero.global_position = seat_world
+		hero.global_position = world_pos
 	else:
-		hero.position = seat_world
-	hero._prev_phys_pos = seat_world
-	hero._curr_phys_pos = seat_world
+		hero.position = world_pos
+	hero._prev_phys_pos = world_pos
+	hero._curr_phys_pos = world_pos
+	hero.velocity = vel
+
+
+func _sync_hero_seat_state(hero: HeroCharacter, s: SeatSlot) -> void:
+	_place_hero_at(hero, _seat_world_pos(s), linear_velocity)
 	hero.current_seat_enclosed = s.is_enclosed
 	hero.current_seat_pose = s.seat_pose
 	hero.current_seat_can_shoot = s.can_shoot
-	hero.velocity = linear_velocity
 
 
-func _clear_hero_seat_state(hero: HeroCharacter) -> void:
+func _clear_hero_seat_state(hero: HeroCharacter, eject_pos: Variant = null, eject_vel: Variant = null) -> void:
 	hero.clear_vehicle_state()
+	if eject_pos is Vector3:
+		var target_vel: Vector3 = eject_vel if eject_vel is Vector3 else Vector3.ZERO
+		_place_hero_at(hero, eject_pos as Vector3, target_vel)
 
 
 func try_enter_hero(hero: HeroCharacter) -> int:
@@ -146,6 +156,7 @@ func try_enter_hero(hero: HeroCharacter) -> int:
 			hero.current_vehicle_id = id
 			hero.current_seat_index = s.seat_index
 			hero.is_parachuting = false
+			hero.active_flags &= ~NetSerializer.SNAP_PARACHUTING
 			if hero._body_collision != null:
 				hero._body_collision.disabled = true
 			if hero.hero_camera != null:
@@ -162,17 +173,10 @@ func exit_hero(hero: HeroCharacter) -> void:
 		if s.occupant_id == hero.entity_id:
 			s.occupant_id = -1
 			break
-	_clear_hero_seat_state(hero)
 	var base_pos: Vector3 = global_position if is_inside_tree() else position
 	var right_vec: Vector3 = global_transform.basis.x if is_inside_tree() else transform.basis.x
 	var exit_pos: Vector3 = base_pos + right_vec * 3.2 + Vector3(0.0, 1.8, 0.0)
-	if hero.is_inside_tree():
-		hero.global_position = exit_pos
-	else:
-		hero.position = exit_pos
-	hero._prev_phys_pos = exit_pos
-	hero._curr_phys_pos = exit_pos
-	hero.velocity = linear_velocity * 0.4 + Vector3(0.0, 2.0, 0.0)
+	_clear_hero_seat_state(hero, exit_pos, linear_velocity * 0.4 + Vector3(0.0, 2.0, 0.0))
 
 
 func get_seat(seat_idx: int) -> SeatSlot:
@@ -271,15 +275,9 @@ func _on_destroyed(attacker_id: int) -> void:
 			s.occupant_id = -1
 			var h: HeroCharacter = _last_heroes_by_id.get(occ_id, null) as HeroCharacter
 			if h != null and is_instance_valid(h):
-				_clear_hero_seat_state(h)
 				var eject_pos: Vector3 = wreck_pos + Vector3(randf_range(-1.5, 1.5), 1.8, randf_range(-1.5, 1.5))
-				if h.is_inside_tree():
-					h.global_position = eject_pos
-				else:
-					h.position = eject_pos
-				h._prev_phys_pos = eject_pos
-				h._curr_phys_pos = eject_pos
-				h.velocity = linear_velocity * 0.35 + Vector3(randf_range(-3.0, 3.0), 8.5, randf_range(-3.0, 3.0))
+				var eject_vel: Vector3 = linear_velocity * 0.35 + Vector3(randf_range(-3.0, 3.0), 8.5, randf_range(-3.0, 3.0))
+				_clear_hero_seat_state(h, eject_pos, eject_vel)
 				h.apply_damage_server(45, attacker_id, true, true)
 	visible = false
 	freeze = true
@@ -329,16 +327,36 @@ func _drive_physics(_driver: HeroCharacter, _delta: float, _context: Dictionary)
 
 
 func _process(delta: float) -> void:
+	var eff_vel: Vector3 = linear_velocity
 	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())
 		if sample != null:
 			global_position = sample.position
 			quaternion = sample.rotation
+			eff_vel = sample.velocity
 			turret_yaw = sample.turret_yaw
 			if _turret_node != null:
 				_turret_node.rotation.y = turret_yaw - rotation.y
 	elif _turret_node != null:
 		_turret_node.rotation.y = lerp_angle(_turret_node.rotation.y, turret_yaw - rotation.y, minf(1.0, 12.0 * delta))
+
+	if _barrel_pivot != null:
+		var target_pitch: float = clampf(turret_pitch, -0.35, 0.95)
+		_barrel_pivot.rotation.x = lerpf(_barrel_pivot.rotation.x, target_pitch, minf(1.0, 14.0 * delta))
+
+	if not _wheels.is_empty():
+		var basis_ref: Basis = global_transform.basis if is_inside_tree() else transform.basis
+		var fwd_speed: float = eff_vel.dot(-basis_ref.z)
+		if absf(fwd_speed) > 0.05:
+			for w in _wheels:
+				if is_instance_valid(w):
+					var r: float = maxf(0.12, float(w.get_meta("wheel_radius", 0.45)))
+					w.rotation.x -= (fwd_speed / r) * delta
+
+	if _propeller_node != null and not is_destroyed:
+		var has_pilot: bool = not seats.is_empty() and seats[0].occupant_id >= 0
+		var prop_rate: float = 36.0 if (has_pilot or eff_vel.length() > 3.0) else 2.2
+		_propeller_node.rotation.z += prop_rate * delta
 
 	if not is_destroyed and hp > 0 and max_hp > 0 and hp < int(float(max_hp) * 0.55):
 		var critical: bool = hp < int(float(max_hp) * 0.25)
@@ -357,6 +375,7 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap: Diction
 	hp = int(snap.get("hp", hp))
 	is_destroyed = (hp <= 0)
 	visible = hp > 0
+	collision_layer = 8 if not is_destroyed else 0
 	snapshot_interpolator.push_snapshot(
 		server_tick,
 		server_time_ms,
@@ -450,15 +469,12 @@ func _fire_ballistic_mg(
 	})
 
 
-func _add_box_part(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mi.mesh = box
-	mi.position = pos
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.65
-	mi.material_override = mat
-	parent.add_child(mi)
-	return mi
+func _apply_built_visuals(built: Dictionary) -> void:
+	_turret_node = built.get("turret", null) as Node3D
+	_barrel_pivot = built.get("barrel", null) as Node3D
+	_propeller_node = built.get("propeller", null) as Node3D
+	_wheels.clear()
+	var built_wheels: Array = built.get("wheels", [])
+	for w in built_wheels:
+		if w is Node3D:
+			_wheels.append(w as Node3D)

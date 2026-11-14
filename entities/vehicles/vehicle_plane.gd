@@ -28,17 +28,7 @@ func _build_vehicle_mesh() -> void:
 	col.shape = box
 	col.position = Vector3(0.0, 0.9, 0.0)
 	add_child(col)
-
-	var body_col: Color = Color(0.24, 0.45, 0.78) if team == 0 else Color(0.32, 0.34, 0.36)
-	var accent_col: Color = Color(0.95, 0.82, 0.25) if team == 0 else Color(0.84, 0.16, 0.16)
-	# Fuselage
-	_add_box_part(_visual_root, Vector3(1.25, 1.15, 5.8), Vector3(0.0, 0.95, 0.0), body_col)
-	# Wings for Wing-Riding
-	_add_box_part(_visual_root, Vector3(9.4, 0.22, 1.85), Vector3(0.0, 0.85, -0.1), body_col.lightened(0.08))
-	# Tail & Nose
-	_add_box_part(_visual_root, Vector3(3.1, 0.18, 1.0), Vector3(0.0, 1.0, 2.5), accent_col)
-	_add_box_part(_visual_root, Vector3(0.2, 1.1, 1.0), Vector3(0.0, 1.5, 2.5), accent_col)
-	_add_box_part(_visual_root, Vector3(0.75, 0.75, 0.65), Vector3(0.0, 0.95, -3.1), accent_col)
+	_apply_built_visuals(VehicleMeshBuilder.build_plane_visuals(_visual_root, team))
 
 
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:

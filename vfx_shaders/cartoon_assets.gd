@@ -83,6 +83,24 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _tex_pants(Color(0.26, 0.27, 0.30), Color(0.17, 0.18, 0.21), Color(0.58, 0.18, 0.18))
 		"hero_gun_wood":
 			return _tex_stucco(Color(0.50, 0.30, 0.15), Color(0.36, 0.20, 0.09))
+		"veh_olive":
+			return _tex_armor_plate(Color(0.42, 0.50, 0.28), Color(0.24, 0.29, 0.15), Color(0.56, 0.63, 0.37), Color(0.76, 0.78, 0.56), Color(0.88, 0.80, 0.34), true)
+		"veh_panzer":
+			return _tex_armor_plate(Color(0.36, 0.38, 0.43), Color(0.18, 0.19, 0.23), Color(0.50, 0.53, 0.58), Color(0.62, 0.65, 0.70), Color(0.72, 0.18, 0.18), false)
+		"veh_steel":
+			return _tex_armor_plate(Color(0.48, 0.51, 0.56), Color(0.26, 0.28, 0.32), Color(0.66, 0.69, 0.74), Color(0.76, 0.79, 0.84), Color(0.38, 0.40, 0.45), false)
+		"veh_track":
+			return _tex_veh_track()
+		"veh_tire":
+			return _tex_veh_tire()
+		"veh_wood_deck":
+			return _tex_veh_wood_deck()
+		"veh_plane_royal":
+			return _tex_armor_plate(Color(0.24, 0.50, 0.86), Color(0.14, 0.30, 0.58), Color(0.38, 0.65, 0.96), Color(0.82, 0.88, 0.96), Color(0.95, 0.78, 0.22), true)
+		"veh_plane_national":
+			return _tex_armor_plate(Color(0.34, 0.37, 0.42), Color(0.18, 0.20, 0.24), Color(0.48, 0.52, 0.58), Color(0.70, 0.73, 0.78), Color(0.86, 0.18, 0.18), false)
+		"veh_sandbag":
+			return _tex_veh_sandbag()
 		"flag_royal":
 			return _sprite_flag(true)
 		"flag_national":
@@ -564,4 +582,134 @@ static func _sprite_widget(slot_str: String) -> ImageTexture:
 	else: # Antidote / Fireproof
 		_draw_rect(img, 13, 12, 14, 22, Color(0.25, 0.85, 0.95))
 		_draw_rect(img, 16, 6, 8, 6, Color(0.85, 0.65, 0.35))
+	return ImageTexture.create_from_image(img)
+
+
+static func _draw_star(img: Image, cx: float, cy: float, r_outer: float, col: Color) -> void:
+	for i in range(5):
+		var a0: float = -PI * 0.5 + float(i) * (TAU / 5.0)
+		var a1: float = a0 + (TAU / 5.0) * 2.0
+		var p0 := Vector2(cx + cos(a0) * r_outer, cy + sin(a0) * r_outer)
+		var p1 := Vector2(cx + cos(a1) * r_outer, cy + sin(a1) * r_outer)
+		_draw_line(img, Vector2(cx, cy), p0, 2.2, col)
+		_draw_line(img, p0, p1, 1.8, col)
+
+
+static func _tex_armor_plate(
+	base: Color,
+	seam: Color,
+	highlight: Color,
+	rivet: Color,
+	accent: Color,
+	has_star: bool
+) -> ImageTexture:
+	var img := _new_img(128, 128, base)
+	# Soft vertical armor plate shading & weathered brush marks
+	for y in range(128):
+		var t: float = float(y % 64) / 63.0
+		var row_col: Color = base.lerp(highlight, 0.22 * (1.0 - t)) if t < 0.35 else base.lerp(seam, 0.16 * ((t - 0.35) / 0.65))
+		_draw_rect(img, 0, y, 128, 1, row_col)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 606
+	for _i in range(42):
+		var sc: Color = highlight.lerp(base, 0.55) if rng.randf() > 0.5 else seam.lerp(base, 0.65)
+		_draw_rect(img, rng.randi_range(4, 110), rng.randi_range(4, 120), rng.randi_range(8, 22), rng.randi_range(2, 4), sc)
+	# Crisp armor panel seams + beveled highlight line
+	for p in [0, 64]:
+		_draw_rect(img, 0, p, 128, 2, seam)
+		_draw_rect(img, 0, (p + 2) % 128, 128, 1, highlight)
+		_draw_rect(img, p, 0, 2, 128, seam)
+		_draw_rect(img, (p + 2) % 128, 0, 1, 128, highlight)
+	# Accent trim wash strip along top panel edge
+	_draw_rect(img, 0, 56, 128, 5, accent.lerp(base, 0.35))
+	# Corner & edge rivets along armor panels
+	for py in [6, 58, 70, 122]:
+		for px in range(8, 128, 16):
+			_draw_circle(img, float(px) + 0.8, float(py) + 0.8, 1.8, seam)
+			_draw_circle(img, float(px), float(py), 1.6, rivet)
+	if has_star:
+		_draw_circle(img, 32.0, 32.0, 11.0, base.lerp(seam, 0.35))
+		_draw_star(img, 32.0, 32.0, 9.0, accent.lerp(Color.WHITE, 0.35))
+	else:
+		_draw_rect(img, 20, 24, 24, 5, accent.lerp(base, 0.25))
+		_draw_rect(img, 29, 15, 5, 24, accent.lerp(base, 0.25))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_veh_track() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.20, 0.21, 0.23))
+	var cleat_dark := Color(0.11, 0.12, 0.13)
+	var cleat_hi := Color(0.45, 0.48, 0.52)
+	var mud := Color(0.27, 0.22, 0.17)
+	for y in range(0, 128, 16):
+		_draw_rect(img, 0, y, 128, 3, cleat_dark)
+		_draw_rect(img, 0, y + 3, 128, 6, Color(0.30, 0.32, 0.35))
+		_draw_rect(img, 0, y + 3, 128, 2, cleat_hi)
+		_draw_rect(img, 0, y + 10, 128, 5, mud)
+		# Center guide teeth & track link pins
+		_draw_rect(img, 58, y + 1, 12, 13, cleat_dark)
+		_draw_rect(img, 60, y + 2, 8, 9, cleat_hi)
+		for px in [10, 114]:
+			_draw_circle(img, float(px), float(y + 6), 2.4, cleat_hi)
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_veh_tire() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.18, 0.19, 0.21))
+	var groove := Color(0.10, 0.11, 0.12)
+	var lug_hi := Color(0.29, 0.31, 0.34)
+	# Rubber tread lugs around circumference (u) & tire shoulders (v)
+	for x in range(0, 128, 16):
+		_draw_rect(img, x, 14, 10, 44, lug_hi)
+		_draw_rect(img, x + 10, 14, 6, 44, groove)
+		_draw_rect(img, (x + 8) % 128, 70, 10, 44, lug_hi)
+		_draw_rect(img, (x + 18) % 128, 70, 6, 44, groove)
+	_draw_rect(img, 0, 58, 128, 12, groove)
+	_draw_rect(img, 0, 0, 128, 12, Color(0.24, 0.25, 0.27))
+	_draw_rect(img, 0, 116, 128, 12, Color(0.24, 0.25, 0.27))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_veh_wood_deck() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.64, 0.43, 0.21))
+	var caulk := Color(0.22, 0.14, 0.07)
+	var plank_shades: Array[Color] = [
+		Color(0.68, 0.46, 0.23),
+		Color(0.60, 0.39, 0.19),
+		Color(0.73, 0.50, 0.26),
+		Color(0.57, 0.37, 0.18),
+	]
+	for i in range(8):
+		var x0: int = i * 16
+		var pc: Color = plank_shades[i % plank_shades.size()]
+		_draw_rect(img, x0, 0, 14, 128, pc)
+		_draw_rect(img, x0 + 14, 0, 2, 128, caulk)
+		var butt_y: int = 32 if (i % 2 == 0) else 88
+		_draw_rect(img, x0, butt_y, 14, 2, caulk)
+		_draw_circle(img, float(x0 + 4), float((butt_y + 6) % 128), 1.3, Color(0.84, 0.68, 0.28))
+		_draw_circle(img, float(x0 + 10), float((butt_y + 6) % 128), 1.3, Color(0.84, 0.68, 0.28))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 707
+	for _g in range(60):
+		var gx: int = rng.randi_range(0, 124)
+		var gy: int = rng.randi_range(0, 112)
+		_draw_rect(img, gx, gy, 1, rng.randi_range(6, 16), Color(0.46, 0.29, 0.13))
+	return ImageTexture.create_from_image(img)
+
+
+static func _tex_veh_sandbag() -> ImageTexture:
+	var img := _new_img(128, 128, Color(0.72, 0.62, 0.42))
+	var warp := Color(0.60, 0.50, 0.32)
+	var weft := Color(0.80, 0.71, 0.50)
+	for y in range(0, 128, 4):
+		_draw_rect(img, 0, y, 128, 1, warp)
+		if y % 8 == 0:
+			for x in range((y % 16) / 2, 128, 8):
+				_draw_rect(img, x, y + 1, 4, 2, weft)
+	for x in range(0, 128, 4):
+		_draw_rect(img, x, 0, 1, 128, warp.lerp(Color(0.72, 0.62, 0.42), 0.45))
+	# Bag seam & tie cord shading
+	_draw_rect(img, 0, 14, 128, 4, Color(0.48, 0.39, 0.24))
+	_draw_dashed_h(img, 4, 124, 12, 5, Color(0.86, 0.78, 0.58))
+	_draw_rect(img, 0, 110, 128, 4, Color(0.48, 0.39, 0.24))
 	return ImageTexture.create_from_image(img)

@@ -24,15 +24,7 @@ func _build_vehicle_mesh() -> void:
 	col.shape = box
 	col.position = Vector3(0.0, 0.9, 0.0)
 	add_child(col)
-
-	var body_col: Color = Color(0.32, 0.42, 0.25) if team == 0 else Color(0.24, 0.25, 0.27)
-	var trim_col: Color = Color(0.85, 0.72, 0.28) if team == 0 else Color(0.75, 0.16, 0.16)
-	_add_box_part(_visual_root, Vector3(2.2, 0.75, 4.2), Vector3(0.0, 0.85, 0.0), body_col)
-	_add_box_part(_visual_root, Vector3(2.0, 0.55, 1.5), Vector3(0.0, 1.45, -0.6), trim_col)
-	# 4 Cartoon Tires
-	for wx in [-1.15, 1.15]:
-		for wz in [-1.45, 1.45]:
-			_add_box_part(_visual_root, Vector3(0.45, 0.85, 0.85), Vector3(wx, 0.45, wz), Color(0.12, 0.12, 0.12))
+	_apply_built_visuals(VehicleMeshBuilder.build_jeep_visuals(_visual_root, team))
 
 
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:

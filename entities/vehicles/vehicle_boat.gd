@@ -25,12 +25,7 @@ func _build_vehicle_mesh() -> void:
 	col.shape = box
 	col.position = Vector3(0.0, 0.7, 0.0)
 	add_child(col)
-
-	var hull_col: Color = Color(0.25, 0.42, 0.65) if team == 0 else Color(0.28, 0.30, 0.33)
-	var trim_col: Color = Color(0.86, 0.72, 0.38) if team == 0 else Color(0.76, 0.16, 0.16)
-	_add_box_part(_visual_root, Vector3(2.9, 0.9, 6.2), Vector3(0.0, 0.65, 0.0), hull_col)
-	_add_box_part(_visual_root, Vector3(1.8, 0.85, 1.8), Vector3(0.0, 1.35, 0.5), trim_col)
-	_add_box_part(_visual_root, Vector3(0.35, 0.4, 1.2), Vector3(0.0, 1.3, -2.5), Color(0.18, 0.18, 0.18))
+	_apply_built_visuals(VehicleMeshBuilder.build_boat_visuals(_visual_root, team))
 
 
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:

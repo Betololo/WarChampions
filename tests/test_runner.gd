@@ -23,6 +23,7 @@ func _ready() -> void:
 	_test_hero_visuals_camera_and_audio()
 	_test_ik_weapon_grip_shot_fx_and_scope()
 	_test_ballistic_bullet_drop_and_tracers()
+	_test_vehicle_sculpted_models_and_animations()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -961,6 +962,153 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 	shooter.free()
 	low_target.free()
 	high_target.free()
+
+
+func _collect_mesh_instances(node: Node, out: Array[MeshInstance3D]) -> void:
+	if node is MeshInstance3D:
+		out.append(node as MeshInstance3D)
+	for c in node.get_children():
+		_collect_mesh_instances(c, out)
+
+
+func _signed_volume_outward_cw(mesh: ArrayMesh) -> float:
+	var faces: PackedVector3Array = mesh.get_faces()
+	var vol6: float = 0.0
+	for i in range(0, faces.size(), 3):
+		var v0: Vector3 = faces[i]
+		var v1: Vector3 = faces[i + 1]
+		var v2: Vector3 = faces[i + 2]
+		vol6 += v0.dot(v2.cross(v1))
+	return vol6 / 6.0
+
+
+func _test_vehicle_sculpted_models_and_animations() -> void:
+	# 1. Verify all hand-painted cartoon vehicle textures generate cleanly
+	var veh_tex_keys: Array[String] = [
+		"veh_olive", "veh_panzer", "veh_steel", "veh_track",
+		"veh_tire", "veh_wood_deck", "veh_plane_royal", "veh_plane_national", "veh_sandbag",
+	]
+	var tex_ok: bool = true
+	for tk in veh_tex_keys:
+		if CartoonAssets.get_texture(tk) == null:
+			tex_ok = false
+	_assert(tex_ok, "CartoonAssets generates all %d stylized vehicle textures" % veh_tex_keys.size())
+
+	# 2. Verify VehicleMeshBuilder transparency rule (opaque = TRANSPARENCY_DISABLED, glass = TRANSPARENCY_ALPHA)
+	var opaque_mat: StandardMaterial3D = VehicleMeshBuilder.make_mat(Color.WHITE, "veh_olive", 0.70, 0.18, 1.0)
+	var glass_mat: StandardMaterial3D = VehicleMeshBuilder.make_mat(Color(0.56, 0.82, 0.98), "", 0.10, 0.12, 0.40)
+	_assert(
+		opaque_mat.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED and glass_mat.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA,
+		"VehicleMeshBuilder enforces TRANSPARENCY_DISABLED on opaque armor and TRANSPARENCY_ALPHA strictly on glass"
+	)
+
+	# 3. Verify all 5 vehicles across both factions build rich multi-part sculpted hierarchies,
+	#    keep positive signed volume (outward normals) on all ArrayMeshes, and enforce opaque Z-buffering
+	var all_rich: bool = true
+	var min_children: int = 999
+	var bad_vol: int = 0
+	var bad_alpha: int = 0
+	for t_id in [NetworkManager.TEAM_ROYAL, NetworkManager.TEAM_NATIONAL]:
+		var instances: Array[VehicleBase] = [
+			VehicleTank.new(),
+			VehicleJeep.new(),
+			VehiclePlane.new(),
+			VehicleBoat.new(),
+			AAGun.new(),
+		]
+		for v in instances:
+			v.team = t_id
+			add_child(v)
+			if v._visual_root == null:
+				all_rich = false
+			else:
+				min_children = mini(min_children, v._visual_root.get_child_count())
+				if v._visual_root.get_child_count() < 6:
+					all_rich = false
+				var mis: Array[MeshInstance3D] = []
+				_collect_mesh_instances(v._visual_root, mis)
+				for mi in mis:
+					if mi.mesh is ArrayMesh:
+						if _signed_volume_outward_cw(mi.mesh as ArrayMesh) <= 0.0:
+							bad_vol += 1
+					var sm := mi.material_override as StandardMaterial3D
+					if sm != null and sm.albedo_color.a >= 0.99 and sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+						bad_alpha += 1
+			v.free()
+
+	_assert(all_rich and bad_vol == 0 and bad_alpha == 0, "All 5 sculpted vehicles (Royal & National) build >=6 parts (min=%d), 0 inverted-volume lofts (%d), 0 opaque alpha leaks (%d)" % [min_children, bad_vol, bad_alpha])
+
+	# 4. Verify wired pivots & animations on Tank, Jeep, Plane, Boat, AAGun
+	var tank := VehicleTank.new()
+	tank.id = 91
+	tank.team = NetworkManager.TEAM_ROYAL
+	add_child(tank)
+	var jeep := VehicleJeep.new()
+	jeep.id = 92
+	jeep.team = NetworkManager.TEAM_NATIONAL
+	add_child(jeep)
+	var plane := VehiclePlane.new()
+	plane.id = 93
+	plane.team = NetworkManager.TEAM_ROYAL
+	add_child(plane)
+	var boat := VehicleBoat.new()
+	boat.id = 94
+	boat.team = NetworkManager.TEAM_ROYAL
+	add_child(boat)
+	var aa := AAGun.new()
+	aa.id = 95
+	aa.team = NetworkManager.TEAM_NATIONAL
+	add_child(aa)
+
+	var sandbag_count: int = 0
+	for c in aa._visual_root.get_children():
+		if str(c.name).begins_with("Sandbag"):
+			sandbag_count += 1
+	_assert(
+		tank._turret_node != null and tank._barrel_pivot != null and tank._wheels.size() >= 10,
+		"VehicleTank wires turret, elevating barrel pivot, and %d road/idler/sprocket wheels" % tank._wheels.size()
+	)
+	_assert(
+		aa._turret_node != null and aa._barrel_pivot != null and sandbag_count >= 8,
+		"AAGun wires turret, elevating dual-Flak barrel pivot, and %d woven sandbags" % sandbag_count
+	)
+	_assert(plane._propeller_node != null and jeep._wheels.size() >= 4 and boat._visual_root.get_child_count() >= 6, "VehiclePlane wires propeller, VehicleJeep wires %d wheels, VehicleBoat builds sculpted hull & cabin" % jeep._wheels.size())
+
+	# Simulate movement & pitch animations
+	plane.linear_velocity = Vector3(0.0, 0.0, -32.0)
+	plane._process(0.1)
+	jeep.linear_velocity = Vector3(0.0, 0.0, -16.0)
+	jeep._process(0.1)
+	aa.turret_pitch = 0.45
+	aa._process(0.1)
+	tank.turret_pitch = 0.25
+	tank.linear_velocity = Vector3(0.0, 0.0, -10.0)
+	tank._process(0.1)
+
+	_assert(plane._propeller_node.rotation.z > 2.5, "VehiclePlane._process spins propeller cleanly (rot.z=%.2f rad)" % plane._propeller_node.rotation.z)
+	_assert(absf(jeep._wheels[0].rotation.x) > 1.0, "VehicleJeep._process rotates wheels proportional to forward speed (rot.x=%.2f rad)" % jeep._wheels[0].rotation.x)
+	_assert(absf(aa._barrel_pivot.rotation.x - 0.45) < 0.02 and absf(tank._barrel_pivot.rotation.x - 0.25) < 0.02, "AAGun & VehicleTank _barrel_pivot smoothly track clamped turret_pitch")
+
+	# 5. Verify VehicleBase parachute bit clear on board & remote snapshot collision_layer sync
+	var flyer := HeroCharacter.new()
+	flyer.setup_identity(960, "Flyer", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(flyer)
+	flyer.is_parachuting = true
+	flyer.active_flags |= NetSerializer.SNAP_PARACHUTING
+	_assert(jeep.try_enter_hero(flyer) >= 0 and not flyer.is_parachuting and (flyer.active_flags & NetSerializer.SNAP_PARACHUTING) == 0, "try_enter_hero clears SNAP_PARACHUTING flag on board")
+	jeep.exit_hero(flyer)
+
+	boat.push_remote_snapshot(50, 1000.0, {"pos": Vector3.ZERO, "rot": Quaternion.IDENTITY, "vel": Vector3.ZERO, "turret_yaw": 0.0, "hp": 0})
+	_assert(boat.is_destroyed and not boat.visible and boat.collision_layer == 0, "push_remote_snapshot disables collision_layer on destroyed remote vehicle")
+	boat.push_remote_snapshot(51, 1050.0, {"pos": Vector3.ZERO, "rot": Quaternion.IDENTITY, "vel": Vector3.ZERO, "turret_yaw": 0.0, "hp": 380})
+	_assert(not boat.is_destroyed and boat.visible and boat.collision_layer == 8, "push_remote_snapshot restores collision_layer=8 on respawned remote vehicle")
+
+	flyer.free()
+	tank.free()
+	jeep.free()
+	plane.free()
+	boat.free()
+	aa.free()
 
 
 func _test_scene_compile_and_load() -> void:

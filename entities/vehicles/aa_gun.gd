@@ -22,15 +22,7 @@ func _build_vehicle_mesh() -> void:
 	col.shape = cyl
 	col.position = Vector3(0.0, 0.9, 0.0)
 	add_child(col)
-
-	_add_box_part(_visual_root, Vector3(2.4, 0.5, 2.4), Vector3(0.0, 0.25, 0.0), Color(0.28, 0.28, 0.26))
-	_turret_node = Node3D.new()
-	_turret_node.name = "AATurret"
-	_turret_node.position = Vector3(0.0, 1.1, 0.0)
-	_visual_root.add_child(_turret_node)
-	_add_box_part(_turret_node, Vector3(1.2, 0.9, 1.2), Vector3(0.0, 0.2, 0.0), Color(0.32, 0.34, 0.30))
-	_add_box_part(_turret_node, Vector3(0.18, 0.18, 2.4), Vector3(-0.3, 0.4, -1.1), Color(0.15, 0.15, 0.15))
-	_add_box_part(_turret_node, Vector3(0.18, 0.18, 2.4), Vector3(0.3, 0.4, -1.1), Color(0.15, 0.15, 0.15))
+	_apply_built_visuals(VehicleMeshBuilder.build_aa_visuals(_visual_root, team))
 
 
 func _drive_physics(driver: HeroCharacter, _delta: float, context: Dictionary) -> void:
@@ -38,6 +30,7 @@ func _drive_physics(driver: HeroCharacter, _delta: float, context: Dictionary) -
 		return
 	var cmd: InputCmd = driver.latest_server_input
 	turret_yaw = cmd.aim_yaw
+	turret_pitch = cmd.aim_pitch
 	if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
 		_driver_fire_cd = FLAK_COOLDOWN
 		var aim_basis := Basis.from_euler(Vector3(cmd.aim_pitch, turret_yaw, 0.0))
