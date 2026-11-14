@@ -940,3 +940,286 @@ static func build_layered_tree(parent: Node3D, origin: Vector3, variant: int = 0
 
 	parent.add_child(tree, true)
 	return tree
+
+
+static func build_river_bridge(
+	parent: Node3D,
+	center_pos: Vector3,
+	yaw: float = 0.0,
+	span_len: float = 64.0,
+	bridge_width: float = 18.0,
+	deck_y: float = 5.4,
+	name_prefix: String = "RiverBridge"
+) -> StaticBody3D:
+	var body := _make_static_body(parent, name_prefix, center_pos, yaw)
+	var mats: Dictionary = _make_palette()
+	var ground_y: float = 2.15
+	var half_span: float = span_len * 0.5
+	var half_w: float = bridge_width * 0.5
+	var deck_thickness: float = 0.60
+	var deck_top: float = deck_y
+	var deck_bot: float = deck_y - deck_thickness
+
+	# 1. Main horizontal bridge deck span across the central river (local X from -half_span to +half_span)
+	_add_box(body, Vector3(span_len, deck_thickness, bridge_width), Vector3(0.0, deck_top - deck_thickness * 0.5, 0.0), Vector3.ZERO, mats["cobble"], "BridgeDeck")
+	_add_box_col(body, Vector3(span_len, deck_thickness, bridge_width), Vector3(0.0, deck_top - deck_thickness * 0.5, 0.0))
+
+	# 2. Side stone parapets / railings along bridge edges (local Z = +/- (half_w - 0.35))
+	var parapet_h: float = 1.15
+	var parapet_w: float = 0.70
+	var parapet_total_len: float = span_len + 56.0
+	for sz in [-1.0, 1.0]:
+		var pz: float = sz * (half_w - parapet_w * 0.5)
+		_add_box(body, Vector3(span_len, parapet_h, parapet_w), Vector3(0.0, deck_top + parapet_h * 0.5, pz), Vector3.ZERO, mats["stone_trim"], "Parapet_%s" % ("L" if sz < 0.0 else "R"))
+		_add_box_col(body, Vector3(span_len, parapet_h, parapet_w), Vector3(0.0, deck_top + parapet_h * 0.5, pz))
+
+	# 3. Two solid stone masonry abutment piers anchored in the riverbanks (local X <= -22m and X >= +22m)
+	# Central >= 40m navigable boat channel is completely clear of piers!
+	var pier_thickness: float = 12.0
+	var pier_w: float = bridge_width + 1.2
+	var pier_h: float = deck_bot - (-4.2)
+	var pier_cy: float = (-4.2 + deck_bot) * 0.5
+	for sx in [-1.0, 1.0]:
+		var pier_cx: float = sx * (22.0 + pier_thickness * 0.5) # sx * 28.0m
+		_add_box(body, Vector3(pier_thickness, pier_h, pier_w), Vector3(pier_cx, pier_cy, 0.0), Vector3.ZERO, mats["stone"], "AbutmentPier_%s" % ("W" if sx < 0.0 else "E"))
+		_add_box_col(body, Vector3(pier_thickness, pier_h, pier_w), Vector3(pier_cx, pier_cy, 0.0))
+
+	# 4. Smooth cobble driving approach ramps connecting deck_y down to ground_y (2.15m) on both riverbanks
+	# West approach ramp: X from -60.0 to -32.0
+	_add_ramp_between(body, Vector3(-half_span - 28.0, ground_y, 0.0), Vector3(-half_span, deck_top, 0.0), bridge_width, deck_thickness, mats["cobble"], false)
+	# East approach ramp: X from +32.0 to +60.0
+	_add_ramp_between(body, Vector3(half_span, deck_top, 0.0), Vector3(half_span + 28.0, ground_y, 0.0), bridge_width, deck_thickness, mats["cobble"], false)
+
+	# Side parapets along the approach ramps
+	for sz in [-1.0, 1.0]:
+		var pz: float = sz * (half_w - parapet_w * 0.5)
+		_add_ramp_between(body, Vector3(-half_span - 28.0, ground_y + parapet_h, pz), Vector3(-half_span, deck_top + parapet_h, pz), parapet_w, parapet_h, mats["stone_trim"], false)
+		_add_ramp_between(body, Vector3(half_span, deck_top + parapet_h, pz), Vector3(half_span + 28.0, ground_y + parapet_h, pz), parapet_w, parapet_h, mats["stone_trim"], false)
+
+	# 5. Decorative arch fascia ribs & keystone under deck edges for Mediterranean stone aesthetic
+	for sz in [-1.0, 1.0]:
+		var pz: float = sz * (half_w - 0.25)
+		_add_box(body, Vector3(span_len, 0.42, 0.38), Vector3(0.0, deck_bot - 0.21, pz), Vector3.ZERO, mats["stone_trim"])
+		_add_box(body, Vector3(6.5, 1.8, 0.38), Vector3(-20.0, deck_bot - 0.9, pz), Vector3(0.0, 0.0, 0.32), mats["stone_trim"])
+		_add_box(body, Vector3(6.5, 1.8, 0.38), Vector3(20.0, deck_bot - 0.9, pz), Vector3(0.0, 0.0, -0.32), mats["stone_trim"])
+		# Keystone medallion at center
+		_add_box(body, Vector3(2.2, 1.1, 0.55), Vector3(0.0, deck_bot - 0.35, pz * 1.03), Vector3.ZERO, mats["stone"])
+
+	return body
+
+
+static func build_river_dock(
+	parent: Node3D,
+	pos: Vector3,
+	yaw: float = 0.0,
+	dock_name: String = "RiverDock"
+) -> StaticBody3D:
+	var body := _make_static_body(parent, dock_name, pos, yaw)
+	var mats: Dictionary = _make_palette()
+	var wood_deck: StandardMaterial3D = mats["timber_warm"]
+	var wood_post: StandardMaterial3D = mats["timber_dark"]
+	var iron_mat: StandardMaterial3D = mats["iron"]
+	var deck_y: float = 0.95
+	var deck_thickness: float = 0.36
+
+	# Timber Jetty Deck: 12.0m along bank (local X) x 6.5m extending out over water (local Z)
+	_add_box(body, Vector3(12.0, deck_thickness, 6.5), Vector3(0.0, deck_y - deck_thickness * 0.5, 2.25), Vector3.ZERO, wood_deck, "DockDeck")
+	_add_box_col(body, Vector3(12.0, deck_thickness, 6.5), Vector3(0.0, deck_y - deck_thickness * 0.5, 2.25))
+
+	# Wooden steps / ramp connecting mainland bank (Y = 2.15) down to jetty deck (Y = 0.95)
+	var ramp_dz: float = 4.2
+	var ramp_dy: float = 2.15 - deck_y
+	var ramp_len: float = sqrt(ramp_dz * ramp_dz + ramp_dy * ramp_dy)
+	var ramp_pitch: float = atan2(ramp_dy, ramp_dz)
+	_add_box(body, Vector3(5.0, deck_thickness, ramp_len), Vector3(0.0, (2.15 + deck_y) * 0.5 - deck_thickness * 0.5, -2.1), Vector3(ramp_pitch, 0.0, 0.0), wood_deck, "BankStairs")
+	_add_box_col(body, Vector3(5.0, deck_thickness, ramp_len), Vector3(0.0, (2.15 + deck_y) * 0.5 - deck_thickness * 0.5, -2.1), Vector3(ramp_pitch, 0.0, 0.0))
+
+	# Timber pilings reaching riverbed Y = -4.0
+	for px in [-5.2, 0.0, 5.2]:
+		for pz in [-0.6, 2.4, 5.2]:
+			_add_cyl(body, 0.22, 0.26, 5.2, Vector3(px, -1.6, pz), Vector3.ZERO, wood_post, 8)
+
+	# Mooring bollards on outer jetty edges
+	for px in [-5.0, -1.8, 1.8, 5.0]:
+		_add_cyl(body, 0.16, 0.18, 0.58, Vector3(px, deck_y + 0.29, 5.2), Vector3.ZERO, iron_mat, 8)
+		_add_cyl_col(body, 0.20, 0.65, Vector3(px, deck_y + 0.32, 5.2))
+
+	# Riverside lantern post at dock entrance
+	_add_box(body, Vector3(0.20, 3.4, 0.20), Vector3(-4.8, deck_y + 1.7, -0.6), Vector3.ZERO, wood_post)
+	_add_cyl(body, 0.22, 0.22, 0.36, Vector3(-4.8, deck_y + 3.4, -0.6), Vector3.ZERO, mats["glow_gold"], 8)
+
+	return body
+
+
+static func build_farm_complex(
+	parent: Node3D,
+	center_pos: Vector3,
+	yaw: float = 0.0,
+	name_prefix: String = "Fazenda"
+) -> Node3D:
+	var farm := Node3D.new()
+	farm.name = name_prefix
+	farm.position = center_pos
+	farm.rotation.y = yaw
+	parent.add_child(farm, true)
+
+	var mats: Dictionary = _make_palette()
+	var red_wood: StandardMaterial3D = mats["red_paint"]
+	var white_wood: StandardMaterial3D = mats["white_paint"]
+	var roof_mat: StandardMaterial3D = mats["roof"]
+	var timber_mat: StandardMaterial3D = mats["timber_warm"]
+	var stone_mat: StandardMaterial3D = mats["stone"]
+	var iron_mat: StandardMaterial3D = mats["iron"]
+	var hay_mat: StandardMaterial3D = make_mat(Color(0.92, 0.82, 0.34), "wood_crate", 0.90, 0.02, 1.0, Vector2(1.5, 1.5))
+	var soil_mat: StandardMaterial3D = make_mat(Color(0.28, 0.22, 0.16), "bark", 0.92, 0.01, 1.0, Vector2(4.0, 4.0))
+	var crop_green: StandardMaterial3D = mats["foliage"]
+
+	# ========================================================
+	# 1. RedBarn: Main Red Countryside Wooden Barn
+	# Dimensions: 15.0m wide (X) x 8.0m tall (Y) x 18.0m deep (Z)
+	# ========================================================
+	var barn := _make_static_body(farm, "RedBarn", Vector3.ZERO)
+	# Ground foundation stone footing
+	_add_box(barn, Vector3(15.4, 0.6, 18.4), Vector3(0.0, 0.3, 0.0), Vector3.ZERO, stone_mat)
+	_add_box_col(barn, Vector3(15.4, 0.6, 18.4), Vector3(0.0, 0.3, 0.0))
+	# Red barn walls
+	_add_box(barn, Vector3(14.8, 5.4, 17.8), Vector3(0.0, 3.3, 0.0), Vector3.ZERO, red_wood, "BarnBody")
+	_add_box_col(barn, Vector3(14.8, 5.4, 17.8), Vector3(0.0, 3.3, 0.0))
+	# White corner trim posts
+	for cx in [-7.4, 7.4]:
+		for cz in [-8.9, 8.9]:
+			_add_box(barn, Vector3(0.42, 5.6, 0.42), Vector3(cx, 3.4, cz), Vector3.ZERO, white_wood)
+
+	# Pitched Barn Roof (sloped left & right faces + overhang eaves)
+	var roof_pitch: float = 0.52
+	var roof_half_w: float = 8.6
+	var roof_h_rise: float = roof_half_w * sin(roof_pitch)
+	# Left roof slope
+	_add_box(barn, Vector3(roof_half_w + 0.6, 0.28, 19.2), Vector3(-4.4, 6.0 + roof_h_rise * 0.5, 0.0), Vector3(0.0, 0.0, roof_pitch), roof_mat, "BarnRoofL")
+	_add_box_col(barn, Vector3(roof_half_w + 0.6, 0.28, 19.2), Vector3(-4.4, 6.0 + roof_h_rise * 0.5, 0.0), Vector3(0.0, 0.0, roof_pitch))
+	# Right roof slope
+	_add_box(barn, Vector3(roof_half_w + 0.6, 0.28, 19.2), Vector3(4.4, 6.0 + roof_h_rise * 0.5, 0.0), Vector3(0.0, 0.0, -roof_pitch), roof_mat, "BarnRoofR")
+	_add_box_col(barn, Vector3(roof_half_w + 0.6, 0.28, 19.2), Vector3(4.4, 6.0 + roof_h_rise * 0.5, 0.0), Vector3(0.0, 0.0, -roof_pitch))
+	# Gable ends (front and back triangular fascia)
+	for gz in [-8.95, 8.95]:
+		var gable := MeshInstance3D.new()
+		var pm := PrismMesh.new()
+		pm.left_to_right = 0.5
+		pm.size = Vector3(14.8, roof_h_rise * 2.0, 0.36)
+		gable.mesh = pm
+		gable.position = Vector3(0.0, 6.0 + roof_h_rise * 0.5, gz)
+		gable.material_override = red_wood
+		barn.add_child(gable)
+
+	# White X-braced sliding double barn doors on Front (+Z)
+	_add_box(barn, Vector3(5.6, 4.2, 0.24), Vector3(0.0, 2.7, 9.0), Vector3.ZERO, timber_mat)
+	# X-bracing diagonal slats
+	_add_box(barn, Vector3(0.22, 4.4, 0.32), Vector3(-1.4, 2.7, 9.08), Vector3(0.0, 0.0, 0.64), white_wood)
+	_add_box(barn, Vector3(0.22, 4.4, 0.32), Vector3(-1.4, 2.7, 9.08), Vector3(0.0, 0.0, -0.64), white_wood)
+	_add_box(barn, Vector3(0.22, 4.4, 0.32), Vector3(1.4, 2.7, 9.08), Vector3(0.0, 0.0, 0.64), white_wood)
+	_add_box(barn, Vector3(0.22, 4.4, 0.32), Vector3(1.4, 2.7, 9.08), Vector3(0.0, 0.0, -0.64), white_wood)
+	_add_box(barn, Vector3(5.8, 0.22, 0.32), Vector3(0.0, 4.85, 9.08), Vector3.ZERO, white_wood)
+	_add_box(barn, Vector3(5.8, 0.22, 0.32), Vector3(0.0, 0.65, 9.08), Vector3.ZERO, white_wood)
+
+	# Hayloft gable window with white shutters + hoist beam extending forward
+	_add_box(barn, Vector3(2.2, 2.4, 0.22), Vector3(0.0, 7.8, 9.06), Vector3.ZERO, mats["door_oak"])
+	_add_box(barn, Vector3(0.22, 0.22, 2.6), Vector3(0.0, 9.6, 9.8), Vector3.ZERO, timber_mat, "HoistBeam")
+
+	# ========================================================
+	# 2. GrainSilo: Beside Barn (X = -11.5, Z = -2.0)
+	# ========================================================
+	var silo := _make_static_body(farm, "GrainSilo", Vector3(-11.5, 0.0, -2.0))
+	var silo_r: float = 2.6
+	var silo_h: float = 12.0
+	_add_cyl(silo, silo_r, silo_r, silo_h, Vector3(0.0, silo_h * 0.5, 0.0), Vector3.ZERO, stone_mat, 16, "SiloBody")
+	_add_cyl_col(silo, silo_r + 0.1, silo_h, Vector3(0.0, silo_h * 0.5, 0.0))
+	# Silo domed cap
+	var dome_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+		{"y": 12.0, "rx": 2.65, "rz": 2.65, "p": 2.0, "col": Color(0.85, 0.88, 0.92)},
+		{"y": 13.5, "rx": 2.20, "rz": 2.20, "p": 2.0, "col": Color.WHITE},
+		{"y": 14.5, "rx": 1.20, "rz": 1.20, "p": 2.0, "col": Color.WHITE},
+		{"y": 15.0, "rx": 0.25, "rz": 0.25, "p": 2.0, "col": Color.WHITE},
+	], 14)
+	_add_mesh(silo, dome_mesh, Vector3.ZERO, Vector3.ZERO, iron_mat, "SiloDome")
+	_add_cyl(silo, 0.14, 0.14, 1.2, Vector3(0.0, 15.5, 0.0), Vector3.ZERO, iron_mat, 8)
+
+	# ========================================================
+	# 3. FarmWindPump: Steel-legged water-pumping windmill
+	# Position: (X = 14.0, Z = -6.0)
+	# ========================================================
+	var pump := _make_static_body(farm, "FarmWindPump", Vector3(14.0, 0.0, -6.0))
+	var leg_w0: float = 1.6
+	var leg_w1: float = 0.55
+	var leg_mat: StandardMaterial3D = iron_mat
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			var leg_p0 := Vector3(sx * leg_w0, 0.0, sz * leg_w0)
+			var leg_p1 := Vector3(sx * leg_w1, 9.5, sz * leg_w1)
+			_add_ramp_between(pump, leg_p0, leg_p1, 0.14, 0.14, leg_mat, false)
+	# Cross braces
+	for by in [2.6, 5.2, 7.8]:
+		var bw: float = lerpf(leg_w0, leg_w1, by / 9.5) * 2.0
+		_add_box(pump, Vector3(bw, 0.10, 0.10), Vector3(0.0, by, -bw * 0.5), Vector3.ZERO, leg_mat)
+		_add_box(pump, Vector3(bw, 0.10, 0.10), Vector3(0.0, by, bw * 0.5), Vector3.ZERO, leg_mat)
+		_add_box(pump, Vector3(0.10, 0.10, bw), Vector3(-bw * 0.5, by, 0.0), Vector3.ZERO, leg_mat)
+		_add_box(pump, Vector3(0.10, 0.10, bw), Vector3(bw * 0.5, by, 0.0), Vector3.ZERO, leg_mat)
+	# Base collision
+	_add_box_col(pump, Vector3(leg_w0 * 2.2, 9.5, leg_w0 * 2.2), Vector3(0.0, 4.75, 0.0))
+
+	# Rotor fan head & tail vane atop tower
+	_add_cyl(pump, 0.35, 0.35, 1.2, Vector3(0.0, 9.8, 0.0), Vector3(PI * 0.5, 0.0, 0.0), iron_mat, 8)
+	for b_idx in range(12):
+		var ba: float = float(b_idx) * (TAU / 12.0)
+		_add_box(pump, Vector3(0.24, 1.9, 0.04), Vector3(sin(ba) * 1.1, 9.8 + cos(ba) * 1.1, 0.65), Vector3(0.0, 0.0, ba), white_wood)
+	_add_box(pump, Vector3(0.06, 0.95, 2.2), Vector3(0.0, 9.8, -1.5), Vector3.ZERO, white_wood)
+
+	# Water trough at base of windpump
+	_add_box(pump, Vector3(2.4, 0.65, 1.2), Vector3(0.0, 0.325, 2.4), Vector3.ZERO, stone_mat)
+	_add_box(pump, Vector3(2.1, 0.15, 0.9), Vector3(0.0, 0.55, 2.4), Vector3.ZERO, mats["water"])
+
+	# ========================================================
+	# 4. HayBales: Golden straw bale stacks beside barn
+	# ========================================================
+	var hay_spots: Array[Vector3] = [
+		Vector3(-8.8, 0.5, 7.5),
+		Vector3(-8.8, 0.5, 9.4),
+		Vector3(-8.8, 0.5, 11.3),
+		Vector3(-8.8, 1.5, 8.45),
+		Vector3(-8.8, 1.5, 10.35),
+		Vector3(-8.8, 2.5, 9.4),
+	]
+	for idx in range(hay_spots.size()):
+		var hp: Vector3 = hay_spots[idx]
+		_add_box(barn, Vector3(1.7, 1.0, 1.7), hp, Vector3.ZERO, hay_mat, "HayBale_%d" % idx)
+		_add_box_col(barn, Vector3(1.7, 1.0, 1.7), hp)
+
+	# ========================================================
+	# 5. WoodPaddockFence: Timber post-and-rail fences
+	# ========================================================
+	var fence_body := _make_static_body(farm, "WoodPaddockFence", Vector3.ZERO)
+	var fence_segments: Array[Dictionary] = [
+		{"p0": Vector3(10.0, 0.0, 14.0), "p1": Vector3(24.0, 0.0, 14.0)},
+		{"p0": Vector3(24.0, 0.0, 14.0), "p1": Vector3(24.0, 0.0, 2.0)},
+		{"p0": Vector3(24.0, 0.0, 2.0), "p1": Vector3(18.0, 0.0, 2.0)},
+	]
+	for seg in fence_segments:
+		var p0: Vector3 = seg["p0"]
+		var p1: Vector3 = seg["p1"]
+		var diff: Vector3 = p1 - p0
+		var seg_len: float = diff.length()
+		var n_posts: int = maxi(2, int(seg_len / 3.0) + 1)
+		for pi in range(n_posts):
+			var post_pos: Vector3 = p0.lerp(p1, float(pi) / float(n_posts - 1))
+			_add_cyl(fence_body, 0.12, 0.14, 1.45, post_pos + Vector3(0.0, 0.725, 0.0), Vector3.ZERO, timber_mat, 8)
+			_add_cyl_col(fence_body, 0.15, 1.45, post_pos + Vector3(0.0, 0.725, 0.0))
+		for ry in [0.55, 1.15]:
+			_add_ramp_between(fence_body, p0 + Vector3(0.0, ry, 0.0), p1 + Vector3(0.0, ry, 0.0), 0.10, 0.14, timber_mat, false)
+
+	# ========================================================
+	# 6. CropRows: Tilled dark soil furrow beds + green crops
+	# ========================================================
+	_add_box(farm, Vector3(10.0, 0.16, 8.0), Vector3(17.0, 0.08, 8.0), Vector3.ZERO, soil_mat, "CropFurrowBed")
+	for rz in range(5, 12, 2):
+		_add_box(farm, Vector3(9.2, 0.32, 0.65), Vector3(17.0, 0.28, float(rz)), Vector3.ZERO, crop_green, "CropRow_%d" % rz)
+
+	return farm

@@ -1219,27 +1219,63 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	test_host.add_child(map)
 	map.build_map(conquest, vehicles_root, {"destruction_callback": func(_a, _b, _c): pass})
 
-	# 3. Verify 2x terrain & ocean bounds
+	# 3. Verify stylized sky shader, 2x ocean, and sculpted continuous terrain
 	var ocean_mi := map.get_node_or_null("Ocean") as MeshInstance3D
 	_assert(ocean_mi != null and ocean_mi.mesh is PlaneMesh and (ocean_mi.mesh as PlaneMesh).size.x >= 2400.0 and (ocean_mi.mesh as PlaneMesh).size.y >= 2400.0, "Ocean spans >= 2400m x 2400m")
-	var beach_col := map.get_node_or_null("BeachBase/CollisionShape3D") as CollisionShape3D
-	if beach_col == null and map.get_node_or_null("BeachBase") != null:
-		var bc: Array[CollisionShape3D] = []
-		_collect_collision_shapes(map.get_node("BeachBase"), bc)
-		if not bc.is_empty():
-			beach_col = bc[0]
-	var grass_col: CollisionShape3D = null
-	if map.get_node_or_null("GrassMainland") != null:
-		var gc: Array[CollisionShape3D] = []
-		_collect_collision_shapes(map.get_node("GrassMainland"), gc)
-		if not gc.is_empty():
-			grass_col = gc[0]
-	_assert(beach_col != null and beach_col.shape is BoxShape3D and (beach_col.shape as BoxShape3D).size.x >= 1600.0 and (beach_col.shape as BoxShape3D).size.z >= 1080.0, "BeachBase covers >= 1600m x 1080m")
-	_assert(grass_col != null and grass_col.shape is BoxShape3D and (grass_col.shape as BoxShape3D).size.x >= 1440.0 and (grass_col.shape as BoxShape3D).size.z >= 920.0, "GrassMainland covers >= 1440m x 920m")
+
+	var we := map.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	_assert(we != null and we.environment != null and we.environment.sky != null, "WorldEnvironment and Sky exist")
+	var sky_mat: Material = we.environment.sky.sky_material if we != null and we.environment != null and we.environment.sky != null else null
+	_assert(sky_mat is ShaderMaterial and (sky_mat as ShaderMaterial).shader != null and (sky_mat as ShaderMaterial).shader.resource_path.ends_with("toon_sky.gdshader"), "Sky uses toon_sky.gdshader ShaderMaterial")
+
+	var terrain_body := map.get_node_or_null("SculptedTerrain") as StaticBody3D
+	_assert(terrain_body != null, "SculptedTerrain exists on map")
+	var terrain_col := terrain_body.get_node_or_null("CollisionShape3D") as CollisionShape3D if terrain_body != null else null
+	_assert(terrain_col != null and terrain_col.shape is ConcavePolygonShape3D, "SculptedTerrain has ConcavePolygonShape3D trimesh collider")
+	if terrain_col != null and terrain_col.shape is ConcavePolygonShape3D:
+		var faces: PackedVector3Array = (terrain_col.shape as ConcavePolygonShape3D).get_faces()
+		var min_x: float = 9999.0
+		var max_x: float = -9999.0
+		var min_z: float = 9999.0
+		var max_z: float = -9999.0
+		for f in faces:
+			min_x = minf(min_x, f.x)
+			max_x = maxf(max_x, f.x)
+			min_z = minf(min_z, f.z)
+			max_z = maxf(max_z, f.z)
+		_assert((max_x - min_x) >= 1590.0 and (max_z - min_z) >= 1070.0, "SculptedTerrain trimesh spans >= 1600m x 1080m (span_x=%.1fm, span_z=%.1fm)" % [max_x - min_x, max_z - min_z])
+
+	var min_land_y: float = 2.15
+	var max_terrain_y: float = -999.0
+	for hl_pt in [Vector2(-15, -270), Vector2(-190, 240), Vector2(450, -250), Vector2(460, 290), Vector2(-500, -300)]:
+		max_terrain_y = maxf(max_terrain_y, MapSeasideFrontline.get_terrain_height(hl_pt.x, hl_pt.y))
+	_assert(max_terrain_y - min_land_y >= 8.0, "Sculpted terrain relief >= 8.0m (max=%.2f, min=%.2f, diff=%.2fm)" % [max_terrain_y, min_land_y, max_terrain_y - min_land_y])
+
+	for rz in [-460.0, -200.0, 40.0, 260.0, 460.0]:
+		var rx: float = MapSeasideFrontline.get_river_center_x(rz)
+		var ry: float = MapSeasideFrontline.get_terrain_height(rx, rz)
+		_assert(ry <= -2.5, "River bed at z=%.1f (x=%.1f) is navigable <= -2.5m (y=%.2f)" % [rz, rx, ry])
 
 	# 4. Verify required landmarks, sculpted buildings, watchtowers & 140+ layered trees
-	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier", "RuinArchPillarL", "RuinArchPillarR", "BuntingPost_-36_N", "BuntingPost_36_S"]:
+	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier", "RuinArchPillarL", "RuinArchPillarR", "BuntingPost_-36_N", "BuntingPost_36_S", "MainRiverBridge", "SouthRiverBridge", "RiverTownDock", "RiverNorthDock", "Fazenda", "NorthOrchardBarn"]:
 		_assert(map.get_node_or_null(lm_name) != null, "Landmark '%s' exists on map" % lm_name)
+
+	# Boat headroom clearance under MainRiverBridge and SouthRiverBridge (>= 4.5m along river channel)
+	for br_name in ["MainRiverBridge", "SouthRiverBridge"]:
+		var br := map.get_node_or_null(br_name) as StaticBody3D
+		_assert(br != null, "Bridge '%s' exists for clearance check" % br_name)
+		var br_cols: Array[CollisionShape3D] = []
+		if br != null:
+			_collect_collision_shapes(br, br_cols)
+		var min_overhead_y: float = 999.0
+		var found_overhead: bool = false
+		for bc in br_cols:
+			var local_p: Vector3 = br.global_transform.affine_inverse() * bc.global_transform.origin
+			if absf(local_p.x) < 18.0:
+				var yr: Vector2 = _collision_shape_y_range(bc)
+				min_overhead_y = minf(min_overhead_y, yr.x)
+				found_overhead = true
+		_assert(found_overhead and min_overhead_y >= 4.5, "Bridge '%s' maintains >= 4.5m boat headroom clearance along river channel (bottom=%.2fm)" % [br_name, min_overhead_y])
 
 	# Verify ChurchChapel belltower lower stone stage does not swallow upper cream stage
 	var chapel := map.get_node_or_null("ChurchChapel")
@@ -1351,14 +1387,20 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	var pier_cols: Array[CollisionShape3D] = []
 	for p_name in ["RoyalPier", "CentralPier", "NationalPier"]:
 		_collect_collision_shapes(map.get_node(p_name), pier_cols)
-	var boats_ready: int = 0
+	var pier_boats_ready: int = 0
+	var river_boats_ready: int = 0
 	for b in boats:
 		var min_dock_d: float = 999.0
 		for pc in pier_cols:
 			min_dock_d = minf(min_dock_d, _collision_shape_xz_distance(pc, b.position))
 		if b.position.y <= 0.65 and absf(b.position.z) > 542.0 and min_dock_d <= 3.5:
-			boats_ready += 1
-	_assert(boats_ready == boats.size() and boats.size() >= 6, "All %d Boats float in deep water (abs(Z)>542, y<=0.65) within <=3.5m of pier deck (%d ready)" % [boats.size(), boats_ready])
+			pier_boats_ready += 1
+		var rx: float = MapSeasideFrontline.get_river_center_x(b.position.z)
+		if absf(b.position.x - rx) <= 16.0 and absf(b.position.z) < 460.0 and b.position.y <= 0.65:
+			river_boats_ready += 1
+	_assert(pier_boats_ready >= 6, "All 6 Ocean Harbor Pier boats float in deep sea past beach (%d ready)" % pier_boats_ready)
+	_assert(river_boats_ready >= 4, "At least 4 Patrol Boats float inside central river channel (%d ready)" % river_boats_ready)
+	_assert(boats.size() >= 10, "Map spawns >= 10 Patrol Boats total (found %d)" % boats.size())
 
 	# 7. Verify all 24 spawn pads are >= 3.0m apart and clear >= 4.5m horizontally of vertical obstacles
 	var all_spawns: Array[Vector3] = []
@@ -1400,7 +1442,7 @@ func _test_client_vehicle_freeze_and_buoyancy_sync() -> void:
 			initial_boats += 1
 			if not v.freeze:
 				initial_unfrozen_boats += 1
-	_assert(initial_boats == 6 and initial_unfrozen_boats == 6, "All 6 boats start unfrozen under OfflineMultiplayerPeer (%d/%d)" % [initial_unfrozen_boats, initial_boats])
+	_assert(initial_boats >= 10 and initial_unfrozen_boats == initial_boats, "All %d boats start unfrozen under OfflineMultiplayerPeer (%d/%d)" % [initial_boats, initial_unfrozen_boats, initial_boats])
 
 	# Joining an ENet server must freeze ALL vehicles immediately so client boats never sink to seafloor
 	game._on_join_online(NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, "127.0.0.1", 7809)
@@ -1432,7 +1474,7 @@ func _test_client_vehicle_freeze_and_buoyancy_sync() -> void:
 		var v := v_val as VehicleBase
 		if v is VehicleBoat and not v.freeze:
 			boats_restored += 1
-	_assert(boats_restored == 6, "Disconnecting back to offline unfreezes client boats (%d/6)" % boats_restored)
+	_assert(boats_restored == initial_boats and boats_restored >= 10, "Disconnecting back to offline unfreezes client boats (%d/%d)" % [boats_restored, initial_boats])
 	game.free()
 
 
