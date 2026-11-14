@@ -1906,6 +1906,70 @@ func _test_parachute_delay_death_collapse_and_knockback() -> void:
 	_assert(p_hero.is_parachuting, "Pressing Jump after >= 1.0s fall deploys parachute")
 	p_hero.free()
 
+	# Verify calling _animate_character(0.016) 60 times during 0.4s fall on a local hero does NOT inflate _airborne_fall_time
+	var anim_hero := HeroCharacter.new()
+	anim_hero.setup_identity(905, "AnimFallTester", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(anim_hero)
+	anim_hero.global_position = Vector3(0.0, 40.0, 0.0)
+	anim_hero.velocity = Vector3(0.0, -4.0, 0.0)
+	var fall_input := InputCmd.new()
+	for i in range(24):
+		anim_hero.simulate_movement(fall_input, 1.0 / 60.0)
+	for i in range(60):
+		anim_hero._animate_character(0.016)
+	_assert(
+		anim_hero._airborne_fall_time <= 0.45 and not anim_hero.can_open_parachute(),
+		"Rendering 60 frames of _animate_character does not double-accumulate _airborne_fall_time (time=%.2fs <= 0.45s, chute=%s)" % [anim_hero._airborne_fall_time, anim_hero.can_open_parachute()]
+	)
+	anim_hero.free()
+
+	# Remote snapshot death/respawn/2nd-death cleanly resets _defeat_elapsed = 0.0
+	var r_hero := HeroCharacter.new()
+	r_hero.setup_identity(906, "RemotePuppet", 0, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(r_hero)
+	r_hero.active_flags = NetSerializer.SNAP_DEFEATED
+	r_hero.is_defeated = true
+	for i in range(30):
+		r_hero._animate_character(0.1)
+	_assert(r_hero._defeat_elapsed >= 2.5, "Remote hero accumulates _defeat_elapsed on first death (elapsed=%.2fs)" % r_hero._defeat_elapsed)
+
+	r_hero.active_flags = 0
+	r_hero.is_defeated = false
+	r_hero._animate_character(0.016)
+	_assert(r_hero._defeat_elapsed == 0.0, "Remote hero respawn cleanly resets _defeat_elapsed to 0.0")
+
+	r_hero.active_flags = NetSerializer.SNAP_DEFEATED
+	r_hero.is_defeated = true
+	r_hero._animate_character(0.016)
+	_assert(
+		r_hero._defeat_elapsed < 0.05,
+		"Remote hero 2nd death cleanly starts collapse from 0.0s (elapsed=%.3fs)" % r_hero._defeat_elapsed
+	)
+	r_hero.free()
+
+	# Client reconciliation restores knockback stun timer on strong launch velocity
+	var rec_hero := HeroCharacter.new()
+	rec_hero.setup_identity(907, "ReconcileTester", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(rec_hero)
+	rec_hero.local_tick = 5
+	var rec_cmd := InputCmd.new()
+	rec_hero.input_buffer.push(5, rec_cmd, Vector3.ZERO, Vector3.ZERO, false, false, true, false)
+	rec_hero.reconcile_with_server({
+		"ack_tick": 5,
+		"pos": Vector3(0.0, 2.0, 0.0),
+		"vel": Vector3(0.0, 8.5, 0.0),
+		"flags": 0,
+		"hp": 100,
+		"shield": 0,
+		"vehicle_id": -1,
+		"seat_idx": -1
+	})
+	_assert(
+		rec_hero._knockback_stun_timer >= 0.35,
+		"Reconciliation with explosive velocity restores _knockback_stun_timer (%.2fs >= 0.35s)" % rec_hero._knockback_stun_timer
+	)
+	rec_hero.free()
+
 	# 2. Defeated Non-Sliding Collapse & Multi-Stage Defeat Pose
 	var d_hero := HeroCharacter.new()
 	d_hero.setup_identity(902, "CollapseTester", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)

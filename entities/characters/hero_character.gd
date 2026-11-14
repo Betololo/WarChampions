@@ -693,7 +693,9 @@ func _animate_character(delta: float) -> void:
 	_weapon_recoil_anim = maxf(0.0, _weapon_recoil_anim - 7.5 * delta)
 	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
 
-	if is_defeated:
+	if not is_defeated:
+		_defeat_elapsed = 0.0
+	else:
 		_defeat_elapsed += delta
 		var slump_t: float = clampf((_defeat_elapsed - 0.45) / 0.40, 0.0, 1.0)
 		var kneel_t: float = clampf(_defeat_elapsed / 0.45, 0.0, 1.0)
@@ -759,14 +761,15 @@ func _animate_character(delta: float) -> void:
 			_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, Vector3(-0.20, 0.34, -0.36), Vector3(-0.80, -0.45, 0.45))
 		return
 
-	# Remote client fall time tracking in animation loop
-	if not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting:
-		if velocity.y < -0.5:
-			_airborne_fall_time += delta
-		else:
+	# Remote client fall time tracking in animation loop (local player and server track deterministically in simulate_movement)
+	if not is_local_player and not is_bot and not NetworkManager.is_server_authority():
+		if not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting:
+			if velocity.y < -0.5:
+				_airborne_fall_time += delta
+			else:
+				_airborne_fall_time = 0.0
+		elif is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0 or is_in_water or is_parachuting:
 			_airborne_fall_time = 0.0
-	elif is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0 or is_in_water or is_parachuting:
-		_airborne_fall_time = 0.0
 
 	var is_falling_air: bool = (not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting and (velocity.y < -4.5 or _airborne_fall_time > 0.35))
 
@@ -929,7 +932,6 @@ func _physics_process(delta: float) -> void:
 	_prev_phys_pos = _curr_phys_pos
 	if is_defeated:
 		defeat_timer -= delta
-		_defeat_elapsed += delta
 		_airborne_fall_time = 0.0
 		_knockback_stun_timer = 0.0
 		if is_on_floor():
@@ -1055,7 +1057,6 @@ func can_open_parachute() -> bool:
 ## Deterministic 60Hz character physics simulation shared by Client Prediction & Server Authority.
 func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	if is_defeated:
-		_defeat_elapsed += delta
 		_airborne_fall_time = 0.0
 		_knockback_stun_timer = 0.0
 		if is_on_floor():
@@ -1300,6 +1301,8 @@ func reconcile_with_server(state: Dictionary) -> void:
 	var pre_reconcile_pos: Vector3 = global_position
 	global_position = auth_pos
 	velocity = auth_vel
+	if auth_vel.length() > 5.0 and auth_vel.y > 1.0:
+		_knockback_stun_timer = maxf(_knockback_stun_timer, 0.35)
 	is_parachuting = (auth_flags & NetSerializer.SNAP_PARACHUTING) != 0
 	is_crouching = (auth_flags & NetSerializer.SNAP_CROUCHING) != 0
 	prev_jump_held = saved.prev_jump_held
