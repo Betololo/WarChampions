@@ -22,6 +22,8 @@ var heroes_by_id: Dictionary = {}
 var vehicles_by_id: Dictionary = {}
 var bot_brains: Dictionary = {}
 var _prev_interact_state: Dictionary = {}
+var _prev_local_parachuting: bool = false
+var _last_local_level: int = 1
 var _royal_spawn_idx: int = 0
 var _national_spawn_idx: int = 0
 var _switching_mode: bool = false
@@ -294,7 +296,7 @@ func _physics_process(delta: float) -> void:
 					var was_reloading: bool = w.is_reloading
 					w.step_timers(delta, hero.latest_server_input)
 					if not was_reloading and w.is_reloading and hero.entity_id == NetworkManager.local_peer_id and not hero.is_bot:
-						SoundSynthesizer.play_sfx("reload")
+						SoundSynthesizer.play_sfx("reload", 0.0, true)
 					if w.try_consume_fire(hero.latest_server_input):
 						w.fire_server(hero.latest_server_input, combat_ctx)
 
@@ -417,10 +419,22 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 	print("[MainGame] Spawned %s (id=%d, team=%d, bot=%s, total=%d)" % [hero.hero_name, entity_id, hero.team, str(is_bot), heroes_by_id.size()])
 
 	hero.defeated.connect(_on_hero_defeated.bind(hero))
-	hero.emote_triggered.connect(func(_idx: int) -> void: SoundSynthesizer.play_faction_emote(hero.team))
+	hero.emote_triggered.connect(func(_idx: int) -> void:
+		var is_loc_emote: bool = (hero.entity_id == NetworkManager.local_peer_id and not hero.is_bot)
+		SoundSynthesizer.play_faction_emote(hero.team, is_loc_emote, hero.global_position)
+	)
 
-	if is_local and hud != null:
-		hud.set_local_hero(hero)
+	if is_local:
+		_last_local_level = 1
+		_prev_local_parachuting = hero.is_parachuting
+		if hero.skill_manager != null and hero.skill_manager.has_signal("progression_changed"):
+			hero.skill_manager.progression_changed.connect(func(lvl: int, _xp: int, _xp_next: int, _pts: int) -> void:
+				if lvl > _last_local_level:
+					_last_local_level = lvl
+					SoundSynthesizer.play_sfx("level_up", 0.0, true)
+			)
+		if hud != null:
+			hud.set_local_hero(hero)
 
 	if is_bot and NetworkManager.is_server_authority():
 		var brain := BotController.new()
@@ -503,6 +517,15 @@ func _on_world_snapshot(snapshot: Dictionary) -> void:
 
 func _process(delta: float) -> void:
 	var local_hero: HeroCharacter = heroes_by_id.get(NetworkManager.local_peer_id, null)
+	if local_hero != null and is_instance_valid(local_hero):
+		SoundSynthesizer.set_listener_position(local_hero.global_position + Vector3(0.0, 1.5, 0.0))
+		if local_hero.is_parachuting and not _prev_local_parachuting:
+			SoundSynthesizer.play_sfx("parachute", 0.0, true)
+		_prev_local_parachuting = local_hero.is_parachuting
+	else:
+		var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
+		if cam != null:
+			SoundSynthesizer.set_listener_position(cam.global_position)
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key]
 		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id)
@@ -523,10 +546,13 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 
 			if not is_remote_client_own_shot or is_vehicle_shot:
 				var local_hero: HeroCharacter = heroes_by_id.get(NetworkManager.local_peer_id, null)
+				if local_hero != null and is_instance_valid(local_hero):
+					SoundSynthesizer.set_listener_position(local_hero.global_position + Vector3(0.0, 1.5, 0.0))
+				var is_local_shooter: bool = (shooter_id == NetworkManager.local_peer_id and (shooter == null or not shooter.is_bot))
 				var dist_m: float = 0.0
-				if shooter_id != NetworkManager.local_peer_id and local_hero != null:
+				if not is_local_shooter and local_hero != null:
 					dist_m = local_hero.global_position.distance_to(muzzle_pos)
-				SoundSynthesizer.play_weapon_fire(w_kind, dist_m)
+				SoundSynthesizer.play_weapon_fire(w_kind, dist_m, is_local_shooter, muzzle_pos)
 				if shooter != null and not is_vehicle_shot:
 					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot)
 				StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
@@ -566,7 +592,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, hit_pos, str(payload.get("kind", "dust")), 0.4)
 			if int(payload.get("attacker_id", -1)) == NetworkManager.local_peer_id:
 				var is_crit: bool = bool(payload.get("headshot", false))
-				SoundSynthesizer.play_sfx("hit_ding", 1.18 if is_crit else 1.0)
+				SoundSynthesizer.play_sfx("crit" if is_crit else "hit", 0.0, true)
 				if hud != null:
 					hud.show_hitmarker(is_crit)
 					var dmg_amt: int = int(payload.get("damage", 0))
@@ -576,8 +602,10 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 							s_tag = "vehicle"
 						hud.spawn_damage_number(hit_pos, dmg_amt, is_crit, s_tag)
 		"explosion_vfx":
-			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "explosion", float(payload.get("radius", 5.0)))
-			SoundSynthesizer.play_sfx("explosion")
+			var exp_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, exp_pos, "explosion", float(payload.get("radius", 5.0)))
+			var exp_attacker_id: int = int(payload.get("attacker_id", -1))
+			SoundSynthesizer.play_sfx("explosion", 0.0, exp_attacker_id == NetworkManager.local_peer_id, exp_pos)
 		"vehicle_destroyed":
 			var v_type: int = int(payload.get("vehicle_type", 0))
 			var attacker_id: int = int(payload.get("attacker_id", -1))
@@ -589,8 +617,10 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				var v_label: String = HUDController.get_vehicle_display_name(v_type)
 				hud.add_killfeed("%s destruiu %s!" % [a_name, v_label])
 		"skill_vfx":
-			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.2)
-			SoundSynthesizer.play_sfx("skill_cast")
+			var skill_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, skill_pos, "heal", 1.2)
+			var skill_caster_id: int = int(payload.get("hero_id", payload.get("caster_id", -1)))
+			SoundSynthesizer.play_sfx("heal", 0.0, skill_caster_id == NetworkManager.local_peer_id, skill_pos)
 		"eat_grenades":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)
 		"kill_event":

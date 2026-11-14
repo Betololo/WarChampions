@@ -202,6 +202,7 @@ func _trace_segment(
 				seg_end,
 				1 | 8 | 64 # Layer 1 World (1) + Layer 4 Vehicle (8) + Layer 7 Destructible (64)
 			)
+			query.hit_from_inside = true
 			var excludes: Array[RID] = []
 			if shooter != null:
 				excludes.append(shooter.get_rid())

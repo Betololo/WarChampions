@@ -27,6 +27,7 @@ func _ready() -> void:
 	_test_ballistic_bullet_drop_and_tracers()
 	_test_vehicle_sculpted_models_and_animations()
 	await _test_hud_crosshair_and_aim_convergence()
+	await _test_sfx_priority_and_bot_anti_wallhack()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -1683,6 +1684,189 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 	target_12.free()
 	hud.free()
 	shooter.free()
+
+
+func _sample_wav_peak_rms(wav: AudioStreamWAV) -> Vector2:
+	if wav == null or wav.data.is_empty():
+		return Vector2.ZERO
+	var count: int = wav.data.size() / 2
+	var peak: float = 0.0
+	var sum_sq: float = 0.0
+	for i in range(count):
+		var s: float = float(wav.data.decode_s16(i * 2)) / 32767.0
+		peak = maxf(peak, absf(s))
+		sum_sq += s * s
+	return Vector2(peak, sqrt(sum_sq / float(maxi(1, count))))
+
+
+func _test_sfx_priority_and_bot_anti_wallhack() -> void:
+	# 1. SoundSynthesizer: Normalized punchy waveforms + isolated Local vs World SFX pools
+	var required_clips: Array[String] = [
+		"shoot_smg", "shoot_mg", "shoot_shotgun", "shoot_sniper", "shoot_pistol", "shoot_bazooka",
+		"knife", "explosion", "hit", "crit", "heal", "reload", "parachute", "level_up", "click",
+	]
+	var all_clips_punchy: bool = true
+	for cname in required_clips:
+		var wav := SoundSynthesizer._clips.get(cname, null) as AudioStreamWAV
+		var pr: Vector2 = _sample_wav_peak_rms(wav)
+		if wav == null or pr.x < 0.65 or pr.x > 0.96:
+			all_clips_punchy = false
+	var smg_stats: Vector2 = _sample_wav_peak_rms(SoundSynthesizer._clips.get("shoot_smg", null) as AudioStreamWAV)
+	var sniper_stats: Vector2 = _sample_wav_peak_rms(SoundSynthesizer._clips.get("shoot_sniper", null) as AudioStreamWAV)
+	_assert(
+		all_clips_punchy and smg_stats.x >= 0.65 and sniper_stats.x >= 0.65 and smg_stats.y > 0.05 and sniper_stats.y > 0.05,
+		"SoundSynthesizer generates punchy combat AudioStreamWAV clips (SMG peak=%.2f rms=%.2f, Sniper peak=%.2f rms=%.2f)" % [smg_stats.x, smg_stats.y, sniper_stats.x, sniper_stats.y]
+	)
+
+	var distinct_pools: bool = SoundSynthesizer._local_sfx_pool.size() == 8 and SoundSynthesizer._world_sfx_pool.size() == 12
+	for lp in SoundSynthesizer._local_sfx_pool:
+		if SoundSynthesizer._world_sfx_pool.has(lp):
+			distinct_pools = false
+	_assert(distinct_pools, "SoundSynthesizer maintains distinct _local_sfx_pool (8) and _world_sfx_pool (12)")
+
+	for p in SoundSynthesizer._local_sfx_pool:
+		p.stop()
+		p.stream = null
+	for p in SoundSynthesizer._world_sfx_pool:
+		p.stop()
+		p.stream = null
+	SoundSynthesizer._world_sfx_cooldowns.clear()
+	SoundSynthesizer.set_listener_position(Vector3.ZERO)
+
+	SoundSynthesizer.play_sfx("shoot_sniper", 0.0, true)
+	var local_chan: AudioStreamPlayer = null
+	for p in SoundSynthesizer._local_sfx_pool:
+		if p.stream == SoundSynthesizer._clips["shoot_sniper"]:
+			local_chan = p
+			break
+	for _i in range(25):
+		SoundSynthesizer.play_sfx("shoot_smg", 0.0, false, Vector3(12.0, 0.0, 0.0))
+
+	var local_untouched: bool = (
+		local_chan != null
+		and local_chan.stream == SoundSynthesizer._clips["shoot_sniper"]
+		and local_chan.volume_db >= -6.0
+	)
+	for lp in SoundSynthesizer._local_sfx_pool:
+		if lp.stream == SoundSynthesizer._clips["shoot_smg"]:
+			local_untouched = false
+	_assert(
+		local_untouched,
+		"25 simultaneous world bot shots cannot overwrite or silence local priority channel (vol=%.1fdB)" % (local_chan.volume_db if local_chan != null else -99.0)
+	)
+
+	SoundSynthesizer.play_sfx("shoot_mg", 0.0, false, Vector3(95.0, 0.0, 0.0))
+	var far_skipped: bool = true
+	for wp in SoundSynthesizer._world_sfx_pool:
+		if wp.stream == SoundSynthesizer._clips["shoot_mg"]:
+			far_skipped = false
+	SoundSynthesizer.play_sfx("shoot_pistol", 0.0, false, Vector3(45.0, 0.0, 0.0))
+	var dist_attenuated: bool = false
+	for wp in SoundSynthesizer._world_sfx_pool:
+		if wp.stream == SoundSynthesizer._clips["shoot_pistol"] and wp.volume_db < -10.0 and wp.volume_db > -30.0:
+			dist_attenuated = true
+	_assert(far_skipped and dist_attenuated, "World SFX skips shots >75m (skipped=%s) and attenuates over 0..75m (attenuated=%s)" % [str(far_skipped), str(dist_attenuated)])
+	for p in SoundSynthesizer._local_sfx_pool:
+		p.stop()
+	for p in SoundSynthesizer._world_sfx_pool:
+		p.stop()
+
+	# 2. BotController Anti-Wallhack LOS, Reaction Delay & Humanized Aim Spread
+	var test_host := Node3D.new()
+	test_host.name = "BotWallhackTestHost"
+	add_child(test_host)
+
+	var house := BuildingMeshBuilder.build_town_house(test_host, Vector3.ZERO, 0.0, 0)
+	_assert(house != null and house is StaticBody3D and (house as StaticBody3D).collision_layer == 1, "VillageHouse builds Layer-1 StaticBody3D collider")
+
+	var bot_hero := HeroCharacter.new()
+	bot_hero.setup_identity(961, "AllyBotTester", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	bot_hero.set_physics_process(false)
+	test_host.add_child(bot_hero)
+	bot_hero.global_position = Vector3(0.0, 0.0, 10.0)
+
+	var enemy_hero := HeroCharacter.new()
+	enemy_hero.setup_identity(962, "NationalTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	enemy_hero.set_physics_process(false)
+	test_host.add_child(enemy_hero)
+	enemy_hero.global_position = Vector3(0.0, 0.0, -10.0)
+
+	var bot := BotController.new()
+	test_host.add_child(bot)
+	bot.setup(bot_hero)
+
+	await get_tree().physics_frame
+	var space: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
+	var los_blocked: bool = not bot.has_line_of_sight(space, enemy_hero)
+	var fired_behind_wall: bool = false
+	var test_heroes := {961: bot_hero, 962: enemy_hero}
+	for _t in range(30):
+		var c_wall: InputCmd = bot.compute_input(0.016, [], test_heroes, [])
+		if c_wall.has_button(InputCmd.BTN_FIRE):
+			fired_behind_wall = true
+	_assert(los_blocked and not fired_behind_wall, "BotController blocks LOS through VillageHouse (los_blocked=%s) and never fires through walls (fired=%s)" % [str(los_blocked), str(fired_behind_wall)])
+
+	# Open LOS 18m away in clear space -> verify reaction delay then humanized aim spread
+	enemy_hero.global_position = Vector3(18.0, 0.0, 10.0)
+	enemy_hero.velocity = Vector3(0.0, 0.0, 5.0)
+	await get_tree().physics_frame
+	var los_open: bool = bot.has_line_of_sight(space, enemy_hero)
+	var first_cmd: InputCmd = bot.compute_input(0.016, [], test_heroes, [])
+	var delayed_on_first_tick: bool = not first_cmd.has_button(InputCmd.BTN_FIRE)
+
+	var to_e: Vector3 = (enemy_hero.global_position + Vector3(0.0, 1.18, 0.0)) - (bot_hero.global_position + Vector3(0.0, 1.55, 0.0))
+	var exact_yaw: float = atan2(-to_e.x, -to_e.z)
+	var fire_count: int = 0
+	var min_yaw_err: float = 999.0
+	var max_yaw_err: float = -999.0
+	var min_pitch_err: float = 999.0
+	var max_pitch_err: float = -999.0
+	var exact_pitch: float = atan2(to_e.y, Vector2(to_e.x, to_e.z).length())
+	for _t in range(42):
+		var c_open: InputCmd = bot.compute_input(0.016, [], test_heroes, [])
+		if c_open.has_button(InputCmd.BTN_FIRE):
+			fire_count += 1
+			var yerr: float = c_open.aim_yaw - exact_yaw
+			var perr: float = c_open.aim_pitch - exact_pitch
+			min_yaw_err = minf(min_yaw_err, yerr)
+			max_yaw_err = maxf(max_yaw_err, yerr)
+			min_pitch_err = minf(min_pitch_err, perr)
+			max_pitch_err = maxf(max_pitch_err, perr)
+	var yaw_spread_span: float = (max_yaw_err - min_yaw_err) if fire_count > 0 else 0.0
+	var pitch_spread_span: float = (max_pitch_err - min_pitch_err) if fire_count > 0 else 0.0
+	_assert(
+		los_open and delayed_on_first_tick and fire_count >= 5 and (yaw_spread_span > 0.005 or pitch_spread_span > 0.005),
+		"Bot opens fire after reaction delay (open=%s, delayed=%s, fires=%d) with humanized aim variance (yaw_span=%.4f, pitch_span=%.4f rad)" % [str(los_open), str(delayed_on_first_tick), fire_count, yaw_spread_span, pitch_spread_span]
+	)
+
+	# 3. LagCompensator + HitscanWeapon Solid Wall Guard (including muzzle flush against VillageHouse wall!)
+	var lc := LagCompensator.new()
+	test_host.add_child(lc)
+	var smg := bot_hero.weapons[0] as HitscanWeapon
+	smg.spread_rad = 0.0
+	enemy_hero.global_position = Vector3(0.0, 0.0, -8.0)
+	enemy_hero.hp = enemy_hero.max_hp
+
+	# First test at 3m from wall (z=8.0), then test muzzle flush inside/against wall (z=4.85, wall face at z=4.99)
+	var wall_blocked_all: bool = true
+	for shooter_z in [8.0, 4.85]:
+		bot_hero.global_position = Vector3(0.0, 0.0, shooter_z)
+		await get_tree().physics_frame
+		NetworkManager.server_tick = 50
+		lc.record_frame(50, test_heroes)
+		var wall_cmd := InputCmd.new()
+		wall_cmd.aim_yaw = 0.0
+		wall_cmd.aim_pitch = 0.0
+		smg.fire_server(wall_cmd, {"lag_compensator": lc, "heroes_by_id": test_heroes})
+		if enemy_hero.hp < enemy_hero.max_hp:
+			wall_blocked_all = false
+	_assert(
+		wall_blocked_all and enemy_hero.hp == enemy_hero.max_hp,
+		"HitscanWeapon + LagCompensator blocks 100%% of shots across VillageHouse wall including flush-wall muzzle (hp=%d/%d)" % [enemy_hero.hp, enemy_hero.max_hp]
+	)
+
+	remove_child(test_host)
+	test_host.free()
 
 
 func _test_scene_compile_and_load() -> void:
