@@ -151,6 +151,8 @@ func _setup_ui() -> void:
 	class_menu.host_online_pressed.connect(_on_host_online)
 	class_menu.join_online_pressed.connect(_on_join_online)
 	class_menu.play_offline_bots_pressed.connect(_on_play_offline_bots)
+	class_menu.resume_match_requested.connect(_on_resume_match)
+	class_menu.leave_match_requested.connect(_on_leave_match)
 
 	if DisplayServer.get_name().contains("headless"):
 		hud.visible = false
@@ -164,6 +166,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			if class_menu.visible:
 				class_menu.hide_menu()
 			else:
+				var in_active_match: bool = heroes_by_id.has(NetworkManager.local_peer_id)
+				class_menu.set_in_match_mode(in_active_match)
+				if in_active_match:
+					class_menu.show_screen("settings")
 				class_menu.show_menu()
 		elif k.keycode == KEY_F8:
 			if NetworkManager.sim_latency_ms <= 0.0:
@@ -178,6 +184,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			var music_on: bool = SoundSynthesizer.toggle_music()
 			if hud != null:
 				hud.add_killfeed("Música: ATIVADA" if music_on else "Música: DESATIVADA (M)")
+
+
+func _on_resume_match() -> void:
+	if class_menu != null:
+		class_menu.hide_menu()
+
+
+func _on_leave_match() -> void:
+	_switching_mode = true
+	NetworkManager.shutdown_network()
+	_clear_match_entities()
+	conquest_manager.reset_match()
+	SoundSynthesizer.stop_whistle_theme()
+	_switching_mode = false
+	if class_menu != null:
+		class_menu.set_in_match_mode(false)
+		class_menu.show_screen("hub")
+		class_menu.show_menu()
 
 
 func _on_host_online(team: int, class_id: int, port: int) -> void:
@@ -425,6 +449,9 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 	)
 
 	if is_local:
+		if hero.hero_camera != null:
+			hero.hero_camera.mouse_sensitivity = ClassSelectMenu.current_mouse_sensitivity
+			hero.hero_camera.sensitivity = ClassSelectMenu.current_mouse_sensitivity
 		_last_local_level = 1
 		_prev_local_parachuting = hero.is_parachuting
 		if hero.skill_manager != null and hero.skill_manager.has_signal("progression_changed"):

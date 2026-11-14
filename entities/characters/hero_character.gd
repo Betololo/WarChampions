@@ -78,6 +78,7 @@ var _last_processed_srv_tick: int = -1
 
 ## Decoupled Visual Smoothing & Articulated Rig
 var visual_root: Node3D
+@export var _pred_error_offset: Vector3 = Vector3.ZERO
 var visual_error_offset: Vector3 = Vector3.ZERO
 var _prev_phys_pos: Vector3 = Vector3.ZERO
 var _curr_phys_pos: Vector3 = Vector3.ZERO
@@ -131,6 +132,7 @@ func _ready() -> void:
 		hero_camera = HeroCamera.new()
 		hero_camera.name = "HeroCamera"
 		add_child(hero_camera)
+		hero_camera.global_position = visual_root.global_position if visual_root != null else global_position
 		hero_camera.yaw = aim_yaw
 		hero_camera.set_active_camera(true)
 		hero_camera.scope_toggled.connect(_on_scope_toggled)
@@ -149,6 +151,7 @@ func setup_identity(p_entity_id: int, p_name: String, p_team: int, p_class_id: i
 	aim_yaw = -PI * 0.5 if team == NetworkManager.TEAM_ROYAL else PI * 0.5
 	if hero_camera != null:
 		hero_camera.yaw = aim_yaw
+		hero_camera.global_position = visual_root.global_position if visual_root != null else global_position
 	name = "Hero_%d" % entity_id
 	if is_inside_tree():
 		configure_class_loadout()
@@ -652,14 +655,15 @@ func _process(delta: float) -> void:
 		hero_camera.set_scoped(sniper_scoped)
 
 	if is_local_player or is_bot or NetworkManager.is_server_authority():
-		visual_error_offset = visual_error_offset.lerp(Vector3.ZERO, minf(1.0, 20.0 * delta))
+		_pred_error_offset = _pred_error_offset.lerp(Vector3.ZERO, minf(1.0, 14.0 * delta))
+		visual_error_offset = _pred_error_offset
 		if visual_root != null:
 			if current_vehicle_id >= 0:
 				visual_root.global_position = global_position
 			else:
 				var frac: float = Engine.get_physics_interpolation_fraction()
 				var interp_world: Vector3 = _prev_phys_pos.lerp(_curr_phys_pos, frac)
-				visual_root.global_position = interp_world + visual_error_offset
+				visual_root.global_position = interp_world + _pred_error_offset
 			visual_root.rotation.y = aim_yaw
 	else:
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())
@@ -804,7 +808,7 @@ func _animate_character(delta: float) -> void:
 		_held_weapon_root.visible = true
 
 	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
-	if horiz_speed > 0.4 and is_on_floor():
+	if horiz_speed > 0.4 and (is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0):
 		_walk_phase += horiz_speed * delta * 2.1
 	else:
 		_walk_phase = lerpf(_walk_phase, 0.0, 8.0 * delta)
@@ -1232,7 +1236,10 @@ func _snap_authoritative_pos(auth_pos: Vector3, auth_vel: Vector3) -> void:
 	velocity = auth_vel
 	_curr_phys_pos = auth_pos
 	_prev_phys_pos = auth_pos
+	_pred_error_offset = Vector3.ZERO
 	visual_error_offset = Vector3.ZERO
+	if hero_camera != null:
+		hero_camera.global_position = auth_pos
 
 
 ## Clears seat-specific metadata when no longer riding in a vehicle.
@@ -1247,10 +1254,14 @@ func clear_vehicle_state() -> void:
 	current_seat_index = -1
 	_reset_seat_metadata()
 	_last_vehicle_id_for_cam = -1
+	_pred_error_offset = Vector3.ZERO
+	visual_error_offset = Vector3.ZERO
 	if _body_collision != null:
 		_body_collision.disabled = false
 	if hero_camera != null:
 		hero_camera.set_vehicle_mode(false)
+		if visual_root != null:
+			hero_camera.global_position = visual_root.global_position
 	if visual_root != null and not is_scoping:
 		visual_root.visible = true
 
@@ -1281,6 +1292,8 @@ func reconcile_with_server(state: Dictionary) -> void:
 	stats_changed.emit()
 
 	if current_vehicle_id >= 0 or prev_vid >= 0:
+		_pred_error_offset = Vector3.ZERO
+		visual_error_offset = Vector3.ZERO
 		_snap_authoritative_pos(auth_pos, auth_vel)
 		if ack_tick > _last_processed_srv_tick:
 			_last_processed_srv_tick = ack_tick
@@ -1298,11 +1311,15 @@ func reconcile_with_server(state: Dictionary) -> void:
 	if err_dist <= RECONCILE_THRESHOLD_METERS:
 		return
 
-	var pre_reconcile_pos: Vector3 = global_position
+	var old_visual_pos: Vector3 = global_position + _pred_error_offset
 	global_position = auth_pos
 	velocity = auth_vel
-	if auth_vel.length() > 5.0 and auth_vel.y > 1.0:
+
+	var horiz_vel: float = Vector2(auth_vel.x, auth_vel.z).length()
+	var run_spd: float = base_move_speed * speed_multiplier
+	if horiz_vel > run_spd * 1.15 or auth_vel.length() > 12.0:
 		_knockback_stun_timer = maxf(_knockback_stun_timer, 0.35)
+
 	is_parachuting = (auth_flags & NetSerializer.SNAP_PARACHUTING) != 0
 	is_crouching = (auth_flags & NetSerializer.SNAP_CROUCHING) != 0
 	prev_jump_held = saved.prev_jump_held
@@ -1322,7 +1339,17 @@ func reconcile_with_server(state: Dictionary) -> void:
 			entry.prev_jump_held
 		)
 
-	visual_error_offset += pre_reconcile_pos - global_position
+	if err_dist <= 4.0:
+		var new_delta: Vector3 = old_visual_pos - global_position
+		if new_delta.length() > 2.0:
+			new_delta = new_delta.normalized() * 2.0
+		_pred_error_offset = new_delta
+	else:
+		_pred_error_offset = Vector3.ZERO
+		if hero_camera != null:
+			hero_camera.global_position = global_position
+
+	visual_error_offset = _pred_error_offset
 	_prev_phys_pos = global_position
 	_curr_phys_pos = global_position
 
@@ -1431,7 +1458,12 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	clear_vehicle_state()
 	_prev_phys_pos = spawn_pos
 	_curr_phys_pos = spawn_pos
+	_pred_error_offset = Vector3.ZERO
 	visual_error_offset = Vector3.ZERO
+	if visual_root != null:
+		visual_root.global_position = spawn_pos
+	if hero_camera != null:
+		hero_camera.global_position = spawn_pos
 	respawned.emit()
 	stats_changed.emit()
 

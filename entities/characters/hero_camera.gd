@@ -14,7 +14,18 @@ const FPS_SCOPE_FOV: float = 22.0
 const VEHICLE_SPRING_LENGTH: float = 7.4
 const VEHICLE_OFFSET: Vector3 = Vector3(0.0, 2.75, 0.0)
 
-var mouse_sensitivity: float = 0.0024
+static var default_sensitivity: float = 0.0024
+var _mouse_sens: float = 0.0024
+var mouse_sensitivity: float:
+	get:
+		return _mouse_sens
+	set(value):
+		_mouse_sens = value
+var sensitivity: float:
+	get:
+		return _mouse_sens
+	set(value):
+		_mouse_sens = value
 var scope_sensitivity_mult: float = 0.36
 var yaw: float = 0.0
 var pitch: float = -0.02
@@ -29,6 +40,14 @@ var camera: Camera3D
 
 
 func _ready() -> void:
+	top_level = true
+	add_to_group("hero_cameras")
+	mouse_sensitivity = ClassSelectMenu.current_mouse_sensitivity
+	var p_hero: Node3D = get_parent() as Node3D
+	if p_hero != null:
+		var vroot: Node3D = p_hero.get_node_or_null("VisualRoot") as Node3D
+		global_position = vroot.global_position if vroot != null else p_hero.global_position
+
 	pivot = Node3D.new()
 	pivot.name = "CameraPivot"
 	add_child(pivot)
@@ -105,7 +124,26 @@ static func compute_aim_ray(
 	return {"origin": cam_world_pos, "dir": cam_forward_dir, "pivot": pivot_world, "spring_length": spring_len}
 
 
+func snap_to_hero() -> void:
+	var p_hero: HeroCharacter = get_parent() as HeroCharacter
+	if p_hero != null:
+		global_position = p_hero.visual_root.global_position if p_hero.visual_root != null else p_hero.global_position
+
+
 func _process(delta: float) -> void:
+	var p_hero: HeroCharacter = get_parent() as HeroCharacter
+	if p_hero != null and is_inside_tree():
+		var target_anchor: Vector3 = p_hero.visual_root.global_position if p_hero.visual_root != null else p_hero.global_position
+		if global_position == Vector3.ZERO or global_position.distance_to(target_anchor) > 4.0:
+			global_position = target_anchor
+		else:
+			var new_pos := target_anchor
+			if p_hero.is_on_floor() and not p_hero.is_parachuting:
+				var dy: float = absf(target_anchor.y - global_position.y)
+				if dy < 0.35:
+					new_pos.y = lerpf(global_position.y, target_anchor.y, minf(1.0, 32.0 * delta))
+			global_position = new_pos
+
 	recoil_pitch_offset = lerpf(recoil_pitch_offset, 0.0, aim_punch_decay * delta)
 	var target_offset: Vector3 = TPS_SHOULDER_OFFSET
 	var target_length: float = TPS_SPRING_LENGTH
@@ -120,7 +158,6 @@ func _process(delta: float) -> void:
 		target_length = VEHICLE_SPRING_LENGTH
 		target_fov = 74.0
 
-	var p_hero: HeroCharacter = get_parent() as HeroCharacter
 	if p_hero != null and p_hero.is_crouching and not in_vehicle:
 		target_offset.y -= 0.45
 

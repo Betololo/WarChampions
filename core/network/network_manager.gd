@@ -48,6 +48,9 @@ var _delayed_queue: Array[Dictionary] = []
 
 ## Player roster: peer_id (or bot entity_id >= 1000) -> Dictionary
 var players_info: Dictionary = {}
+var peer_input_buffers: Dictionary = {} # peer_id: int -> InputRingBuffer
+var _peer_last_input_tick: Dictionary = {} # peer_id: int -> int
+var _peer_seq_stats: Dictionary = {} # peer_id: int -> Dictionary
 var local_profile: Dictionary = {
 	"name": "Hero",
 	"team": TEAM_ROYAL,
@@ -168,11 +171,72 @@ func shutdown_network() -> void:
 		multiplayer.multiplayer_peer.close()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	players_info.clear()
+	_peer_last_input_tick.clear()
+	_peer_seq_stats.clear()
+	peer_input_buffers.clear()
 	server_tick = 0
 	_snapshot_accum = 0
 	is_dedicated_server = false
 	is_solo_bot_mode = false
 	connection_state_changed.emit(false, false)
+
+
+func validate_and_enqueue_peer_input(sender_id: int, cmd: InputCmd) -> bool:
+	if not _peer_seq_stats.has(sender_id):
+		_peer_seq_stats[sender_id] = {
+			"accepted": 0,
+			"dropped_stale": 0,
+			"dropped_future": 0,
+			"last_tick": 0,
+		}
+
+	if cmd == null or cmd.tick <= 0:
+		return false
+
+	var last_tick: int = int(_peer_last_input_tick.get(sender_id, 0))
+
+	if last_tick > 0 and cmd.tick <= last_tick:
+		_peer_seq_stats[sender_id]["dropped_stale"] += 1
+		return false
+
+	if last_tick > 0 and cmd.tick > last_tick + 180:
+		_peer_seq_stats[sender_id]["dropped_future"] += 1
+		return false
+
+	_peer_last_input_tick[sender_id] = cmd.tick
+	_peer_seq_stats[sender_id]["accepted"] += 1
+	_peer_seq_stats[sender_id]["last_tick"] = cmd.tick
+
+	if not peer_input_buffers.has(sender_id):
+		peer_input_buffers[sender_id] = InputRingBuffer.new()
+
+	var buf: InputRingBuffer = peer_input_buffers[sender_id]
+	buf.push(cmd.tick, cmd, Vector3.ZERO, Vector3.ZERO, false, false, false, false)
+
+	return true
+
+
+func get_input_for_peer_tick(peer_id: int, tick: int) -> InputCmd:
+	if not peer_input_buffers.has(peer_id):
+		return null
+	var buf: InputRingBuffer = peer_input_buffers[peer_id]
+	var entry: InputRingBuffer.RingEntry = buf.get_entry(tick)
+	if entry != null and entry.cmd != null:
+		return entry.cmd
+	var last_tick: int = int(_peer_last_input_tick.get(peer_id, -1))
+	if last_tick >= 0:
+		var latest: InputRingBuffer.RingEntry = buf.get_entry(last_tick)
+		if latest != null and latest.cmd != null:
+			var fallback_cmd := InputCmd.new()
+			fallback_cmd.tick = tick
+			fallback_cmd.move_dir = latest.cmd.move_dir
+			fallback_cmd.aim_yaw = latest.cmd.aim_yaw
+			fallback_cmd.aim_pitch = latest.cmd.aim_pitch
+			fallback_cmd.selected_weapon_slot = latest.cmd.selected_weapon_slot
+			fallback_cmd.view_interp_tick_delta = latest.cmd.view_interp_tick_delta
+			fallback_cmd.buttons = latest.cmd.buttons & (~InputCmd.BTN_JUMP)
+			return fallback_cmd
+	return null
 
 
 func get_server_clock_ms() -> float:
@@ -237,6 +301,7 @@ func send_input_to_server(cmd: InputCmd) -> void:
 	if not is_active_enet_connected() and not is_solo_bot_mode:
 		return
 	if multiplayer.is_server():
+		validate_and_enqueue_peer_input(1, cmd)
 		client_input_received.emit(1, cmd)
 		return
 	var packed: PackedByteArray = NetSerializer.pack_input_cmd(cmd)
@@ -347,7 +412,8 @@ func _rpc_server_receive_input(packed_bytes: PackedByteArray) -> void:
 		return
 	var sender: int = multiplayer.get_remote_sender_id()
 	var cmd: InputCmd = NetSerializer.unpack_input_cmd(packed_bytes)
-	client_input_received.emit(sender, cmd)
+	if validate_and_enqueue_peer_input(sender, cmd):
+		client_input_received.emit(sender, cmd)
 
 
 @rpc("authority", "call_remote", "unreliable_ordered", 1)
@@ -424,6 +490,9 @@ func _on_peer_connected(peer_id: int) -> void:
 
 
 func _on_peer_disconnected(peer_id: int) -> void:
+	_peer_last_input_tick.erase(peer_id)
+	_peer_seq_stats.erase(peer_id)
+	peer_input_buffers.erase(peer_id)
 	if multiplayer.is_server():
 		players_info.erase(peer_id)
 		player_unregistered.emit(peer_id)

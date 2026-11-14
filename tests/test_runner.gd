@@ -29,6 +29,7 @@ func _ready() -> void:
 	await _test_hud_crosshair_and_aim_convergence()
 	await _test_sfx_priority_and_bot_anti_wallhack()
 	_test_parachute_delay_death_collapse_and_knockback()
+	_test_smooth_sync_packet_sequencing_and_menus()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -1957,7 +1958,7 @@ func _test_parachute_delay_death_collapse_and_knockback() -> void:
 	rec_hero.reconcile_with_server({
 		"ack_tick": 5,
 		"pos": Vector3(0.0, 2.0, 0.0),
-		"vel": Vector3(0.0, 8.5, 0.0),
+		"vel": Vector3(14.0, 8.5, 0.0),
 		"flags": 0,
 		"hp": 100,
 		"shield": 0,
@@ -2128,6 +2129,257 @@ func _test_parachute_delay_death_collapse_and_knockback() -> void:
 	shooter.free()
 	teammate.free()
 	enemy.free()
+
+
+func _test_smooth_sync_packet_sequencing_and_menus() -> void:
+	# --- 1. Smooth Sync / No-Hopping Verification ---
+	var hero := HeroCharacter.new()
+	hero.setup_identity(1, "SmoothHero", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(hero)
+	hero.global_position = Vector3(0.0, 1.0, 0.0)
+	hero.velocity = Vector3(6.0, 0.0, 0.0)
+	hero.active_flags |= NetSerializer.SNAP_GROUNDED
+
+	var move_cmd := InputCmd.new()
+	move_cmd.move_dir = Vector2(0.0, -1.0)
+	move_cmd.aim_yaw = 0.0
+
+	var min_hips_y: float = 999.0
+	var max_hips_y: float = -999.0
+	var prev_vis_x: float = hero.visual_root.global_position.x
+	var subframe_moved: bool = true
+	var max_cam_hero_horiz_div: float = 0.0
+
+	for frame in range(30):
+		hero.simulate_movement(move_cmd, 1.0 / 60.0)
+		hero.velocity.y = 0.0
+		hero.active_flags |= NetSerializer.SNAP_GROUNDED
+		hero._curr_phys_pos = hero.global_position
+		hero._process(1.0 / 60.0)
+		if hero.hero_camera != null:
+			hero.hero_camera._process(1.0 / 60.0)
+
+		var cur_vis_x: float = hero.visual_root.global_position.x
+		if cur_vis_x <= prev_vis_x:
+			subframe_moved = false
+		prev_vis_x = cur_vis_x
+
+		if hero._hips_pivot != null:
+			var hy: float = hero._hips_pivot.position.y
+			min_hips_y = minf(min_hips_y, hy)
+			max_hips_y = maxf(max_hips_y, hy)
+
+		if hero.hero_camera != null:
+			var div: float = Vector2(
+				hero.hero_camera.global_position.x - hero.visual_root.global_position.x,
+				hero.hero_camera.global_position.z - hero.visual_root.global_position.z
+			).length()
+			max_cam_hero_horiz_div = maxf(max_cam_hero_horiz_div, div)
+
+	var bob_variance: float = max_hips_y - min_hips_y
+	_assert(
+		subframe_moved,
+		"visual_root horizontal position interpolates smoothly (> 0.0 change per sub-frame)"
+	)
+	_assert(
+		bob_variance <= 0.015,
+		"walking bob height variance stays <= 0.015m (got %.4fm, no bunny-hopping!)" % bob_variance
+	)
+	_assert(
+		max_cam_hero_horiz_div < 0.02,
+		"HeroCamera matches visual_root anchor cleanly (< 0.02m horizontal divergence, got %.4fm)" % max_cam_hero_horiz_div
+	)
+
+	# Verify small reconciliation error (0.4m) populates _pred_error_offset smoothly and decays cleanly
+	hero.local_tick = 50
+	hero.input_buffer.push(50, move_cmd, hero.global_position, hero.velocity, false, false, true, false)
+	var pre_rec_pos: Vector3 = hero.global_position
+	hero.reconcile_with_server({
+		"ack_tick": 50,
+		"pos": pre_rec_pos + Vector3(0.4, 0.0, 0.0),
+		"vel": hero.velocity,
+		"flags": 0,
+		"hp": 110,
+		"shield": 0,
+		"vehicle_id": -1,
+		"seat_idx": -1
+	})
+	_assert(
+		hero._pred_error_offset.length() > 0.1,
+		"Small reconciliation error (0.4m) populates _pred_error_offset smoothly (len=%.3fm)" % hero._pred_error_offset.length()
+	)
+	var initial_offset_len: float = hero._pred_error_offset.length()
+	for f in range(5):
+		hero._process(0.016)
+	_assert(
+		hero._pred_error_offset.length() < initial_offset_len,
+		"_pred_error_offset decays cleanly (%.3fm < %.3fm) rather than snapping instantaneously" % [hero._pred_error_offset.length(), initial_offset_len]
+	)
+
+	# Verify normal jump velocity (vel = Vector3(0, 8.8, 0)) does NOT activate _knockback_stun_timer
+	hero._knockback_stun_timer = 0.0
+	hero.local_tick = 60
+	hero.input_buffer.push(60, move_cmd, hero.global_position, hero.velocity, false, false, true, false)
+	hero.reconcile_with_server({
+		"ack_tick": 60,
+		"pos": hero.global_position + Vector3(0.1, 0.0, 0.0),
+		"vel": Vector3(0.0, 8.8, 0.0),
+		"flags": 0,
+		"hp": 110,
+		"shield": 0,
+		"vehicle_id": -1,
+		"seat_idx": -1
+	})
+	_assert(
+		hero._knockback_stun_timer == 0.0,
+		"Normal jump velocity (vel = Vector3(0, 8.8, 0)) does NOT activate _knockback_stun_timer (got %.2f)" % hero._knockback_stun_timer
+	)
+
+	hero.free()
+
+	# --- 2. Packet Sequencing Verification ---
+	NetworkManager.shutdown_network()
+	var peer_id: int = 200
+	var ticks_to_send: Array[int] = [10, 12, 11, 12, 13, 500]
+	var results: Array[bool] = []
+
+	for t in ticks_to_send:
+		var c := InputCmd.new()
+		c.tick = t
+		results.append(NetworkManager.validate_and_enqueue_peer_input(peer_id, c))
+
+	_assert(
+		results[0] == true and results[1] == true and results[4] == true,
+		"Monotonic input sequence ticks 10, 12, 13 accepted (results=%s)" % str(results)
+	)
+	_assert(
+		results[2] == false and results[3] == false and results[5] == false,
+		"Stale tick 11, duplicate tick 12, and future jump 500 strictly rejected (results=%s)" % str(results)
+	)
+	_assert(
+		int(NetworkManager._peer_last_input_tick.get(peer_id, 0)) == 13,
+		"_peer_last_input_tick[200] is exactly 13 (got %d)" % int(NetworkManager._peer_last_input_tick.get(peer_id, 0))
+	)
+
+	var recovered: InputCmd = NetworkManager.get_input_for_peer_tick(peer_id, 14)
+	_assert(
+		recovered != null and recovered.tick == 14 and (recovered.buttons & InputCmd.BTN_JUMP) == 0,
+		"get_input_for_peer_tick recovers fallback command on dropped packet with BTN_JUMP cleared"
+	)
+
+	NetworkManager.shutdown_network()
+	_assert(
+		NetworkManager._peer_last_input_tick.is_empty() and NetworkManager._peer_seq_stats.is_empty(),
+		"shutdown_network() clears packet sequencing trackers cleanly"
+	)
+
+	# --- 3. Multi-Screen Menu & Settings Verification ---
+	var menu := ClassSelectMenu.new()
+	add_child(menu)
+
+	# Screen switching
+	menu.show_screen("hub")
+	_assert(
+		menu._hub_screen.visible and not menu._armory_screen.visible and not menu._settings_screen.visible,
+		"ClassSelectMenu switches cleanly to 'hub' screen"
+	)
+	menu.show_screen("armory")
+	_assert(
+		not menu._hub_screen.visible and menu._armory_screen.visible and not menu._settings_screen.visible,
+		"ClassSelectMenu switches cleanly to 'armory' screen"
+	)
+	menu.show_screen("settings")
+	_assert(
+		not menu._hub_screen.visible and not menu._armory_screen.visible and menu._settings_screen.visible,
+		"ClassSelectMenu switches cleanly to 'settings' screen"
+	)
+
+	# Exclusive Class loadout/skill card updates on Soldier/Gunner/Commando switch
+	menu.select_class(NetworkManager.CLASS_SOLDIER)
+	var s_text: String = menu._summary_lbl.text
+	_assert(
+		s_text.contains("Soldier") and s_text.contains("SMG"),
+		"Armory Soldier selection reflects exclusive SMG loadout: %s" % s_text
+	)
+	menu.select_class(NetworkManager.CLASS_GUNNER)
+	var g_text: String = menu._summary_lbl.text
+	_assert(
+		g_text.contains("Gunner") and g_text.contains("MG"),
+		"Armory Gunner selection reflects exclusive MG loadout: %s" % g_text
+	)
+	menu.select_class(NetworkManager.CLASS_COMMANDO)
+	var c_text: String = menu._summary_lbl.text
+	_assert(
+		c_text.contains("Commando") and c_text.contains("Sniper"),
+		"Armory Commando selection reflects exclusive Sniper loadout: %s" % c_text
+	)
+
+	# Signal emissions
+	var sig_status := {"bots": false, "host": false, "join": false}
+
+	menu.play_offline_bots_requested.connect(func(_t: int, _c: int) -> void: sig_status["bots"] = true)
+	menu.host_online_requested.connect(func(_t: int, _c: int, _p: int) -> void: sig_status["host"] = true)
+	menu.join_online_requested.connect(func(_t: int, _c: int, _ip: String, _p: int) -> void: sig_status["join"] = true)
+
+	menu._pending_mode = "bots"
+	menu._on_deploy_clicked()
+	_assert(sig_status["bots"], "play_offline_bots_requested signal emitted cleanly on deploy")
+
+	menu._pending_mode = "host"
+	menu._on_deploy_clicked()
+	_assert(sig_status["host"], "host_online_requested signal emitted cleanly on deploy")
+
+	menu._pending_mode = "join"
+	menu._on_deploy_clicked()
+	_assert(sig_status["join"], "join_online_requested signal emitted cleanly on deploy")
+
+	# Pause state buttons
+	menu.set_in_match_mode(true)
+	_assert(
+		menu._resume_btn.visible and menu._leave_btn.visible,
+		"set_in_match_mode(true) displays pause state Retomar and Desconectar buttons"
+	)
+	menu.set_in_match_mode(false)
+	_assert(
+		not menu._resume_btn.visible and not menu._leave_btn.visible,
+		"set_in_match_mode(false) conceals in-match pause buttons"
+	)
+
+	# Audio & Sensitivity sliders propagate to SoundSynthesizer & HeroCamera
+	var test_cam := HeroCamera.new()
+	test_cam.name = "HeroCamera"
+	add_child(test_cam)
+
+	menu._master_vol_slider.value = 65.0
+	_assert(
+		absf(SoundSynthesizer.master_volume - 0.65) < 0.02,
+		"Master volume slider propagates cleanly to SoundSynthesizer (vol=%.2f)" % SoundSynthesizer.master_volume
+	)
+	menu._sfx_vol_slider.value = 85.0
+	_assert(
+		absf(SoundSynthesizer.sfx_volume - 0.85) < 0.02,
+		"SFX volume slider propagates cleanly to SoundSynthesizer (vol=%.2f)" % SoundSynthesizer.sfx_volume
+	)
+	menu._music_vol_slider.value = 40.0
+	_assert(
+		absf(SoundSynthesizer.music_volume - 0.40) < 0.02,
+		"Music volume slider propagates cleanly to SoundSynthesizer (vol=%.2f)" % SoundSynthesizer.music_volume
+	)
+
+	menu._sens_slider.value = 0.0038
+	_assert(
+		absf(test_cam.mouse_sensitivity - 0.0038) < 0.0002,
+		"Mouse sensitivity slider propagates cleanly to HeroCamera (sens=%.4f)" % test_cam.mouse_sensitivity
+	)
+
+	# Restore defaults
+	SoundSynthesizer.set_master_volume(1.0)
+	SoundSynthesizer.set_sfx_volume(1.0)
+	SoundSynthesizer.set_music_volume(1.0)
+	menu.set_mouse_sensitivity(0.0024)
+
+	test_cam.free()
+	menu.free()
 
 
 func _test_scene_compile_and_load() -> void:

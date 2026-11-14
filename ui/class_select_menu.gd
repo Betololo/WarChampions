@@ -1,34 +1,72 @@
 class_name ClassSelectMenu
 extends CanvasLayer
 
-## War Champions Main & Class Selection Menu:
-## - Exclusive per-class Battlefield Heroes weapons (no fake 3-archetype selector).
-## - Online Multiplayer First: Host Online Room (0 Bots) & Join by IP:Port.
-## - Optional Offline Practice Mode with 12v12 Bots in a separate testing button.
+## War Champions Multi-Screen Menu & In-Game Pause System:
+## - HubScreen: War Champions 12v12 Cartoon Warfare, Quick Offline Bots, Multiplayer Drawer.
+## - ArmoryScreen: Royal (Azure) vs National (Crimson) Factions, Exclusive Class loadouts & 3 skills.
+## - SettingsScreen: Master/SFX/Music volume sliders, Mouse Sensitivity, Portuguese controls, In-match Pause.
 
 signal host_online_pressed(team: int, class_id: int, port: int)
 signal join_online_pressed(team: int, class_id: int, ip: String, port: int)
 signal play_offline_bots_pressed(team: int, class_id: int)
 
+signal host_online_requested(team: int, class_id: int, port: int)
+signal join_online_requested(team: int, class_id: int, ip: String, port: int)
+signal play_offline_bots_requested(team: int, class_id: int)
+signal deploy_requested(team: int, class_id: int)
+signal team_selected(team: int)
+signal class_selected(class_id: int)
+signal resume_match_requested()
+signal leave_match_requested()
+
+static var current_mouse_sensitivity: float = 0.0024
+
 var selected_team: int = NetworkManager.TEAM_ROYAL
 var selected_class: int = NetworkManager.CLASS_SOLDIER
+var current_screen: String = "hub"
+var _in_match_mode: bool = false
+var _pending_mode: String = "bots" # "bots", "host", "join"
 
+## Screens
+var _hub_screen: Control
+var _armory_screen: Control
+var _settings_screen: Control
+
+## Common UI Elements
 var _ip_input: LineEdit
 var _port_input: LineEdit
+var _status_lbl: Label
+var status_label: Label:
+	get:
+		return _status_lbl
+
 var _summary_lbl: Label
 var _preview_portrait: TextureRect
 var _preview_flag: TextureRect
 var _royal_btn: Button
 var _nat_btn: Button
 var _class_buttons: Array[Button] = []
+var _class_cards: Array[PanelContainer] = []
 var _lag_btn: Button
-var _status_lbl: Label
+var _deploy_btn: Button
+var _mp_drawer: VBoxContainer
+
+## Settings UI Elements
+var _master_vol_slider: HSlider
+var _sfx_vol_slider: HSlider
+var _music_vol_slider: HSlider
+var _sens_slider: HSlider
+var _resume_btn: Button
+var _leave_btn: Button
+var _settings_back_btn: Button
+var _settings_title: Label
 
 
 func _ready() -> void:
 	layer = 20
 	_build_ui()
 	_refresh_summary()
+	show_screen("hub")
 
 
 func _make_card_style(bg: Color, border: Color, border_w: int = 2) -> StyleBoxFlat:
@@ -60,198 +98,644 @@ func _get_lan_ip_hint() -> String:
 func _build_ui() -> void:
 	var bg := ColorRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.06, 0.11, 0.19, 0.88)
+	bg.color = Color(0.04, 0.08, 0.14, 0.92)
 	add_child(bg)
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(780, 560)
-	panel.add_theme_stylebox_override("panel", _make_card_style(Color(0.10, 0.14, 0.21, 0.96), Color(0.95, 0.78, 0.22), 3))
-	center.add_child(panel)
+	var main_panel := PanelContainer.new()
+	main_panel.custom_minimum_size = Vector2(960, 600)
+	main_panel.add_theme_stylebox_override("panel", _make_card_style(Color(0.09, 0.13, 0.20, 0.97), Color(0.96, 0.78, 0.22), 3))
+	center.add_child(main_panel)
 
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 22)
-	margin.add_theme_constant_override("margin_right", 22)
-	margin.add_theme_constant_override("margin_top", 16)
-	margin.add_theme_constant_override("margin_bottom", 16)
-	panel.add_child(margin)
+	var main_margin := MarginContainer.new()
+	main_margin.add_theme_constant_override("margin_left", 24)
+	main_margin.add_theme_constant_override("margin_right", 24)
+	main_margin.add_theme_constant_override("margin_top", 18)
+	main_margin.add_theme_constant_override("margin_bottom", 18)
+	main_panel.add_child(main_margin)
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
-	margin.add_child(vbox)
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 0)
+	main_margin.add_child(stack)
+
+	_build_hub_screen(stack)
+	_build_armory_screen(stack)
+	_build_settings_screen(stack)
+
+
+func _build_hub_screen(parent: Control) -> void:
+	_hub_screen = VBoxContainer.new()
+	_hub_screen.add_theme_constant_override("separation", 12)
+	parent.add_child(_hub_screen)
+
+	# 1. Header Banner
+	var title_box := VBoxContainer.new()
+	title_box.add_theme_constant_override("separation", 2)
+	_hub_screen.add_child(title_box)
 
 	var title := Label.new()
-	title.text = "WAR CHAMPIONS — 12v12 Seaside Frontline"
+	title.text = "WAR CHAMPIONS"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 28)
-	title.add_theme_color_override("font_color", Color(1.0, 0.88, 0.26))
-	vbox.add_child(title)
+	title.add_theme_font_size_override("font_size", 34)
+	title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.24))
+	title_box.add_child(title)
 
-	# 1. Faction Picker + Portrait Preview Row
-	var top_pick := HBoxContainer.new()
-	top_pick.alignment = BoxContainer.ALIGNMENT_CENTER
-	top_pick.add_theme_constant_override("separation", 18)
-	vbox.add_child(top_pick)
+	var subtitle := Label.new()
+	subtitle.text = "12v12 Cartoon Warfare — Seaside Frontline"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 16)
+	subtitle.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
+	title_box.add_child(subtitle)
 
-	_preview_flag = TextureRect.new()
-	_preview_flag.custom_minimum_size = Vector2(68, 48)
-	_preview_flag.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_preview_flag.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	top_pick.add_child(_preview_flag)
+	# 2. Main Mode Action Buttons
+	var mode_box := VBoxContainer.new()
+	mode_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	mode_box.add_theme_constant_override("separation", 10)
+	_hub_screen.add_child(mode_box)
 
-	_royal_btn = Button.new()
-	_royal_btn.text = "ROYAL ARMY\n(Aliados Azul / Cáqui)"
-	_royal_btn.custom_minimum_size = Vector2(225, 52)
-	_royal_btn.pressed.connect(func() -> void:
-		selected_team = NetworkManager.TEAM_ROYAL
-		_refresh_summary()
+	var solo_btn := Button.new()
+	solo_btn.text = "Treino Offline 12v12 Bots"
+	solo_btn.custom_minimum_size = Vector2(480, 46)
+	solo_btn.pressed.connect(func() -> void:
+		_pending_mode = "bots"
+		show_screen("armory")
 	)
-	top_pick.add_child(_royal_btn)
+	mode_box.add_child(solo_btn)
 
-	_nat_btn = Button.new()
-	_nat_btn.text = "NATIONAL ARMY\n(Cinza Chumbo / Vermelho)"
-	_nat_btn.custom_minimum_size = Vector2(225, 52)
-	_nat_btn.pressed.connect(func() -> void:
-		selected_team = NetworkManager.TEAM_NATIONAL
-		_refresh_summary()
+	var mp_toggle_btn := Button.new()
+	mp_toggle_btn.text = "Multiplayer Online"
+	mp_toggle_btn.custom_minimum_size = Vector2(480, 46)
+	mp_toggle_btn.pressed.connect(func() -> void:
+		_mp_drawer.visible = not _mp_drawer.visible
 	)
-	top_pick.add_child(_nat_btn)
+	mode_box.add_child(mp_toggle_btn)
 
-	_preview_portrait = TextureRect.new()
-	_preview_portrait.custom_minimum_size = Vector2(64, 64)
-	_preview_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_preview_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	top_pick.add_child(_preview_portrait)
+	# 3. Multiplayer Drawer Panel
+	var mp_card := PanelContainer.new()
+	mp_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.06, 0.16, 0.26, 0.92), Color(0.30, 0.72, 1.0), 2))
+	mode_box.add_child(mp_card)
 
-	# 2. Class Picker (Exclusive Weapons per Class)
-	var cls_box := HBoxContainer.new()
-	cls_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	cls_box.add_theme_constant_override("separation", 12)
-	vbox.add_child(cls_box)
+	var mp_m := MarginContainer.new()
+	mp_m.add_theme_constant_override("margin_left", 14)
+	mp_m.add_theme_constant_override("margin_right", 14)
+	mp_m.add_theme_constant_override("margin_top", 10)
+	mp_m.add_theme_constant_override("margin_bottom", 10)
+	mp_card.add_child(mp_m)
 
-	var cls_names: Array[String] = [
-		"SOLDIER (110 HP)\nSMG / Shotgun / Pistola / TNT",
-		"GUNNER (150 HP)\nMetralhadora MG / Shotgun / Bazooka",
-		"COMMANDO (80 HP)\nSniper / Faca / Pistola / TNT",
-	]
-	for i in range(3):
-		var cbtn := Button.new()
-		cbtn.text = cls_names[i]
-		cbtn.custom_minimum_size = Vector2(230, 68)
-		var cid: int = i
-		cbtn.pressed.connect(func() -> void:
-			selected_class = cid
-			_refresh_summary()
-		)
-		cls_box.add_child(cbtn)
-		_class_buttons.append(cbtn)
+	_mp_drawer = VBoxContainer.new()
+	_mp_drawer.add_theme_constant_override("separation", 8)
+	mp_m.add_child(_mp_drawer)
 
-	_summary_lbl = Label.new()
-	_summary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_summary_lbl.add_theme_font_size_override("font_size", 15)
-	_summary_lbl.add_theme_color_override("font_color", Color(0.88, 0.95, 1.0))
-	vbox.add_child(_summary_lbl)
+	var mp_hdr := Label.new()
+	mp_hdr.text = "CONEXÃO MULTIPLAYER ONLINE (12v12 Servidor Dedicado)"
+	mp_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mp_hdr.add_theme_font_size_override("font_size", 15)
+	mp_hdr.add_theme_color_override("font_color", Color(0.50, 0.90, 1.0))
+	_mp_drawer.add_child(mp_hdr)
 
-	# 3. PRIMARY SECTION: Online Multiplayer (0 forced bots)
-	var online_card := PanelContainer.new()
-	online_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.08, 0.18, 0.28, 0.9), Color(0.28, 0.72, 1.0), 2))
-	vbox.add_child(online_card)
-
-	var on_margin := MarginContainer.new()
-	on_margin.add_theme_constant_override("margin_left", 14)
-	on_margin.add_theme_constant_override("margin_right", 14)
-	on_margin.add_theme_constant_override("margin_top", 10)
-	on_margin.add_theme_constant_override("margin_bottom", 10)
-	online_card.add_child(on_margin)
-
-	var on_v := VBoxContainer.new()
-	on_v.add_theme_constant_override("separation", 8)
-	on_margin.add_child(on_v)
-
-	var on_hdr := Label.new()
-	on_hdr.text = "MULTIPLAYER ONLINE (12v12 Jogadores Reais — Sem Bots)"
-	on_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	on_hdr.add_theme_font_size_override("font_size", 17)
-	on_hdr.add_theme_color_override("font_color", Color(0.42, 0.90, 1.0))
-	on_v.add_child(on_hdr)
-
-	var ip_hint := Label.new()
-	ip_hint.text = "Seu IP Local (LAN/VPN): %s" % _get_lan_ip_hint()
-	ip_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	ip_hint.add_theme_font_size_override("font_size", 13)
-	on_v.add_child(ip_hint)
-
-	var host_online_btn := Button.new()
-	host_online_btn.text = "CRIAR SALA ONLINE (Host Multiplayer — 0 Bots)"
-	host_online_btn.custom_minimum_size = Vector2(560, 44)
-	host_online_btn.pressed.connect(func() -> void:
-		hide_menu()
-		host_online_pressed.emit(selected_team, selected_class, maxi(1024, int(_port_input.text)))
-	)
-	on_v.add_child(host_online_btn)
-
-	var join_row := HBoxContainer.new()
-	join_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	join_row.add_theme_constant_override("separation", 10)
-	on_v.add_child(join_row)
+	var ip_row := HBoxContainer.new()
+	ip_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	ip_row.add_theme_constant_override("separation", 8)
+	_mp_drawer.add_child(ip_row)
 
 	var ip_lbl := Label.new()
-	ip_lbl.text = "IP:"
-	join_row.add_child(ip_lbl)
+	ip_lbl.text = "IP / Domínio:"
+	ip_row.add_child(ip_lbl)
 
 	_ip_input = LineEdit.new()
 	_ip_input.text = "127.0.0.1"
-	_ip_input.custom_minimum_size = Vector2(180, 38)
-	join_row.add_child(_ip_input)
+	_ip_input.custom_minimum_size = Vector2(170, 34)
+	ip_row.add_child(_ip_input)
 
 	var port_lbl := Label.new()
-	port_lbl.text = "Porta:"
-	join_row.add_child(port_lbl)
+	port_lbl.text = "Porta UDP:"
+	ip_row.add_child(port_lbl)
 
 	_port_input = LineEdit.new()
 	_port_input.text = "7777"
-	_port_input.custom_minimum_size = Vector2(85, 38)
-	join_row.add_child(_port_input)
+	_port_input.custom_minimum_size = Vector2(75, 34)
+	ip_row.add_child(_port_input)
+
+	# Presets
+	var preset_local := Button.new()
+	preset_local.text = "Localhost 127.0.0.1"
+	preset_local.pressed.connect(func() -> void:
+		_ip_input.text = "127.0.0.1"
+		_port_input.text = "7777"
+	)
+	ip_row.add_child(preset_local)
+
+	var preset_vps := Button.new()
+	preset_vps.text = "Servidor VPS"
+	preset_vps.pressed.connect(func() -> void:
+		_ip_input.text = "game.warchampions.io"
+		_port_input.text = "7777"
+	)
+	ip_row.add_child(preset_vps)
+
+	var mp_act_row := HBoxContainer.new()
+	mp_act_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	mp_act_row.add_theme_constant_override("separation", 10)
+	_mp_drawer.add_child(mp_act_row)
+
+	var host_btn := Button.new()
+	host_btn.text = "Criar Sala (Host)"
+	host_btn.custom_minimum_size = Vector2(230, 38)
+	host_btn.pressed.connect(func() -> void:
+		_pending_mode = "host"
+		show_screen("armory")
+	)
+	mp_act_row.add_child(host_btn)
 
 	var join_btn := Button.new()
-	join_btn.text = "ENTRAR NA PARTIDA ONLINE"
+	join_btn.text = "Entrar no Servidor"
 	join_btn.custom_minimum_size = Vector2(230, 38)
 	join_btn.pressed.connect(func() -> void:
-		hide_menu()
-		join_online_pressed.emit(selected_team, selected_class, _ip_input.text.strip_edges(), maxi(1024, int(_port_input.text)))
+		_pending_mode = "join"
+		show_screen("armory")
 	)
-	join_row.add_child(join_btn)
+	mp_act_row.add_child(join_btn)
 
-	# 4. OPTIONAL OFFLINE BOTS + LAG SIM TESTING ROW
-	var test_row := HBoxContainer.new()
-	test_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	test_row.add_theme_constant_override("separation", 12)
-	vbox.add_child(test_row)
+	# 4. Secondary Navigation Buttons
+	var nav_row := HBoxContainer.new()
+	nav_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	nav_row.add_theme_constant_override("separation", 12)
+	_hub_screen.add_child(nav_row)
 
-	var solo_btn := Button.new()
-	solo_btn.text = "Treino Offline com Bots (12v12)"
-	solo_btn.custom_minimum_size = Vector2(310, 40)
-	solo_btn.pressed.connect(func() -> void:
-		hide_menu()
-		play_offline_bots_pressed.emit(selected_team, selected_class)
+	var armory_btn := Button.new()
+	armory_btn.text = "Arsenal & Classes"
+	armory_btn.custom_minimum_size = Vector2(235, 40)
+	armory_btn.pressed.connect(func() -> void:
+		show_screen("armory")
 	)
-	test_row.add_child(solo_btn)
+	nav_row.add_child(armory_btn)
+
+	var settings_btn := Button.new()
+	settings_btn.text = "Configurações / Controles"
+	settings_btn.custom_minimum_size = Vector2(235, 40)
+	settings_btn.pressed.connect(func() -> void:
+		show_screen("settings")
+	)
+	nav_row.add_child(settings_btn)
 
 	_lag_btn = Button.new()
 	_lag_btn.text = "Simulador de Lag: OFF (0ms)"
-	_lag_btn.custom_minimum_size = Vector2(290, 40)
+	_lag_btn.custom_minimum_size = Vector2(240, 40)
 	_lag_btn.pressed.connect(_toggle_lag_sim)
-	test_row.add_child(_lag_btn)
+	nav_row.add_child(_lag_btn)
 
+	# 5. Status Label
 	_status_lbl = Label.new()
-	_status_lbl.text = "Controles: WASD Mover | Espaço Pular/Paraquedas | Ctrl/C Agachar | 1-4/Q Armas | 5-9/F/G Skills | Z/X/V Itens | E Veículo | T Emote"
+	_status_lbl.text = "IP Local: %s | Servidor padrão UDP 7777" % _get_lan_ip_hint()
 	_status_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_status_lbl.add_theme_font_size_override("font_size", 11)
-	_status_lbl.add_theme_color_override("font_color", Color(0.75, 0.80, 0.88))
-	vbox.add_child(_status_lbl)
+	_status_lbl.add_theme_font_size_override("font_size", 12)
+	_status_lbl.add_theme_color_override("font_color", Color(0.72, 0.82, 0.92))
+	_hub_screen.add_child(_status_lbl)
+
+
+func _build_armory_screen(parent: Control) -> void:
+	_armory_screen = VBoxContainer.new()
+	_armory_screen.visible = false
+	_armory_screen.add_theme_constant_override("separation", 10)
+	parent.add_child(_armory_screen)
+
+	# Header with Back button
+	var arm_top := HBoxContainer.new()
+	_armory_screen.add_child(arm_top)
+
+	var back_btn := Button.new()
+	back_btn.text = "<- Voltar ao Hub"
+	back_btn.custom_minimum_size = Vector2(160, 36)
+	back_btn.pressed.connect(func() -> void:
+		show_screen("hub")
+	)
+	arm_top.add_child(back_btn)
+
+	var arm_title := Label.new()
+	arm_title.text = "ARSENAL DE COMBATE — FAÇÃO & CLASSE"
+	arm_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	arm_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	arm_title.add_theme_font_size_override("font_size", 22)
+	arm_title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.24))
+	arm_top.add_child(arm_title)
+
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(160, 36)
+	arm_top.add_child(spacer)
+
+	# Faction Picker Row
+	var fac_box := HBoxContainer.new()
+	fac_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	fac_box.add_theme_constant_override("separation", 18)
+	_armory_screen.add_child(fac_box)
+
+	_preview_flag = TextureRect.new()
+	_preview_flag.custom_minimum_size = Vector2(64, 46)
+	_preview_flag.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_preview_flag.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	fac_box.add_child(_preview_flag)
+
+	_royal_btn = Button.new()
+	_royal_btn.text = "ROYAL ARMY\n(Aliados Azul / Ouro)"
+	_royal_btn.custom_minimum_size = Vector2(260, 50)
+	_royal_btn.pressed.connect(func() -> void:
+		select_team(NetworkManager.TEAM_ROYAL)
+	)
+	fac_box.add_child(_royal_btn)
+
+	_nat_btn = Button.new()
+	_nat_btn.text = "NATIONAL ARMY\n(Cinza Chumbo / Carmesim)"
+	_nat_btn.custom_minimum_size = Vector2(260, 50)
+	_nat_btn.pressed.connect(func() -> void:
+		select_team(NetworkManager.TEAM_NATIONAL)
+	)
+	fac_box.add_child(_nat_btn)
+
+	_preview_portrait = TextureRect.new()
+	_preview_portrait.custom_minimum_size = Vector2(54, 54)
+	_preview_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_preview_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	fac_box.add_child(_preview_portrait)
+
+	# 3 Class Cards Row
+	var cls_row := HBoxContainer.new()
+	cls_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	cls_row.add_theme_constant_override("separation", 12)
+	_armory_screen.add_child(cls_row)
+
+	var class_info := [
+		{
+			"id": NetworkManager.CLASS_SOLDIER,
+			"name": "SOLDIER",
+			"stats": "HP: 110 | Velocidade: 7.8 m/s",
+			"weapons": "SMG, Shotgun, Pistola, TNT",
+			"skills": "1. Combat Medicine (Cura)\n2. Blasting Strike (Repulsão)\n3. Grenade Spam (Dispersão)",
+			"col": Color(0.20, 0.45, 0.75),
+		},
+		{
+			"id": NetworkManager.CLASS_GUNNER,
+			"name": "GUNNER",
+			"stats": "HP: 150 | Velocidade: 6.4 m/s",
+			"weapons": "Metralhadora MG, Shotgun, Bazooka",
+			"skills": "1. Hero Shield (Escudo)\n2. I Eat Grenades (Absorve)\n3. Frenzy Fire (Rajada)",
+			"col": Color(0.65, 0.40, 0.15),
+		},
+		{
+			"id": NetworkManager.CLASS_COMMANDO,
+			"name": "COMMANDO",
+			"stats": "HP: 80 | Velocidade: 9.0 m/s",
+			"weapons": "Sniper, Faca, Pistola, TNT",
+			"skills": "1. Stealth / Cloak (Invisível)\n2. Poison Dart (Veneno DoT)\n3. Troop Trap (Mina Terrestre)",
+			"col": Color(0.45, 0.20, 0.60),
+		},
+	]
+
+	_class_buttons.clear()
+	_class_cards.clear()
+
+	for info in class_info:
+		var c_card := PanelContainer.new()
+		c_card.custom_minimum_size = Vector2(290, 230)
+		c_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.08, 0.12, 0.18, 0.95), info["col"], 2))
+		cls_row.add_child(c_card)
+		_class_cards.append(c_card)
+
+		var cm := MarginContainer.new()
+		cm.add_theme_constant_override("margin_left", 12)
+		cm.add_theme_constant_override("margin_right", 12)
+		cm.add_theme_constant_override("margin_top", 10)
+		cm.add_theme_constant_override("margin_bottom", 10)
+		c_card.add_child(cm)
+
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 6)
+		cm.add_child(cv)
+
+		var c_btn := Button.new()
+		c_btn.text = "ESCOLHER %s" % info["name"]
+		c_btn.custom_minimum_size = Vector2(250, 34)
+		var cid: int = int(info["id"])
+		c_btn.pressed.connect(func() -> void:
+			select_class(cid)
+		)
+		cv.add_child(c_btn)
+		_class_buttons.append(c_btn)
+
+		var stat_lbl := Label.new()
+		stat_lbl.text = info["stats"]
+		stat_lbl.add_theme_font_size_override("font_size", 12)
+		stat_lbl.add_theme_color_override("font_color", Color(1.0, 0.88, 0.40))
+		cv.add_child(stat_lbl)
+
+		var wep_hdr := Label.new()
+		wep_hdr.text = "Armas Exclusivas:"
+		wep_hdr.add_theme_font_size_override("font_size", 12)
+		cv.add_child(wep_hdr)
+
+		var wep_lbl := Label.new()
+		wep_lbl.text = info["weapons"]
+		wep_lbl.add_theme_font_size_override("font_size", 11)
+		wep_lbl.add_theme_color_override("font_color", Color(0.85, 0.90, 0.98))
+		wep_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cv.add_child(wep_lbl)
+
+		var skl_hdr := Label.new()
+		skl_hdr.text = "Habilidades Únicas:"
+		skl_hdr.add_theme_font_size_override("font_size", 12)
+		cv.add_child(skl_hdr)
+
+		var skl_lbl := Label.new()
+		skl_lbl.text = info["skills"]
+		skl_lbl.add_theme_font_size_override("font_size", 11)
+		skl_lbl.add_theme_color_override("font_color", Color(0.70, 0.88, 0.70))
+		skl_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cv.add_child(skl_lbl)
+
+	_summary_lbl = Label.new()
+	_summary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_summary_lbl.add_theme_font_size_override("font_size", 14)
+	_summary_lbl.add_theme_color_override("font_color", Color(0.92, 0.96, 1.0))
+	_armory_screen.add_child(_summary_lbl)
+
+	# Deploy Button
+	_deploy_btn = Button.new()
+	_deploy_btn.text = "ENTRAR NA BATALHA"
+	_deploy_btn.custom_minimum_size = Vector2(460, 48)
+	_deploy_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_deploy_btn.add_theme_color_override("font_color", Color(1.0, 0.94, 0.40))
+	_deploy_btn.pressed.connect(_on_deploy_clicked)
+	_armory_screen.add_child(_deploy_btn)
+
+
+func _build_settings_screen(parent: Control) -> void:
+	_settings_screen = VBoxContainer.new()
+	_settings_screen.visible = false
+	_settings_screen.add_theme_constant_override("separation", 10)
+	parent.add_child(_settings_screen)
+
+	# Settings Header
+	var st_top := HBoxContainer.new()
+	_settings_screen.add_child(st_top)
+
+	_settings_back_btn = Button.new()
+	_settings_back_btn.text = "<- Voltar ao Hub"
+	_settings_back_btn.custom_minimum_size = Vector2(160, 36)
+	_settings_back_btn.pressed.connect(func() -> void:
+		show_screen("hub")
+	)
+	st_top.add_child(_settings_back_btn)
+
+	_settings_title = Label.new()
+	_settings_title.text = "CONFIGURAÇÕES & CONTROLES"
+	_settings_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_settings_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_settings_title.add_theme_font_size_override("font_size", 22)
+	_settings_title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.24))
+	st_top.add_child(_settings_title)
+
+	var st_spacer := Control.new()
+	st_spacer.custom_minimum_size = Vector2(160, 36)
+	st_top.add_child(st_spacer)
+
+	# Sliders & Controls layout
+	var sets_box := HBoxContainer.new()
+	sets_box.add_theme_constant_override("separation", 18)
+	_settings_screen.add_child(sets_box)
+
+	# Left Column: Audio & Sensitivity Sliders
+	var left_card := PanelContainer.new()
+	left_card.custom_minimum_size = Vector2(420, 310)
+	left_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.07, 0.11, 0.17, 0.95), Color(0.35, 0.50, 0.70), 2))
+	sets_box.add_child(left_card)
+
+	var lm := MarginContainer.new()
+	lm.add_theme_constant_override("margin_left", 16)
+	lm.add_theme_constant_override("margin_right", 16)
+	lm.add_theme_constant_override("margin_top", 12)
+	lm.add_theme_constant_override("margin_bottom", 12)
+	left_card.add_child(lm)
+
+	var lv := VBoxContainer.new()
+	lv.add_theme_constant_override("separation", 10)
+	lm.add_child(lv)
+
+	var aud_hdr := Label.new()
+	aud_hdr.text = "Áudio & Sensibilidade do Mouse"
+	aud_hdr.add_theme_font_size_override("font_size", 16)
+	aud_hdr.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
+	lv.add_child(aud_hdr)
+
+	# Master Volume
+	var m_lbl := Label.new()
+	m_lbl.text = "Volume Geral (Master): 100%"
+	lv.add_child(m_lbl)
+	_master_vol_slider = HSlider.new()
+	_master_vol_slider.min_value = 0.0
+	_master_vol_slider.max_value = 100.0
+	_master_vol_slider.value = SoundSynthesizer.master_volume * 100.0
+	_master_vol_slider.value_changed.connect(func(v: float) -> void:
+		m_lbl.text = "Volume Geral (Master): %d%%" % int(v)
+		SoundSynthesizer.set_master_volume(v / 100.0)
+	)
+	lv.add_child(_master_vol_slider)
+
+	# SFX Volume
+	var s_lbl := Label.new()
+	s_lbl.text = "Volume dos Efeitos (SFX): 100%"
+	lv.add_child(s_lbl)
+	_sfx_vol_slider = HSlider.new()
+	_sfx_vol_slider.min_value = 0.0
+	_sfx_vol_slider.max_value = 100.0
+	_sfx_vol_slider.value = SoundSynthesizer.sfx_volume * 100.0
+	_sfx_vol_slider.value_changed.connect(func(v: float) -> void:
+		s_lbl.text = "Volume dos Efeitos (SFX): %d%%" % int(v)
+		SoundSynthesizer.set_sfx_volume(v / 100.0)
+	)
+	lv.add_child(_sfx_vol_slider)
+
+	# Music Volume
+	var mus_lbl := Label.new()
+	mus_lbl.text = "Volume da Música: 100%"
+	lv.add_child(mus_lbl)
+	_music_vol_slider = HSlider.new()
+	_music_vol_slider.min_value = 0.0
+	_music_vol_slider.max_value = 100.0
+	_music_vol_slider.value = SoundSynthesizer.music_volume * 100.0
+	_music_vol_slider.value_changed.connect(func(v: float) -> void:
+		mus_lbl.text = "Volume da Música: %d%%" % int(v)
+		SoundSynthesizer.set_music_volume(v / 100.0)
+	)
+	lv.add_child(_music_vol_slider)
+
+	var mute_btn := Button.new()
+	mute_btn.text = "Alternar Mudo / Música (M)"
+	mute_btn.pressed.connect(func() -> void:
+		var on: bool = SoundSynthesizer.toggle_music()
+		mute_btn.text = "Música: ATIVADA" if on else "Música: DESATIVADA (M)"
+	)
+	lv.add_child(mute_btn)
+
+	# Mouse Sensitivity
+	var sens_lbl := Label.new()
+	sens_lbl.text = "Sensibilidade do Mouse: %.4f rad/px" % current_mouse_sensitivity
+	lv.add_child(sens_lbl)
+	_sens_slider = HSlider.new()
+	_sens_slider.min_value = 0.0010
+	_sens_slider.max_value = 0.0060
+	_sens_slider.step = 0.0001
+	_sens_slider.value = current_mouse_sensitivity
+	_sens_slider.value_changed.connect(func(v: float) -> void:
+		sens_lbl.text = "Sensibilidade do Mouse: %.4f rad/px" % v
+		set_mouse_sensitivity(v)
+	)
+	lv.add_child(_sens_slider)
+
+	# Right Column: Controls Cheat-Sheet
+	var right_card := PanelContainer.new()
+	right_card.custom_minimum_size = Vector2(460, 310)
+	right_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.07, 0.11, 0.17, 0.95), Color(0.35, 0.50, 0.70), 2))
+	sets_box.add_child(right_card)
+
+	var rm := MarginContainer.new()
+	rm.add_theme_constant_override("margin_left", 16)
+	rm.add_theme_constant_override("margin_right", 16)
+	rm.add_theme_constant_override("margin_top", 12)
+	rm.add_theme_constant_override("margin_bottom", 12)
+	right_card.add_child(rm)
+
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 6)
+	rm.add_child(rv)
+
+	var ctrl_hdr := Label.new()
+	ctrl_hdr.text = "Guia de Controles (Resumo)"
+	ctrl_hdr.add_theme_font_size_override("font_size", 16)
+	ctrl_hdr.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
+	rv.add_child(ctrl_hdr)
+
+	var controls_text: String = (
+		"• WASD: Movimentação\n" +
+		"• Espaço: Pular / Paraquedas (segurar após 1.0s de queda)\n" +
+		"• Ctrl / C: Agachar\n" +
+		"• 1, 2, 3, 4 / Q: Selecionar / Alternar Armas\n" +
+		"• 5-9 / F / G: Habilidades de Classe\n" +
+		"• Z / X / V: Widgets / Antídoto / Chave Inglesa\n" +
+		"• E: Entrar / Sair de Veículo (Jeep, Tanque, Avião, Barco, AA)\n" +
+		"• R: Recarregar Arma\n" +
+		"• Botão Direito: Mirar / Luneta Sniper\n" +
+		"• F8: Alternar Simulador de Lag de Rede\n" +
+		"• M: Ligar / Desligar Música\n" +
+		"• T: Provocar / Emote Comic\n" +
+		"• ESC: Menu de Pausa e Configurações"
+	)
+	var ctrl_body := Label.new()
+	ctrl_body.text = controls_text
+	ctrl_body.add_theme_font_size_override("font_size", 12)
+	ctrl_body.add_theme_color_override("font_color", Color(0.88, 0.92, 0.98))
+	rv.add_child(ctrl_body)
+
+	# In-match Pause Action Row (Retomar / Sair)
+	var pause_row := HBoxContainer.new()
+	pause_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	pause_row.add_theme_constant_override("separation", 16)
+	_settings_screen.add_child(pause_row)
+
+	_resume_btn = Button.new()
+	_resume_btn.text = "Retomar Partida"
+	_resume_btn.custom_minimum_size = Vector2(230, 42)
+	_resume_btn.visible = false
+	_resume_btn.pressed.connect(func() -> void:
+		hide_menu()
+		resume_match_requested.emit()
+	)
+	pause_row.add_child(_resume_btn)
+
+	_leave_btn = Button.new()
+	_leave_btn.text = "Desconectar / Voltar ao Menu"
+	_leave_btn.custom_minimum_size = Vector2(230, 42)
+	_leave_btn.visible = false
+	_leave_btn.pressed.connect(func() -> void:
+		set_in_match_mode(false)
+		show_screen("hub")
+		leave_match_requested.emit()
+	)
+	pause_row.add_child(_leave_btn)
+
+
+func show_screen(screen_name: String) -> void:
+	current_screen = screen_name
+	if _hub_screen != null:
+		_hub_screen.visible = (screen_name == "hub")
+	if _armory_screen != null:
+		_armory_screen.visible = (screen_name == "armory")
+	if _settings_screen != null:
+		_settings_screen.visible = (screen_name == "settings")
+	if screen_name == "armory":
+		_refresh_summary()
+
+
+func set_in_match_mode(in_match: bool) -> void:
+	_in_match_mode = in_match
+	if _resume_btn != null:
+		_resume_btn.visible = in_match
+	if _leave_btn != null:
+		_leave_btn.visible = in_match
+	if _settings_back_btn != null:
+		_settings_back_btn.visible = not in_match
+	if _settings_title != null:
+		_settings_title.text = "PAUSA — CONFIGURAÇÕES" if in_match else "CONFIGURAÇÕES & CONTROLES"
+
+
+func select_team(p_team: int) -> void:
+	selected_team = clampi(p_team, 0, 1)
+	_refresh_summary()
+	team_selected.emit(selected_team)
+
+
+func select_class(p_class_id: int) -> void:
+	selected_class = clampi(p_class_id, 0, 2)
+	_refresh_summary()
+	class_selected.emit(selected_class)
+
+
+func set_mouse_sensitivity(val: float) -> void:
+	current_mouse_sensitivity = clampf(val, 0.0010, 0.0060)
+	HeroCamera.default_sensitivity = current_mouse_sensitivity
+	if is_inside_tree():
+		for node in get_tree().get_nodes_in_group("hero_cameras"):
+			if node is HeroCamera:
+				node.mouse_sensitivity = current_mouse_sensitivity
+				node.sensitivity = current_mouse_sensitivity
+		var cam: HeroCamera = get_tree().root.find_child("HeroCamera", true, false) as HeroCamera
+		if cam != null:
+			cam.mouse_sensitivity = current_mouse_sensitivity
+			cam.sensitivity = current_mouse_sensitivity
+
+
+func set_status_text(text: String) -> void:
+	if _status_lbl != null:
+		_status_lbl.text = text
+
+
+func _on_deploy_clicked() -> void:
+	hide_menu()
+	deploy_requested.emit(selected_team, selected_class)
+	match _pending_mode:
+		"host":
+			var port: int = maxi(1024, int(_port_input.text)) if _port_input != null else NetworkManager.DEFAULT_PORT
+			host_online_pressed.emit(selected_team, selected_class, port)
+			host_online_requested.emit(selected_team, selected_class, port)
+		"join":
+			var ip: String = _ip_input.text.strip_edges() if _ip_input != null else "127.0.0.1"
+			var port: int = maxi(1024, int(_port_input.text)) if _port_input != null else NetworkManager.DEFAULT_PORT
+			join_online_pressed.emit(selected_team, selected_class, ip, port)
+			join_online_requested.emit(selected_team, selected_class, ip, port)
+		_:
+			play_offline_bots_pressed.emit(selected_team, selected_class)
+			play_offline_bots_requested.emit(selected_team, selected_class)
 
 
 func _toggle_lag_sim() -> void:
@@ -259,12 +743,14 @@ func _toggle_lag_sim() -> void:
 		NetworkManager.sim_latency_ms = 80.0
 		NetworkManager.sim_jitter_ms = 12.0
 		NetworkManager.sim_packet_loss = 0.02
-		_lag_btn.text = "Simulador de Lag: ON (160ms + 2% Perda)"
+		if _lag_btn != null:
+			_lag_btn.text = "Simulador de Lag: ON (160ms + 2% Perda)"
 	else:
 		NetworkManager.sim_latency_ms = 0.0
 		NetworkManager.sim_jitter_ms = 0.0
 		NetworkManager.sim_packet_loss = 0.0
-		_lag_btn.text = "Simulador de Lag: OFF (0ms)"
+		if _lag_btn != null:
+			_lag_btn.text = "Simulador de Lag: OFF (0ms)"
 
 
 func _refresh_summary() -> void:
@@ -288,6 +774,11 @@ func _refresh_summary() -> void:
 		_nat_btn.modulate = Color(1.0, 1.0, 1.0) if selected_team == 1 else Color(0.65, 0.68, 0.72)
 	for i in range(_class_buttons.size()):
 		_class_buttons[i].modulate = Color(1.0, 0.96, 0.75) if i == selected_class else Color(0.68, 0.72, 0.78)
+	for i in range(_class_cards.size()):
+		var border_col: Color = Color(1.0, 0.86, 0.24) if i == selected_class else Color(0.35, 0.45, 0.55)
+		var sb: StyleBoxFlat = _class_cards[i].get_theme_stylebox("panel") as StyleBoxFlat
+		if sb != null:
+			sb.border_color = border_col
 
 
 func show_menu() -> void:
