@@ -11,14 +11,14 @@ const MG_FIRE_INTERVAL: float = 0.09
 
 func _setup_vehicle_stats_and_seats() -> void:
 	vehicle_type = VehicleType.PLANE
-	max_hp = 380
-	hp = 380
+	max_hp = 340
+	hp = 340
 	mass = 1400.0
 	gravity_scale = 1.0
-	_add_seat(SeatType.DRIVER, Vector3(0.0, 1.35, -0.3), false, false)
+	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.92, -0.15), false, false, true, "sit")
 	# Wing-Riding slots on Left & Right wings!
-	_add_seat(SeatType.WING_RIDER, Vector3(-3.3, 1.05, 0.15), true, true)
-	_add_seat(SeatType.WING_RIDER, Vector3(3.3, 1.05, 0.15), true, true)
+	_add_seat(SeatType.WING_RIDER, Vector3(-3.3, 1.05, 0.15), true, true, false, "stand")
+	_add_seat(SeatType.WING_RIDER, Vector3(3.3, 1.05, 0.15), true, true, false, "stand")
 
 
 func _build_vehicle_mesh() -> void:

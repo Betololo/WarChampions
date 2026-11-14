@@ -8,10 +8,10 @@ const FLAK_SPEED: float = 95.0
 
 func _setup_vehicle_stats_and_seats() -> void:
 	vehicle_type = VehicleType.AA_GUN
-	max_hp = 350
-	hp = 350
+	max_hp = 320
+	hp = 320
 	freeze = true
-	_add_seat(SeatType.GUNNER, Vector3(0.0, 1.35, 0.45), false, false)
+	_add_seat(SeatType.GUNNER, Vector3(0.0, 0.88, 0.52), false, false, false, "sit")
 
 
 func _build_vehicle_mesh() -> void:

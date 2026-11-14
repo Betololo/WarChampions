@@ -54,6 +54,10 @@ var aim_pitch: float = 0.0
 var selected_weapon_slot: int = 0
 var current_vehicle_id: int = -1
 var current_seat_index: int = -1
+var current_seat_enclosed: bool = false
+var current_seat_pose: String = ""
+var current_seat_can_shoot: bool = false
+var _last_vehicle_id_for_cam: int = -1
 var knockback_seq: int = 0
 var active_flags: int = 0
 var last_killer_id: int = -1
@@ -543,9 +547,12 @@ func _process(delta: float) -> void:
 	if is_local_player or is_bot or NetworkManager.is_server_authority():
 		visual_error_offset = visual_error_offset.lerp(Vector3.ZERO, minf(1.0, 20.0 * delta))
 		if visual_root != null:
-			var frac: float = Engine.get_physics_interpolation_fraction()
-			var interp_world: Vector3 = _prev_phys_pos.lerp(_curr_phys_pos, frac)
-			visual_root.global_position = interp_world + visual_error_offset
+			if current_vehicle_id >= 0:
+				visual_root.global_position = global_position
+			else:
+				var frac: float = Engine.get_physics_interpolation_fraction()
+				var interp_world: Vector3 = _prev_phys_pos.lerp(_curr_phys_pos, frac)
+				visual_root.global_position = interp_world + visual_error_offset
 			visual_root.rotation.y = aim_yaw
 	else:
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())
@@ -593,6 +600,45 @@ func _animate_character(delta: float) -> void:
 		return
 
 	_hips_pivot.rotation.x = 0.0
+
+	var slot: int = clampi(selected_weapon_slot, 0, maxi(0, weapons.size() - 1))
+	var cur_w: WeaponBase = weapons[slot] as WeaponBase if slot < weapons.size() else null
+	var reloading: bool = cur_w != null and cur_w.is_reloading
+	var fire_blend: float = clampf(_fire_pose_timer * 3.2, 0.0, 1.0)
+	var kick: float = _weapon_recoil_anim
+
+	if current_vehicle_id >= 0:
+		if current_seat_pose == "hidden":
+			return
+		var can_shoot_seat: bool = current_seat_can_shoot or current_seat_index > 0
+		if _held_weapon_root != null:
+			_held_weapon_root.visible = can_shoot_seat
+		if current_seat_pose == "sit":
+			_hips_pivot.position.y = 0.28
+			# +X rotation swings downward -Y legs forward toward -Z into the cockpit/footwell
+			_leg_l_pivot.rotation.x = 1.45
+			_leg_r_pivot.rotation.x = 1.45
+			_torso_pivot.rotation.x = -0.04
+			_torso_pivot.rotation.y = 0.0
+			_head_pivot.rotation.x = clampf(aim_pitch * 0.25, -0.35, 0.35)
+		else:
+			_hips_pivot.position.y = 0.76
+			_leg_l_pivot.rotation.x = 0.0
+			_leg_r_pivot.rotation.x = 0.0
+			_torso_pivot.rotation.x = aim_pitch * 0.25 - kick * 0.05
+			_torso_pivot.rotation.y = 0.0
+			_head_pivot.rotation.x = aim_pitch * 0.35
+
+		if can_shoot_seat:
+			_pose_held_weapon_and_arms(0.0, fire_blend, kick, reloading)
+		else:
+			_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, Vector3(0.20, 0.34, -0.36), Vector3(0.75, -0.45, 0.55))
+			_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, Vector3(-0.20, 0.34, -0.36), Vector3(-0.80, -0.45, 0.45))
+		return
+
+	if _held_weapon_root != null:
+		_held_weapon_root.visible = true
+
 	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
 	if horiz_speed > 0.4 and is_on_floor():
 		_walk_phase += horiz_speed * delta * 2.1
@@ -623,59 +669,56 @@ func _animate_character(delta: float) -> void:
 		_forearm_r_pivot.rotation = Vector3(0.8, 0.0, 0.0)
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
 	else:
-		var slot: int = clampi(selected_weapon_slot, 0, maxi(0, weapons.size() - 1))
-		var cur_w: WeaponBase = weapons[slot] as WeaponBase if slot < weapons.size() else null
-		var reloading: bool = cur_w != null and cur_w.is_reloading
-		var fire_blend: float = clampf(_fire_pose_timer * 3.2, 0.0, 1.0)
-		var kick: float = _weapon_recoil_anim
-
 		_leg_l_pivot.rotation.x = stride * 0.72 + (-0.55 if is_crouching else 0.0)
 		_leg_r_pivot.rotation.x = -stride * 0.72 + (-0.55 if is_crouching else 0.0)
 		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0) - kick * 0.05
 		_torso_pivot.rotation.y = lerpf(0.0, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
 		_head_pivot.rotation.x = aim_pitch * 0.35
+		_pose_held_weapon_and_arms(stride, fire_blend, kick, reloading)
 
-		var left_target: Vector3 = Vector3(-0.18, 0.34, -0.24)
-		var right_pole: Vector3 = Vector3(0.75, -0.45, 0.55)
-		var left_pole: Vector3 = Vector3(-0.80, -0.45, 0.45)
 
-		if _held_weapon_root != null:
-			match _shown_weapon_kind:
-				WeaponBase.WeaponKind.BAZOOKA:
-					_held_weapon_root.position = Vector3(0.24, 0.58, -0.02 + kick * 0.09)
-					_held_weapon_root.rotation = Vector3(aim_pitch * 0.65 + kick * 0.15, 0.06, 0.0)
-				WeaponBase.WeaponKind.MG:
-					var reload_tilt: float = 0.45 if reloading else 0.0
-					_held_weapon_root.position = Vector3(0.24, 0.23, -0.14 + kick * 0.05)
-					_held_weapon_root.rotation = Vector3(aim_pitch * 0.45 + 0.04 + kick * 0.07 - reload_tilt * 0.4, lerpf(0.42, 0.14, fire_blend), reload_tilt)
-				WeaponBase.WeaponKind.PISTOL:
-					_held_weapon_root.position = Vector3(0.20, 0.44, -0.34 + kick * 0.05)
-					_held_weapon_root.rotation = Vector3(aim_pitch * 0.75 + kick * 0.28, lerpf(0.16, 0.04, fire_blend), 0.42 if reloading else 0.0)
-				WeaponBase.WeaponKind.KNIFE:
-					var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
-					_held_weapon_root.position = Vector3(0.25 - swing_phase * 0.42, 0.34 + swing_phase * 0.10, -0.22 - swing_phase * 0.24)
-					_held_weapon_root.rotation = Vector3(-0.22 + aim_pitch * 0.45 - swing_phase * 0.55, 0.40 + swing_phase * 1.15, -0.35 - swing_phase * 0.65)
-				WeaponBase.WeaponKind.TNT:
-					var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
-					_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
-					_held_weapon_root.rotation = Vector3(aim_pitch * 0.5 - throw_phase * 0.9, 0.20, 0.0)
-				_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
-					var r_tilt: float = 0.52 if reloading else 0.0
-					var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
-					_held_weapon_root.position = Vector3(0.21, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
-					_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3, lerpf(base_yaw, 0.20, fire_blend), -0.08 + r_tilt)
+func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, reloading: bool) -> void:
+	var left_target: Vector3 = Vector3(-0.18, 0.34, -0.24)
+	var right_pole: Vector3 = Vector3(0.75, -0.45, 0.55)
+	var left_pole: Vector3 = Vector3(-0.80, -0.45, 0.45)
 
-			var right_target: Vector3 = _held_weapon_root.transform * _weapon_grip_local
-			_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, right_pole)
+	if _held_weapon_root != null:
+		match _shown_weapon_kind:
+			WeaponBase.WeaponKind.BAZOOKA:
+				_held_weapon_root.position = Vector3(0.24, 0.58, -0.02 + kick * 0.09)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.65 + kick * 0.15, 0.06, 0.0)
+			WeaponBase.WeaponKind.MG:
+				var reload_tilt: float = 0.45 if reloading else 0.0
+				_held_weapon_root.position = Vector3(0.24, 0.23, -0.14 + kick * 0.05)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.45 + 0.04 + kick * 0.07 - reload_tilt * 0.4, lerpf(0.42, 0.14, fire_blend), reload_tilt)
+			WeaponBase.WeaponKind.PISTOL:
+				_held_weapon_root.position = Vector3(0.20, 0.44, -0.34 + kick * 0.05)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.75 + kick * 0.28, lerpf(0.16, 0.04, fire_blend), 0.42 if reloading else 0.0)
+			WeaponBase.WeaponKind.KNIFE:
+				var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
+				_held_weapon_root.position = Vector3(0.25 - swing_phase * 0.42, 0.34 + swing_phase * 0.10, -0.22 - swing_phase * 0.24)
+				_held_weapon_root.rotation = Vector3(-0.22 + aim_pitch * 0.45 - swing_phase * 0.55, 0.40 + swing_phase * 1.15, -0.35 - swing_phase * 0.65)
+			WeaponBase.WeaponKind.TNT:
+				var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
+				_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.5 - throw_phase * 0.9, 0.20, 0.0)
+			_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
+				var r_tilt: float = 0.52 if reloading else 0.0
+				var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
+				_held_weapon_root.position = Vector3(0.21, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3, lerpf(base_yaw, 0.20, fire_blend), -0.08 + r_tilt)
 
-			if reloading:
-				var dip: float = absf(sin(Time.get_ticks_msec() * 0.008))
-				left_target = Vector3(-0.04, 0.16 + dip * 0.16, -0.26)
-			elif _weapon_two_handed:
-				left_target = _held_weapon_root.transform * _weapon_foregrip_local
-			else:
-				left_target = Vector3(-0.20, 0.36, -0.26)
-			_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, left_pole)
+		var right_target: Vector3 = _held_weapon_root.transform * _weapon_grip_local
+		_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, right_pole)
+
+		if reloading:
+			var dip: float = absf(sin(Time.get_ticks_msec() * 0.008))
+			left_target = Vector3(-0.04, 0.16 + dip * 0.16, -0.26)
+		elif _weapon_two_handed:
+			left_target = _held_weapon_root.transform * _weapon_foregrip_local
+		else:
+			left_target = Vector3(-0.20, 0.36, -0.26)
+		_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, left_pole)
 
 
 func _aim_segment_basis(dir_u: Vector3, pole_hint: Vector3) -> Basis:
@@ -732,6 +775,9 @@ func _physics_process(delta: float) -> void:
 			var cmd: InputCmd = _sample_local_input()
 			local_tick += 1
 			cmd.tick = local_tick
+			aim_yaw = cmd.aim_yaw
+			aim_pitch = cmd.aim_pitch
+			selected_weapon_slot = cmd.selected_weapon_slot
 			NetworkManager.send_input_to_server(cmd)
 		return
 
@@ -961,6 +1007,36 @@ func _distance_to_ground() -> float:
 	return global_position.distance_to(hit["position"])
 
 
+func _snap_authoritative_pos(auth_pos: Vector3, auth_vel: Vector3) -> void:
+	if is_inside_tree():
+		global_position = auth_pos
+	else:
+		position = auth_pos
+	velocity = auth_vel
+	_curr_phys_pos = auth_pos
+	_prev_phys_pos = auth_pos
+	visual_error_offset = Vector3.ZERO
+
+
+## Clears seat-specific metadata when no longer riding in a vehicle.
+func _reset_seat_metadata() -> void:
+	current_seat_enclosed = false
+	current_seat_pose = ""
+	current_seat_can_shoot = false
+
+## Resets all hero-side vehicle occupancy, collision, camera, and visibility state.
+func clear_vehicle_state() -> void:
+	current_vehicle_id = -1
+	current_seat_index = -1
+	_reset_seat_metadata()
+	_last_vehicle_id_for_cam = -1
+	if _body_collision != null:
+		_body_collision.disabled = false
+	if hero_camera != null:
+		hero_camera.set_vehicle_mode(false)
+	if visual_root != null and not is_scoping:
+		visual_root.visible = true
+
 func reconcile_with_server(state: Dictionary) -> void:
 	var is_active_host: bool = multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) and multiplayer.is_server()
 	if not is_local_player or is_bot or is_active_host:
@@ -971,10 +1047,27 @@ func reconcile_with_server(state: Dictionary) -> void:
 	var auth_flags: int = int(state.get("flags", 0))
 	hp = int(state.get("hp", hp))
 	shield = int(state.get("shield", shield))
+	var prev_vid: int = current_vehicle_id
 	current_vehicle_id = int(state.get("vehicle_id", -1))
 	current_seat_index = int(state.get("seat_idx", -1))
+	if current_vehicle_id < 0:
+		_reset_seat_metadata()
+	if current_vehicle_id != _last_vehicle_id_for_cam:
+		_last_vehicle_id_for_cam = current_vehicle_id
+		if _body_collision != null:
+			_body_collision.disabled = (current_vehicle_id >= 0)
+		if hero_camera != null:
+			hero_camera.set_vehicle_mode(current_vehicle_id >= 0)
+		if current_vehicle_id < 0 and visual_root != null and not is_scoping:
+			visual_root.visible = true
 	is_defeated = (auth_flags & NetSerializer.SNAP_DEFEATED) != 0
 	stats_changed.emit()
+
+	if current_vehicle_id >= 0 or prev_vid >= 0:
+		_snap_authoritative_pos(auth_pos, auth_vel)
+		if ack_tick > _last_processed_srv_tick:
+			_last_processed_srv_tick = ack_tick
+		return
 
 	if ack_tick <= _last_processed_srv_tick:
 		return
@@ -1026,6 +1119,10 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 	selected_weapon_slot = int(snap_dict.get("weapon_slot", selected_weapon_slot))
 	current_vehicle_id = int(snap_dict.get("vehicle_id", -1))
 	current_seat_index = int(snap_dict.get("seat_idx", -1))
+	if current_vehicle_id < 0:
+		_reset_seat_metadata()
+	if _body_collision != null:
+		_body_collision.disabled = (current_vehicle_id >= 0)
 	var rot := Quaternion(Vector3.UP, yaw)
 	snapshot_interpolator.push_snapshot(server_tick, server_time_ms, pos, rot, vel, yaw, pitch, 0.0, flags)
 
@@ -1053,8 +1150,10 @@ func apply_knockback(impulse: Vector3) -> void:
 	knockback_seq = (knockback_seq + 1) & 0xFF
 
 
-func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = false) -> int:
+func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = false, bypass_enclosure: bool = false) -> int:
 	if is_defeated or amount <= 0:
+		return 0
+	if current_vehicle_id >= 0 and current_seat_enclosed and not bypass_enclosure:
 		return 0
 	var remaining: int = amount
 	if shield > 0:
@@ -1098,8 +1197,7 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	is_crouching = false
 	_max_air_fall_speed = 0.0
 	_was_airborne = false
-	current_vehicle_id = -1
-	current_seat_index = -1
+	clear_vehicle_state()
 	_prev_phys_pos = spawn_pos
 	_curr_phys_pos = spawn_pos
 	visual_error_offset = Vector3.ZERO

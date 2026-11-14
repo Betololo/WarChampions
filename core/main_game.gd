@@ -479,7 +479,7 @@ func _process(delta: float) -> void:
 	var local_hero: HeroCharacter = heroes_by_id.get(NetworkManager.local_peer_id, null)
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key]
-		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta)
+		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id)
 
 
 func _on_game_event(event_type: String, payload: Dictionary) -> void:
@@ -523,6 +523,16 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 		"explosion_vfx":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "explosion", float(payload.get("radius", 5.0)))
 			SoundSynthesizer.play_sfx("explosion")
+		"vehicle_destroyed":
+			var v_type: int = int(payload.get("vehicle_type", 0))
+			var attacker_id: int = int(payload.get("attacker_id", -1))
+			var attacker: HeroCharacter = heroes_by_id.get(attacker_id, null)
+			if NetworkManager.is_server_authority() and attacker != null and attacker.skill_manager != null and attacker.skill_manager.has_method("award_xp"):
+				attacker.skill_manager.award_xp(45)
+			if hud != null:
+				var a_name: String = attacker.hero_name if attacker != null else "Alguém"
+				var v_label: String = HUDController.get_vehicle_display_name(v_type)
+				hud.add_killfeed("%s destruiu %s!" % [a_name, v_label])
 		"skill_vfx":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.2)
 			SoundSynthesizer.play_sfx("skill_cast")

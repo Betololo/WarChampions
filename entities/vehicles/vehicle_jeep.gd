@@ -9,12 +9,12 @@ const STEER_TORQUE: float = 4.2
 
 func _setup_vehicle_stats_and_seats() -> void:
 	vehicle_type = VehicleType.JEEP
-	max_hp = 300
-	hp = 300
+	max_hp = 280
+	hp = 280
 	mass = 900.0
-	_add_seat(SeatType.DRIVER, Vector3(-0.55, 1.15, -0.15), false, false)
-	_add_seat(SeatType.PASSENGER, Vector3(-0.65, 1.35, 1.15), true, true)
-	_add_seat(SeatType.PASSENGER, Vector3(0.65, 1.35, 1.15), true, true)
+	_add_seat(SeatType.DRIVER, Vector3(-0.46, 0.58, -0.05), false, false, false, "sit")
+	_add_seat(SeatType.PASSENGER, Vector3(-0.52, 0.62, 0.95), true, true, false, "sit")
+	_add_seat(SeatType.PASSENGER, Vector3(0.52, 0.62, 0.95), true, true, false, "sit")
 
 
 func _build_vehicle_mesh() -> void:

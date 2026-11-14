@@ -17,6 +17,7 @@ func _ready() -> void:
 	_test_stealth_visibility_and_shader()
 	_test_conquest_12v12_and_flag_multipliers()
 	_test_vehicles_rear_armor_wing_riding_and_boat()
+	await _test_vehicle_protection_destruction_and_hud()
 	_test_seaside_map_and_12v12_bots_integration()
 	_test_overhaul_net_u32_fall_damage_and_assets()
 	_test_hero_visuals_camera_and_audio()
@@ -376,6 +377,144 @@ func _test_vehicles_rear_armor_wing_riding_and_boat() -> void:
 	tank.free()
 	plane.free()
 	boat.free()
+
+
+func _test_vehicle_protection_destruction_and_hud() -> void:
+	var tank := VehicleTank.new()
+	tank.id = 80
+	tank.team = NetworkManager.TEAM_NATIONAL
+	add_child(tank)
+	tank.global_position = Vector3(0.0, 0.0, -18.0)
+
+	var driver := HeroCharacter.new()
+	driver.setup_identity(801, "TankDriver", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(driver)
+
+	var shooter := HeroCharacter.new()
+	shooter.setup_identity(802, "Attacker", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(shooter)
+	shooter.global_position = Vector3.ZERO
+
+	_assert(tank.seats[0].is_enclosed and tank.seats[0].seat_pose == "hidden", "Tank driver seat is enclosed and hidden")
+	_assert(tank.try_enter_hero(driver) == 0 and driver.current_seat_enclosed and driver.current_seat_pose == "hidden", "Driver boards enclosed tank driver seat")
+	_assert(VehicleBase.is_hero_enclosed(driver, {80: tank}), "VehicleBase.is_hero_enclosed confirms enclosed driver")
+
+	StatusEffectsVFX.update_hero_client_visuals(driver, shooter, 0.016, {80: tank})
+	_assert(not driver.visual_root.visible, "Enclosed hidden tank driver visual_root is concealed")
+
+	# Wait one physics frame so PhysicsServer3D syncs newly added vehicle colliders for hitscan raycasts
+	await get_tree().physics_frame
+
+	var lc := LagCompensator.new()
+	var heroes := {801: driver, 802: shooter}
+	NetworkManager.server_tick = 20
+	lc.record_frame(20, heroes)
+	var rec: LagCompensator.FrameRecord = lc.get_frame(20, 20)
+	_assert(rec != null and not rec.entries.has(801) and rec.entries.has(802), "LagCompensator skips enclosed driver hitbox when recording frame")
+
+	var smg := shooter.weapons[0] as HitscanWeapon
+	smg.spread_rad = 0.0
+	var aim_to_tank: Vector3 = (tank.global_position + Vector3(0.0, 1.2, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var cmd := InputCmd.new()
+	cmd.aim_yaw = atan2(-aim_to_tank.x, -aim_to_tank.z)
+	cmd.aim_pitch = atan2(aim_to_tank.y, Vector2(aim_to_tank.x, aim_to_tank.z).length())
+	var tank_hp_before_hitscan: int = tank.hp
+	smg.fire_server(cmd, {"lag_compensator": lc, "heroes_by_id": heroes})
+	_assert(driver.hp == driver.max_hp and tank.hp < tank_hp_before_hitscan, "Direct hitscan damages Tank hull (%d -> %d) and deals 0 to enclosed driver" % [tank_hp_before_hitscan, tank.hp])
+	_assert(driver.apply_damage_server(30, 802, false) == 0 and driver.hp == driver.max_hp, "Direct apply_damage_server ignores gunfire on enclosed driver")
+
+	# Bazooka rocket hit + tank destruction ejects driver safely
+	var destroyed_seen: Array[bool] = [false]
+	tank.destroyed.connect(func(_vid: int) -> void: destroyed_seen[0] = true)
+
+	var rocket := ProjectileEntity.new()
+	rocket.setup(ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET, 802, NetworkManager.TEAM_ROYAL, tank.global_position + Vector3(0.0, 1.2, 2.0), Vector3(0.0, 0.0, -40.0), {"heroes_by_id": heroes})
+	add_child(rocket)
+	var pre_rocket_hp: int = tank.hp
+	rocket._detonate()
+	_assert(tank.hp < pre_rocket_hp and driver.hp == driver.max_hp, "Bazooka blast damages tank hull (%d -> %d) without piercing enclosed driver" % [pre_rocket_hp, tank.hp])
+
+	# Finish off tank to 0 HP
+	tank.apply_damage_server(tank.hp * 2, 802, Vector3(0.0, 0.0, 1.0), tank.global_position + Vector3(0.0, 1.0, -2.0), true)
+	_assert(tank.is_destroyed and tank.hp == 0 and destroyed_seen[0], "Tank drops to 0 HP cleanly and emits destroyed")
+	_assert(driver.current_vehicle_id == -1 and driver.hp < driver.max_hp and driver.visual_root.visible, "Tank destruction ejects driver (%d HP), resets vehicle state, and restores visibility" % driver.hp)
+
+	# Open Jeep passenger CAN take direct gunfire while seated & adopts seated pose
+	var jeep := VehicleJeep.new()
+	jeep.id = 81
+	jeep.team = NetworkManager.TEAM_NATIONAL
+	add_child(jeep)
+	jeep.global_position = Vector3(14.0, 0.0, -18.0)
+
+	var j_driver := HeroCharacter.new()
+	j_driver.setup_identity(803, "JeepDriver", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var j_pass := HeroCharacter.new()
+	j_pass.setup_identity(804, "JeepPass", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(j_driver)
+	add_child(j_pass)
+	_assert(jeep.try_enter_hero(j_driver) == 0 and jeep.try_enter_hero(j_pass) == 1, "Driver and passenger board open Jeep")
+	_assert(not jeep.seats[1].is_enclosed and jeep.seats[1].seat_pose == "sit", "Jeep passenger seat is open and seated")
+	j_pass._animate_character(0.016)
+	_assert(j_pass._hips_pivot.position.y < 0.4, "Seated Jeep passenger lowers hips into cabin (y=%.2f)" % j_pass._hips_pivot.position.y)
+
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 21
+	var j_heroes := {802: shooter, 804: j_pass}
+	lc.record_frame(21, j_heroes)
+	var aim_to_pass: Vector3 = (j_pass.global_position + Vector3(0.0, 1.1, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var j_cmd := InputCmd.new()
+	j_cmd.aim_yaw = atan2(-aim_to_pass.x, -aim_to_pass.z)
+	j_cmd.aim_pitch = atan2(aim_to_pass.y, Vector2(aim_to_pass.x, aim_to_pass.z).length())
+	var pass_hp_before: int = j_pass.hp
+	smg.fire_server(j_cmd, {"lag_compensator": lc, "heroes_by_id": j_heroes})
+	_assert(j_pass.hp < pass_hp_before, "Open Jeep passenger takes direct gunfire while seated (%d -> %d HP)" % [pass_hp_before, j_pass.hp])
+
+	# Client reconciliation toggles vehicle camera & snaps position on enter/exit
+	var client_hero := HeroCharacter.new()
+	client_hero.setup_identity(805, "RemoteClient", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(client_hero)
+	client_hero.reconcile_with_server({
+		"ack_tick": 5, "pos": Vector3(25.0, 2.0, -10.0), "vel": Vector3(3.0, 0.0, 0.0),
+		"flags": 0, "hp": 110, "shield": 0, "vehicle_id": 80, "seat_idx": 0, "knockback_seq": 0,
+	})
+	_assert(client_hero.current_vehicle_id == 80 and client_hero.hero_camera.in_vehicle and client_hero.global_position.distance_to(Vector3(25.0, 2.0, -10.0)) < 0.01 and client_hero._body_collision.disabled, "reconcile_with_server enables vehicle camera & snaps position on board")
+
+	client_hero.reconcile_with_server({
+		"ack_tick": 6, "pos": Vector3(28.0, 3.0, -10.0), "vel": Vector3.ZERO,
+		"flags": 0, "hp": 110, "shield": 0, "vehicle_id": -1, "seat_idx": -1, "knockback_seq": 0,
+	})
+	_assert(client_hero.current_vehicle_id == -1 and not client_hero.hero_camera.in_vehicle and client_hero.global_position.distance_to(Vector3(28.0, 3.0, -10.0)) < 0.01 and not client_hero._body_collision.disabled, "reconcile_with_server disables vehicle camera & restores collision on exit")
+
+	# HUD Vehicle Health Panel dynamically displays seated vehicle HP
+	var hud := HUDController.new()
+	add_child(hud)
+	var hud_tank := VehicleTank.new()
+	hud_tank.id = 82
+	add_child(hud_tank)
+	hud_tank.hp = 420
+	hud.bind_context(null, [hud_tank], {805: client_hero})
+	hud.set_local_hero(client_hero)
+	hud_tank.try_enter_hero(client_hero)
+	hud._process(0.016)
+	_assert(hud._veh_hp_panel != null and hud._veh_hp_panel.visible and hud._veh_name_lbl.text == "TANQUE" and hud._veh_seat_lbl.text == "Motorista" and hud._veh_hp_lbl.text == "HP: 420 / 520", "HUD shows _veh_hp_panel with TANQUE, Motorista, and HP: 420 / 520")
+
+	hud_tank.exit_hero(client_hero)
+	client_hero.global_position = Vector3(100.0, 0.0, 100.0)
+	hud._process(0.016)
+	_assert(not hud._veh_hp_panel.visible, "HUD hides _veh_hp_panel when far away on foot")
+
+	hud.free()
+	hud_tank.free()
+	client_hero.free()
+	jeep.exit_hero(j_driver)
+	jeep.exit_hero(j_pass)
+	j_driver.free()
+	j_pass.free()
+	jeep.free()
+	lc.free()
+	driver.free()
+	shooter.free()
+	tank.free()
 
 
 func _test_seaside_map_and_12v12_bots_integration() -> void:

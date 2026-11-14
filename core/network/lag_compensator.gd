@@ -39,6 +39,8 @@ func record_frame(server_tick: int, heroes_by_id: Dictionary) -> void:
 		var hero: HeroCharacter = heroes_by_id[id_key]
 		if hero == null or hero.is_defeated:
 			continue
+		if hero.current_vehicle_id >= 0 and hero.current_seat_enclosed:
+			continue
 		var snap := HeroHitboxSnapshot.new()
 		snap.entity_id = hero.entity_id
 		snap.team = hero.team
@@ -112,6 +114,9 @@ func trace_rewound_ray(
 			var snap: HeroHitboxSnapshot = frame.entries[id_key]
 			if shooter != null and (snap.entity_id == shooter.entity_id or snap.team == shooter.team):
 				continue
+			var live_h: HeroCharacter = heroes_by_id.get(snap.entity_id, null) as HeroCharacter
+			if live_h != null and live_h.current_vehicle_id >= 0 and live_h.current_seat_enclosed:
+				continue
 			var t_head: float = ray_intersect_sphere(ray_origin, dir, snap.head_center, snap.head_radius)
 			if t_head >= 0.0 and t_head < best_dist:
 				best_dist = t_head
@@ -133,6 +138,8 @@ func trace_rewound_ray(
 		for id_key in heroes_by_id.keys():
 			var h: HeroCharacter = heroes_by_id[id_key]
 			if h == null or h.is_defeated:
+				continue
+			if h.current_vehicle_id >= 0 and h.current_seat_enclosed:
 				continue
 			if shooter != null and (h.entity_id == shooter.entity_id or h.team == shooter.team):
 				continue

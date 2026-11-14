@@ -90,7 +90,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var obj: Variant = trace.get("target_object", null)
 			var is_veh: bool = (obj != null and obj is Node and (obj as Node).is_in_group("vehicles"))
 			if obj != null and obj is Node and (obj as Node).has_method("apply_damage_server"):
-				var obj_dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), false, dmg_mult * 0.45)
+				var obj_dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), false, dmg_mult)
 				(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, shot_dir, hit_pos, false)
 				if not is_veh:
 					NetworkManager.broadcast_game_event("hit_vfx", {

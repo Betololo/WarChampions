@@ -10,12 +10,12 @@ const SHELL_SPEED: float = 58.0
 
 func _setup_vehicle_stats_and_seats() -> void:
 	vehicle_type = VehicleType.TANK
-	max_hp = 600
-	hp = 600
+	max_hp = 520
+	hp = 520
 	mass = 4500.0
-	_add_seat(SeatType.DRIVER, Vector3(0.0, 2.1, 0.0), false, false)
+	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.95, 0.0), false, false, true, "hidden")
 	# External rear engine-deck ride seat (Wrench repair in motion!)
-	_add_seat(SeatType.PASSENGER, Vector3(0.0, 1.9, 2.3), true, true)
+	_add_seat(SeatType.PASSENGER, Vector3(0.0, 1.55, 2.35), true, true, false, "stand")
 
 
 func _build_vehicle_mesh() -> void:

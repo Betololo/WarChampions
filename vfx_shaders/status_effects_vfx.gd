@@ -13,8 +13,26 @@ static func attach_hero_vfx_and_shader(hero: HeroCharacter) -> void:
 	hero.apply_character_shader(HERO_SHADER)
 
 
-static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroCharacter, _delta: float) -> void:
+static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroCharacter, _delta: float, vehicles_by_id: Dictionary = {}) -> void:
 	if hero == null or hero.visual_root == null:
+		return
+
+	if hero.current_vehicle_id >= 0 and vehicles_by_id.has(hero.current_vehicle_id):
+		var v: VehicleBase = vehicles_by_id[hero.current_vehicle_id] as VehicleBase
+		if v != null:
+			var seat: VehicleBase.SeatSlot = v.get_seat(hero.current_seat_index)
+			if seat != null:
+				hero.current_seat_enclosed = seat.is_enclosed
+				hero.current_seat_pose = seat.seat_pose
+				hero.current_seat_can_shoot = seat.can_shoot
+	elif hero.current_vehicle_id < 0:
+		hero.current_seat_enclosed = false
+		hero.current_seat_pose = ""
+		hero.current_seat_can_shoot = false
+
+	var hidden_in_vehicle: bool = (hero.current_vehicle_id >= 0 and hero.current_seat_pose == "hidden" and not hero.is_defeated)
+	if hidden_in_vehicle:
+		hero.visual_root.visible = false
 		return
 
 	# Enemy Commando Stealth distance check (100% hidden beyond detection radius, refractive cloak inside)
@@ -87,16 +105,30 @@ static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, 
 			mat.emission = Color(1.0, 0.35, 0.05)
 		"heal":
 			mat.albedo_color = Color(0.25, 0.95, 0.45, 0.85)
+		"smoke":
+			sph.radius = clampf(0.35 * radius, 0.25, 1.2)
+			sph.height = sph.radius * 2.0
+			mat.albedo_color = Color(0.28, 0.28, 0.30, 0.72)
+		"fire":
+			sph.radius = clampf(0.28 * radius, 0.2, 0.9)
+			sph.height = sph.radius * 2.0
+			mat.albedo_color = Color(1.0, 0.42, 0.08, 0.88)
+			mat.emission_enabled = true
+			mat.emission = Color(1.0, 0.32, 0.04)
 		_:
 			mat.albedo_color = Color(0.88, 0.86, 0.8, 0.75)
 
 	burst.material_override = mat
 	parent.add_child(burst)
 
+	var is_plume: bool = (kind == "smoke" or kind == "fire")
+	var dur: float = 0.55 if is_plume else 0.26
 	var tw: Tween = parent.create_tween()
 	tw.set_parallel(true)
-	tw.tween_property(burst, "scale", Vector3.ONE * 1.8, 0.26)
-	tw.tween_property(mat, "albedo_color:a", 0.0, 0.26)
+	tw.tween_property(burst, "scale", Vector3.ONE * (2.2 if is_plume else 1.8), dur)
+	if is_plume:
+		tw.tween_property(burst, "position", world_pos + Vector3(randf_range(-0.3, 0.3), 2.4, randf_range(-0.3, 0.3)), dur)
+	tw.tween_property(mat, "albedo_color:a", 0.0, dur)
 	tw.chain().tween_callback(burst.queue_free)
 
 

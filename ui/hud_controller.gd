@@ -154,6 +154,15 @@ var _sixth_sense_layer: Control
 var _damage_numbers_layer: Control
 var _floating_dmgs: Array[Dictionary] = []
 
+var _veh_hp_panel: PanelContainer
+var _veh_name_lbl: Label
+var _veh_seat_lbl: Label
+var _veh_hp_lbl: Label
+var _veh_hp_bar_bg: ColorRect
+var _veh_hp_bar_fill: ColorRect
+var _veh_pulse_time: float = 0.0
+var _last_hud_vehicle_id: int = -1
+
 var _hitmarker_timer: float = 0.0
 var _damage_flash_timer: float = 0.0
 var _prev_hp_observed: int = -1
@@ -164,6 +173,36 @@ var _local_hero: HeroCharacter = null
 var _conquest: ConquestManager = null
 var _vehicles_ref: Array[VehicleBase] = []
 var _heroes_ref: Dictionary = {}
+
+
+static func get_vehicle_display_name(v_type: int) -> String:
+	match v_type:
+		VehicleBase.VehicleType.TANK:
+			return "TANQUE"
+		VehicleBase.VehicleType.JEEP:
+			return "JIPE"
+		VehicleBase.VehicleType.PLANE:
+			return "CAÇA"
+		VehicleBase.VehicleType.BOAT:
+			return "LANCHA"
+		VehicleBase.VehicleType.AA_GUN:
+			return "CANHÃO AA"
+		_:
+			return "VEÍCULO"
+
+
+static func get_seat_display_name(seat_type: int) -> String:
+	match seat_type:
+		VehicleBase.SeatType.DRIVER:
+			return "Motorista"
+		VehicleBase.SeatType.PASSENGER:
+			return "Passageiro"
+		VehicleBase.SeatType.WING_RIDER:
+			return "Asa"
+		VehicleBase.SeatType.GUNNER:
+			return "Artilheiro"
+		_:
+			return ""
 
 
 func _ready() -> void:
@@ -692,9 +731,87 @@ func _build_hud() -> void:
 	_defeat_lbl.visible = false
 	add_child(_defeat_lbl)
 
+	# 11. Bottom-Center Vehicle Health Panel (just above hotbar, clear of [E] prompt)
+	_veh_hp_panel = PanelContainer.new()
+	_veh_hp_panel.anchor_left = 0.5
+	_veh_hp_panel.anchor_right = 0.5
+	_veh_hp_panel.anchor_top = 1.0
+	_veh_hp_panel.anchor_bottom = 1.0
+	_veh_hp_panel.offset_left = -160.0
+	_veh_hp_panel.offset_right = 160.0
+	_veh_hp_panel.offset_top = -132.0
+	_veh_hp_panel.offset_bottom = -94.0
+	_veh_hp_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var veh_sb := StyleBoxFlat.new()
+	veh_sb.bg_color = Color(0.06, 0.08, 0.12, 0.78)
+	veh_sb.border_color = Color(0.95, 0.85, 0.45, 0.65)
+	veh_sb.border_width_left = 2
+	veh_sb.border_width_right = 2
+	veh_sb.border_width_top = 2
+	veh_sb.border_width_bottom = 2
+	veh_sb.corner_radius_top_left = 6
+	veh_sb.corner_radius_top_right = 6
+	veh_sb.corner_radius_bottom_left = 6
+	veh_sb.corner_radius_bottom_right = 6
+	veh_sb.content_margin_left = 10.0
+	veh_sb.content_margin_right = 10.0
+	veh_sb.content_margin_top = 4.0
+	veh_sb.content_margin_bottom = 4.0
+	_veh_hp_panel.add_theme_stylebox_override("panel", veh_sb)
+	_veh_hp_panel.visible = false
+	add_child(_veh_hp_panel)
+
+	var veh_vbox := VBoxContainer.new()
+	veh_vbox.add_theme_constant_override("separation", 3)
+	veh_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_veh_hp_panel.add_child(veh_vbox)
+
+	var veh_top_row := HBoxContainer.new()
+	veh_top_row.add_theme_constant_override("separation", 8)
+	veh_top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	veh_vbox.add_child(veh_top_row)
+
+	_veh_name_lbl = Label.new()
+	_veh_name_lbl.text = "TANQUE"
+	_style_label(_veh_name_lbl, 13, Color(1.0, 0.94, 0.72))
+	veh_top_row.add_child(_veh_name_lbl)
+
+	_veh_seat_lbl = Label.new()
+	_veh_seat_lbl.text = ""
+	_veh_seat_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_label(_veh_seat_lbl, 12, Color(0.76, 0.90, 1.0))
+	veh_top_row.add_child(_veh_seat_lbl)
+
+	_veh_hp_lbl = Label.new()
+	_veh_hp_lbl.text = "HP: 520 / 520"
+	_veh_hp_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_style_label(_veh_hp_lbl, 13, Color.WHITE)
+	veh_top_row.add_child(_veh_hp_lbl)
+
+	_veh_hp_bar_bg = ColorRect.new()
+	_veh_hp_bar_bg.custom_minimum_size = Vector2(296.0, 10.0)
+	_veh_hp_bar_bg.color = Color(0.12, 0.14, 0.18, 0.92)
+	_veh_hp_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	veh_vbox.add_child(_veh_hp_bar_bg)
+
+	_veh_hp_bar_fill = ColorRect.new()
+	_veh_hp_bar_fill.anchor_left = 0.0
+	_veh_hp_bar_fill.anchor_top = 0.0
+	_veh_hp_bar_fill.anchor_right = 1.0
+	_veh_hp_bar_fill.anchor_bottom = 1.0
+	_veh_hp_bar_fill.offset_left = 0.0
+	_veh_hp_bar_fill.offset_top = 0.0
+	_veh_hp_bar_fill.offset_right = 0.0
+	_veh_hp_bar_fill.offset_bottom = 0.0
+	_veh_hp_bar_fill.color = Color(0.24, 0.84, 0.34)
+	_veh_hp_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_veh_hp_bar_bg.add_child(_veh_hp_bar_fill)
+
 
 func _refresh_hotbar_icons() -> void:
 	if _local_hero == null:
+		if _veh_hp_panel != null:
+			_veh_hp_panel.visible = false
 		return
 	for i in range(4):
 		if i < _local_hero.weapons.size():
@@ -741,6 +858,8 @@ func _process(delta: float) -> void:
 				_flag_pips[i].color = Color(0.85, 0.85, 0.85)
 
 	if _local_hero == null:
+		if _veh_hp_panel != null:
+			_veh_hp_panel.visible = false
 		return
 
 	if _prev_hp_observed > _local_hero.hp:
@@ -830,6 +949,7 @@ func _process(delta: float) -> void:
 				_widget_slot_cd_lbls[j].text = ""
 
 	_update_interact_prompt()
+	_update_vehicle_hp_panel(delta)
 	_update_sixth_sense_markers()
 
 
@@ -927,6 +1047,60 @@ func _update_interact_prompt() -> void:
 			_interact_lbl.text = "[E] Entrar no Veículo (HP %d)" % v.hp
 			return
 	_interact_lbl.text = ""
+
+
+func _update_vehicle_hp_panel(delta: float) -> void:
+	if _veh_hp_panel == null:
+		return
+	if _local_hero == null or _local_hero.is_defeated:
+		_veh_hp_panel.visible = false
+		_last_hud_vehicle_id = -1
+		return
+
+	var target_v: VehicleBase = null
+	var seat_text: String = ""
+	if _local_hero.current_vehicle_id >= 0:
+		for v in _vehicles_ref:
+			if v != null and not v.is_destroyed and v.id == _local_hero.current_vehicle_id:
+				target_v = v
+				var seat: VehicleBase.SeatSlot = v.get_seat(_local_hero.current_seat_index)
+				if seat != null:
+					seat_text = get_seat_display_name(seat.seat_type)
+				break
+	elif _local_hero.is_inside_tree():
+		var best_dist: float = 8.5
+		for v in _vehicles_ref:
+			if v != null and not v.is_destroyed and v.is_inside_tree():
+				var d: float = v.global_position.distance_to(_local_hero.global_position)
+				if d <= best_dist:
+					best_dist = d
+					target_v = v
+
+	if target_v == null:
+		_veh_hp_panel.visible = false
+		_last_hud_vehicle_id = -1
+		return
+
+	_veh_hp_panel.visible = true
+	_veh_name_lbl.text = get_vehicle_display_name(target_v.vehicle_type)
+	_veh_seat_lbl.text = seat_text
+	_veh_hp_lbl.text = "HP: %d / %d" % [target_v.hp, target_v.max_hp]
+
+	var ratio: float = clampf(float(target_v.hp) / float(maxi(1, target_v.max_hp)), 0.0, 1.0)
+	if _last_hud_vehicle_id != target_v.id:
+		_last_hud_vehicle_id = target_v.id
+		_veh_hp_bar_fill.anchor_right = ratio
+	else:
+		_veh_hp_bar_fill.anchor_right = lerpf(_veh_hp_bar_fill.anchor_right, ratio, minf(1.0, 14.0 * delta))
+
+	if ratio > 0.55:
+		_veh_hp_bar_fill.color = Color(0.24, 0.84, 0.34)
+	elif ratio >= 0.25:
+		_veh_hp_bar_fill.color = Color(0.96, 0.72, 0.16)
+	else:
+		_veh_pulse_time += delta
+		var pulse: float = 0.5 + 0.5 * sin(_veh_pulse_time * 12.0)
+		_veh_hp_bar_fill.color = Color(0.95, 0.14 + 0.22 * pulse, 0.12 + 0.12 * pulse)
 
 
 func _update_sixth_sense_markers() -> void:
