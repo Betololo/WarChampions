@@ -32,6 +32,10 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var lag_comp: LagCompensator = context.get("lag_compensator", null)
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 	var world_3d: World3D = owner_hero.get_world_3d() if owner_hero.is_inside_tree() else null
+	var pellet_hits: Array[Vector3] = []
+	var dmg_by_victim: Dictionary = {}
+	var pos_by_victim: Dictionary = {}
+	var crit_by_victim: Dictionary = {}
 
 	for _pellet in range(pellet_count):
 		var shot_dir: Vector3 = apply_spread(base_dir, spread_mult)
@@ -51,12 +55,14 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			trace = {"hit": false, "target_hero_id": -1, "target_object": null, "is_headshot": false, "hit_pos": origin + shot_dir * max_range_m, "distance": max_range_m}
 
 		var hit_pos: Vector3 = trace.get("hit_pos", origin + shot_dir * max_range_m)
+		pellet_hits.append(hit_pos)
 		fired.emit(weapon_kind, origin, hit_pos)
 
 		var target_id: int = int(trace.get("target_hero_id", -1))
 		if target_id >= 0 and heroes_by_id.has(target_id):
 			var victim: HeroCharacter = heroes_by_id[target_id]
-			var dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), bool(trace.get("is_headshot", false)), dmg_mult)
+			var is_hs: bool = bool(trace.get("is_headshot", false))
+			var dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), is_hs, dmg_mult)
 			var dealt: int = victim.apply_damage_server(dmg, owner_hero.entity_id, false)
 
 			# Apply Burning Bullets DoT (SMG / Pistol) or Poisoned Blade DoT (Knife)
@@ -77,22 +83,43 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			if xp_cb.is_valid():
 				xp_cb.call(owner_hero, victim, dealt)
 
-			NetworkManager.broadcast_game_event("hit_vfx", {
-				"pos": hit_pos,
-				"kind": "spark",
-				"attacker_id": owner_hero.entity_id,
-				"victim_id": target_id,
-				"damage": dmg,
-				"headshot": bool(trace.get("is_headshot", false)),
-			})
+			dmg_by_victim[target_id] = int(dmg_by_victim.get(target_id, 0)) + dmg
+			pos_by_victim[target_id] = hit_pos
+			crit_by_victim[target_id] = bool(crit_by_victim.get(target_id, false)) or is_hs
 		else:
 			var obj: Variant = trace.get("target_object", null)
+			var is_veh: bool = (obj != null and obj is Node and (obj as Node).is_in_group("vehicles"))
 			if obj != null and obj is Node and (obj as Node).has_method("apply_damage_server"):
 				var obj_dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), false, dmg_mult * 0.45)
 				(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, shot_dir, hit_pos, false)
-			if bool(trace.get("hit", false)):
+				if not is_veh:
+					NetworkManager.broadcast_game_event("hit_vfx", {
+						"pos": hit_pos,
+						"kind": "spark",
+						"attacker_id": owner_hero.entity_id,
+						"damage": obj_dmg,
+					})
+			elif bool(trace.get("hit", false)):
 				NetworkManager.broadcast_game_event("hit_vfx", {
 					"pos": hit_pos,
 					"kind": "dust",
 					"attacker_id": owner_hero.entity_id,
 				})
+
+	for vid in dmg_by_victim.keys():
+		NetworkManager.broadcast_game_event("hit_vfx", {
+			"pos": pos_by_victim[vid],
+			"kind": "spark",
+			"attacker_id": owner_hero.entity_id,
+			"victim_id": int(vid),
+			"damage": int(dmg_by_victim[vid]),
+			"headshot": bool(crit_by_victim.get(vid, false)),
+		})
+
+	NetworkManager.broadcast_game_event("shot_vfx", {
+		"shooter_id": owner_hero.entity_id,
+		"weapon_kind": weapon_kind,
+		"origin": origin,
+		"dir": base_dir,
+		"hits": pellet_hits,
+	})

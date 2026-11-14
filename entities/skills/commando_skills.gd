@@ -62,6 +62,14 @@ class TroopTrapEntity extends Node3D:
 				if d <= 5.5:
 					h.apply_damage_server(damage, owner_id, true)
 					h.apply_knockback((h.global_position - global_position + Vector3(0.0, 0.8, 0.0)).normalized() * 12.0)
+					NetworkManager.broadcast_game_event("hit_vfx", {
+						"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
+						"kind": "spark",
+						"attacker_id": owner_id,
+						"victim_id": h.entity_id,
+						"damage": damage,
+						"headshot": true,
+					})
 		NetworkManager.broadcast_game_event("explosion_vfx", {"pos": global_position, "radius": 5.5, "kind": 99})
 		queue_free()
 

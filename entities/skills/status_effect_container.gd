@@ -65,6 +65,14 @@ func _physics_process(delta: float) -> void:
 			var dmg: int = maxi(1, int(roundf(burn_dps * 0.5)))
 			owner_hero.apply_damage_server(dmg, burn_attacker_id, false)
 			break_stealth()
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": owner_hero.global_position + Vector3(0.0, 1.9, 0.0),
+				"kind": "spark",
+				"attacker_id": burn_attacker_id,
+				"victim_id": owner_hero.entity_id,
+				"damage": dmg,
+				"dot": "burn",
+			})
 		if burn_timer <= 0.0:
 			burn_timer = 0.0
 			_burn_tick_accum = 0.0
@@ -78,6 +86,14 @@ func _physics_process(delta: float) -> void:
 			var pdmg: int = maxi(1, int(roundf(poison_dps * 0.5)))
 			owner_hero.apply_damage_server(pdmg, poison_attacker_id, false)
 			break_stealth()
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": owner_hero.global_position + Vector3(0.0, 1.9, 0.0),
+				"kind": "spark",
+				"attacker_id": poison_attacker_id,
+				"victim_id": owner_hero.entity_id,
+				"damage": pdmg,
+				"dot": "poison",
+			})
 		if poison_timer <= 0.0:
 			poison_timer = 0.0
 			_poison_tick_accum = 0.0

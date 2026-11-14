@@ -265,7 +265,10 @@ func _physics_process(delta: float) -> void:
 				hero.selected_weapon_slot = slot
 				var w: WeaponBase = hero.weapons[slot] as WeaponBase
 				if w != null:
+					var was_reloading: bool = w.is_reloading
 					w.step_timers(delta, hero.latest_server_input)
+					if not was_reloading and w.is_reloading and hero.entity_id == NetworkManager.local_peer_id and not hero.is_bot:
+						SoundSynthesizer.play_sfx("reload")
 					if w.try_consume_fire(hero.latest_server_input):
 						w.fire_server(hero.latest_server_input, combat_ctx)
 
@@ -481,12 +484,42 @@ func _process(delta: float) -> void:
 
 func _on_game_event(event_type: String, payload: Dictionary) -> void:
 	match event_type:
+		"shot_vfx":
+			var shooter_id: int = int(payload.get("shooter_id", -1))
+			var w_kind: int = int(payload.get("weapon_kind", 0))
+			var shooter: HeroCharacter = heroes_by_id.get(shooter_id, null)
+			var origin_fallback: Vector3 = payload.get("origin", Vector3.ZERO)
+			var muzzle_pos: Vector3 = shooter.get_muzzle_world_position() if shooter != null else origin_fallback
+			var aim_dir: Vector3 = payload.get("dir", Vector3.FORWARD)
+			var is_remote_client_own_shot: bool = (shooter_id == NetworkManager.local_peer_id and not NetworkManager.is_server_authority())
+
+			if not is_remote_client_own_shot:
+				var local_hero: HeroCharacter = heroes_by_id.get(NetworkManager.local_peer_id, null)
+				var dist_m: float = 0.0
+				if shooter_id != NetworkManager.local_peer_id and local_hero != null:
+					dist_m = local_hero.global_position.distance_to(muzzle_pos)
+				SoundSynthesizer.play_weapon_fire(w_kind, dist_m)
+				if shooter != null:
+					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot)
+				StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
+
+			for hp_var in payload.get("hits", []):
+				if hp_var is Vector3:
+					StatusEffectsVFX.spawn_bullet_tracer(projectiles_root, muzzle_pos, hp_var as Vector3, w_kind)
 		"hit_vfx":
-			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), str(payload.get("kind", "dust")), 0.4)
+			var hit_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, hit_pos, str(payload.get("kind", "dust")), 0.4)
 			if int(payload.get("attacker_id", -1)) == NetworkManager.local_peer_id:
-				SoundSynthesizer.play_sfx("hit_ding")
+				var is_crit: bool = bool(payload.get("headshot", false))
+				SoundSynthesizer.play_sfx("hit_ding", 1.18 if is_crit else 1.0)
 				if hud != null:
-					hud.show_hitmarker(bool(payload.get("headshot", false)))
+					hud.show_hitmarker(is_crit)
+					var dmg_amt: int = int(payload.get("damage", 0))
+					if dmg_amt > 0:
+						var s_tag: String = str(payload.get("dot", ""))
+						if s_tag.is_empty() and bool(payload.get("is_vehicle", false)):
+							s_tag = "vehicle"
+						hud.spawn_damage_number(hit_pos, dmg_amt, is_crit, s_tag)
 		"explosion_vfx":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "explosion", float(payload.get("radius", 5.0)))
 			SoundSynthesizer.play_sfx("explosion")

@@ -228,10 +228,19 @@ func _detonate() -> void:
 					h.status_effects.apply_concussion_slow(0.55, 3.5)
 
 				var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
-				if xp_cb.is_valid() and h.team != owner_team:
-					var attacker: HeroCharacter = heroes_by_id.get(owner_id, null)
-					if attacker != null:
-						xp_cb.call(attacker, h, dealt)
+				if h.team != owner_team:
+					if xp_cb.is_valid():
+						var attacker: HeroCharacter = heroes_by_id.get(owner_id, null)
+						if attacker != null:
+							xp_cb.call(attacker, h, dealt)
+					NetworkManager.broadcast_game_event("hit_vfx", {
+						"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
+						"kind": "spark",
+						"attacker_id": owner_id,
+						"victim_id": h.entity_id,
+						"damage": dmg,
+						"headshot": true,
+					})
 
 		# Splash damage against vehicles & destructible props
 		if is_inside_tree():

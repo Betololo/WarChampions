@@ -186,6 +186,14 @@ func apply_damage_server(amount: int, attacker_id: int, hit_dir: Vector3, hit_po
 	if not is_explosive:
 		final_dmg = maxi(1, int(roundf(float(final_dmg) * 0.45)))
 	hp = maxi(0, hp - final_dmg)
+	NetworkManager.broadcast_game_event("hit_vfx", {
+		"pos": hit_pos,
+		"kind": "spark",
+		"attacker_id": attacker_id,
+		"damage": final_dmg,
+		"headshot": mult > 1.5,
+		"is_vehicle": true,
+	})
 	if hp == 0:
 		_on_destroyed(attacker_id)
 

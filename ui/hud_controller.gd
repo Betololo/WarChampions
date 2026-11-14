@@ -45,6 +45,66 @@ class DamageFlashArc extends Control:
 		draw_arc(c, 102.0, deg_to_rad(35.0), deg_to_rad(145.0), 20, Color(1.0, 0.35, 0.25, flash_alpha * 0.7), 6.0, true)
 
 
+class SniperScopeOverlay extends Control:
+	func _draw() -> void:
+		var s: Vector2 = size
+		if s.x <= 1.0 or s.y <= 1.0:
+			return
+		var center: Vector2 = s * 0.5
+		var radius: float = minf(s.x, s.y) * 0.43
+		var outer_r: float = s.length() + 32.0
+		var mask_col := Color(0.02, 0.02, 0.03, 0.98)
+
+		# Seamless circular cutout mask across any viewport resolution
+		var segs: int = 96
+		for i in range(segs):
+			var a0: float = (float(i) / float(segs)) * TAU
+			var a1: float = (float(i + 1) / float(segs)) * TAU
+			var d0 := Vector2(cos(a0), sin(a0))
+			var d1 := Vector2(cos(a1), sin(a1))
+			draw_colored_polygon(
+				PackedVector2Array([center + d0 * radius, center + d1 * radius, center + d1 * outer_r, center + d0 * outer_r]),
+				mask_col
+			)
+
+		# Inner optic vignette shadow + blue-cyan glass glint
+		draw_arc(center, radius * 0.94, 0.0, TAU, 96, Color(0.0, 0.0, 0.0, 0.42), radius * 0.12, true)
+		draw_arc(center, radius * 0.89, deg_to_rad(205.0), deg_to_rad(255.0), 28, Color(0.62, 0.86, 1.0, 0.18), 5.0, true)
+
+		# Metallic brass & gunmetal optic bezel ring
+		draw_arc(center, radius + 7.0, 0.0, TAU, 96, Color(0.10, 0.10, 0.12, 1.0), 16.0, true)
+		draw_arc(center, radius, 0.0, TAU, 96, Color(0.56, 0.48, 0.28, 0.92), 3.0, true)
+
+		# German #4 / Mil-Dot Sniper Reticle
+		var post_col := Color(0.03, 0.03, 0.04, 0.96)
+		var wire_col := Color(0.05, 0.05, 0.06, 0.92)
+		var gap: float = 16.0
+
+		# Thick outer posts (left, right, bottom)
+		draw_line(Vector2(center.x - radius, center.y), Vector2(center.x - radius * 0.30, center.y), post_col, 6.0)
+		draw_line(Vector2(center.x + radius * 0.30, center.y), Vector2(center.x + radius, center.y), post_col, 6.0)
+		draw_line(Vector2(center.x, center.y + radius * 0.28), Vector2(center.x, center.y + radius), post_col, 6.0)
+
+		# Crisp inner crosshairs leaving micro gap around center dot
+		draw_line(Vector2(center.x - radius * 0.34, center.y), Vector2(center.x - gap, center.y), wire_col, 1.6)
+		draw_line(Vector2(center.x + gap, center.y), Vector2(center.x + radius * 0.34, center.y), wire_col, 1.6)
+		draw_line(Vector2(center.x, center.y - radius * 0.78), Vector2(center.x, center.y - gap), wire_col, 1.6)
+		draw_line(Vector2(center.x, center.y + gap), Vector2(center.x, center.y + radius * 0.34), wire_col, 1.6)
+
+		# Mil-dot range & windage notches
+		var step: float = radius * 0.085
+		for k in range(1, 4):
+			var off: float = float(k) * step + gap * 0.7
+			draw_line(Vector2(center.x - off, center.y - 4.0), Vector2(center.x - off, center.y + 4.0), wire_col, 1.8)
+			draw_line(Vector2(center.x + off, center.y - 4.0), Vector2(center.x + off, center.y + 4.0), wire_col, 1.8)
+			draw_line(Vector2(center.x - 4.0, center.y + off), Vector2(center.x + 4.0, center.y + off), wire_col, 1.8)
+			draw_line(Vector2(center.x - 3.0, center.y - off), Vector2(center.x + 3.0, center.y - off), wire_col, 1.6)
+
+		# Razor pinpoint glowing center reticle dot
+		draw_circle(center, 3.2, Color(1.0, 0.30, 0.14, 0.98))
+		draw_circle(center, 1.4, Color(1.0, 0.92, 0.55, 1.0))
+
+
 var _portrait_gauge: PortraitGaugeControl
 var _portrait_tex: TextureRect
 var _level_lbl: Label
@@ -84,13 +144,15 @@ var _widget_slot_cd_lbls: Array[Label] = []
 
 var _mastery_lbl: Label
 var _crosshair: Control
-var _scope_overlay: ColorRect
+var _scope_overlay: Control
 var _hitmarker_lbl: Label
 var _parachute_lbl: Label
 var _interact_lbl: Label
 var _defeat_lbl: Label
 var _killfeed_lbl: Label
 var _sixth_sense_layer: Control
+var _damage_numbers_layer: Control
+var _floating_dmgs: Array[Dictionary] = []
 
 var _hitmarker_timer: float = 0.0
 var _damage_flash_timer: float = 0.0
@@ -546,28 +608,34 @@ func _build_hud() -> void:
 	_style_label(_killfeed_lbl, 14, Color(0.98, 0.98, 0.98))
 	add_child(_killfeed_lbl)
 
-	# 8. Sniper Scope Overlay (1st-person Commando Scope)
-	_scope_overlay = ColorRect.new()
+	# 8. Sniper Scope Overlay (1st-person Commando Optic)
+	_scope_overlay = SniperScopeOverlay.new()
 	_scope_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_scope_overlay.color = Color(0.0, 0.0, 0.0, 0.25)
 	_scope_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_scope_overlay.visible = false
 	add_child(_scope_overlay)
 
-	var scope_ring := Label.new()
-	scope_ring.anchor_left = 0.5
-	scope_ring.anchor_top = 0.5
-	scope_ring.offset_left = -120.0
-	scope_ring.offset_top = -30.0
-	scope_ring.text = "--------- ( + ) ---------"
-	_style_label(scope_ring, 24, Color.WHITE)
-	_scope_overlay.add_child(scope_ring)
+	var scope_hint := Label.new()
+	scope_hint.anchor_left = 0.5
+	scope_hint.anchor_right = 0.5
+	scope_hint.anchor_top = 0.86
+	scope_hint.offset_left = -140.0
+	scope_hint.offset_right = 140.0
+	scope_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	scope_hint.text = "4.0x LUNETA  |  [Botão Direito] Sair"
+	_style_label(scope_hint, 13, Color(0.95, 0.88, 0.62, 0.85))
+	_scope_overlay.add_child(scope_hint)
 
-	# 9. Sixth Sense wall-reveal overlay layer
+	# 9. Sixth Sense wall-reveal overlay & Floating Damage Numbers layers
 	_sixth_sense_layer = Control.new()
 	_sixth_sense_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_sixth_sense_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_sixth_sense_layer)
+
+	_damage_numbers_layer = Control.new()
+	_damage_numbers_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_damage_numbers_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_damage_numbers_layer)
 
 	# 10. Center Crosshair, Hitmarker, Parachute Prompt, Vehicle Interact & Defeat
 	_crosshair = Control.new()
@@ -692,6 +760,12 @@ func _process(delta: float) -> void:
 
 	if _scope_overlay != null:
 		_scope_overlay.visible = _local_hero.is_scoping
+		if _scope_overlay.visible:
+			_scope_overlay.queue_redraw()
+	if _crosshair != null:
+		_crosshair.visible = not _local_hero.is_scoping
+
+	_update_floating_damage_numbers(delta)
 
 	if _defeat_lbl != null:
 		_defeat_lbl.visible = _local_hero.is_defeated
@@ -757,6 +831,89 @@ func _process(delta: float) -> void:
 
 	_update_interact_prompt()
 	_update_sixth_sense_markers()
+
+
+func spawn_damage_number(world_pos: Vector3, amount: int, is_crit: bool = false, style_tag: String = "") -> void:
+	if _damage_numbers_layer == null or amount <= 0:
+		return
+	while _floating_dmgs.size() >= 24:
+		var oldest: Dictionary = _floating_dmgs.pop_front()
+		var old_lbl := oldest.get("label", null) as Label
+		if is_instance_valid(old_lbl):
+			old_lbl.queue_free()
+
+	var col := Color(1.0, 0.94, 0.28)
+	var font_sz: int = 23
+	var text_str: String = "-%d" % amount
+	if style_tag == "burn":
+		col = Color(1.0, 0.56, 0.16)
+		font_sz = 18
+		text_str = "-%d FOGO" % amount
+	elif style_tag == "poison":
+		col = Color(0.42, 0.96, 0.36)
+		font_sz = 18
+		text_str = "-%d VENENO" % amount
+	elif style_tag == "vehicle":
+		col = Color(0.55, 0.88, 1.0) if not is_crit else Color(1.0, 0.42, 0.18)
+		font_sz = 26 if is_crit else 22
+		text_str = "-%d!" % amount if is_crit else "-%d" % amount
+	elif is_crit:
+		col = Color(1.0, 0.28, 0.14)
+		font_sz = 30
+		text_str = "-%d!" % amount
+
+	var lbl := Label.new()
+	lbl.text = text_str
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_style_label(lbl, font_sz, col)
+	lbl.pivot_offset = Vector2(36.0, 16.0)
+	lbl.scale = Vector2.ONE * (1.42 if is_crit else 1.24)
+	_damage_numbers_layer.add_child(lbl)
+
+	_floating_dmgs.append({
+		"world_pos": world_pos + Vector3(randf_range(-0.22, 0.22), 0.18, randf_range(-0.22, 0.22)),
+		"offset": Vector2(randf_range(-14.0, 14.0), -10.0),
+		"vel": Vector2(randf_range(-24.0, 24.0), -82.0 if not is_crit else -105.0),
+		"age": 0.0,
+		"dur": 0.90,
+		"label": lbl,
+	})
+
+
+func _update_floating_damage_numbers(delta: float) -> void:
+	if _floating_dmgs.is_empty():
+		return
+	var cam: Camera3D = null
+	if _local_hero != null and _local_hero.hero_camera != null:
+		cam = _local_hero.hero_camera.camera
+	var keep: Array[Dictionary] = []
+	for entry in _floating_dmgs:
+		var lbl := entry["label"] as Label
+		if not is_instance_valid(lbl):
+			continue
+		var age: float = float(entry["age"]) + delta
+		var dur: float = float(entry["dur"])
+		if age >= dur or cam == null:
+			lbl.queue_free()
+			continue
+		entry["age"] = age
+		var vel: Vector2 = entry["vel"]
+		vel.y += 115.0 * delta
+		entry["vel"] = vel
+		var offset: Vector2 = entry["offset"] + vel * delta
+		entry["offset"] = offset
+		var wp: Vector3 = entry["world_pos"]
+		if cam.is_position_behind(wp):
+			lbl.visible = false
+		else:
+			lbl.visible = true
+			var sp: Vector2 = cam.unproject_position(wp)
+			lbl.position = sp + offset - Vector2(32.0, 14.0)
+		var t_norm: float = age / dur
+		lbl.scale = lbl.scale.lerp(Vector2.ONE, minf(1.0, 12.0 * delta))
+		lbl.modulate.a = clampf(1.0 - maxf(0.0, (t_norm - 0.55) / 0.45), 0.0, 1.0)
+		keep.append(entry)
+	_floating_dmgs = keep
 
 
 func _update_interact_prompt() -> void:

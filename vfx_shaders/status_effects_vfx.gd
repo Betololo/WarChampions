@@ -98,3 +98,86 @@ static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, 
 	tw.tween_property(burst, "scale", Vector3.ONE * 1.8, 0.26)
 	tw.tween_property(mat, "albedo_color:a", 0.0, 0.26)
 	tw.chain().tween_callback(burst.queue_free)
+
+
+static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector3, weapon_kind: int) -> void:
+	if parent == null or DisplayServer.get_name().contains("headless"):
+		return
+	if weapon_kind == 5 or weapon_kind == 7: # Melee knife & thrown TNT have no muzzle flash
+		return
+	var flash_root := Node3D.new()
+	flash_root.position = world_pos
+	parent.add_child(flash_root)
+
+	var core := MeshInstance3D.new()
+	var sph := SphereMesh.new()
+	var base_r: float = 0.16 if weapon_kind == 6 or weapon_kind == 2 else (0.14 if weapon_kind == 4 else 0.10)
+	sph.radius = base_r
+	sph.height = base_r * 2.0
+	core.mesh = sph
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.90, 0.32, 0.95)
+	core.material_override = mat
+	flash_root.add_child(core)
+
+	var streak := MeshInstance3D.new()
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.01
+	cone.bottom_radius = base_r * 0.85
+	cone.height = base_r * 3.4
+	streak.mesh = cone
+	streak.material_override = mat
+	var dir_n: Vector3 = aim_dir.normalized() if aim_dir.length_squared() > 0.001 else Vector3.FORWARD
+	var look_target: Vector3 = world_pos + dir_n
+	if absf(dir_n.dot(Vector3.UP)) < 0.98:
+		flash_root.look_at(look_target, Vector3.UP)
+	streak.rotation.x = -PI * 0.5
+	streak.position.z = -base_r * 1.5
+	flash_root.add_child(streak)
+
+	var tw: Tween = parent.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(flash_root, "scale", Vector3.ONE * 1.55, 0.07)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.07)
+	tw.chain().tween_callback(flash_root.queue_free)
+
+
+static func spawn_bullet_tracer(parent: Node, start_pos: Vector3, end_pos: Vector3, weapon_kind: int) -> void:
+	if parent == null or DisplayServer.get_name().contains("headless"):
+		return
+	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 6:
+		return
+	var diff: Vector3 = end_pos - start_pos
+	var full_len: float = diff.length()
+	if full_len < 0.6:
+		return
+	var dir: Vector3 = diff / full_len
+	var seg_len: float = clampf(full_len * 0.38, 1.4, 14.0 if weapon_kind == 4 else 7.5)
+
+	var tracer := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	var thick: float = 0.036 if weapon_kind == 4 else 0.024
+	box.size = Vector3(thick, thick, seg_len)
+	tracer.mesh = box
+
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.94, 0.58, 0.88) if weapon_kind == 4 else Color(1.0, 0.86, 0.35, 0.80)
+	tracer.material_override = mat
+
+	var p_a: Vector3 = start_pos + dir * (seg_len * 0.5 + 0.15)
+	var p_b: Vector3 = end_pos - dir * minf(full_len * 0.15, seg_len * 0.35)
+	tracer.position = p_a
+	parent.add_child(tracer)
+	if absf(dir.dot(Vector3.UP)) < 0.98:
+		tracer.look_at(p_a + dir, Vector3.UP)
+
+	var travel_t: float = clampf(full_len / 260.0, 0.055, 0.14)
+	var tw: Tween = parent.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(tracer, "position", p_b, travel_t)
+	tw.tween_property(mat, "albedo_color:a", 0.0, travel_t)
+	tw.chain().tween_callback(tracer.queue_free)

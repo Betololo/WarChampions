@@ -93,8 +93,15 @@ var hero_camera: HeroCamera
 
 var _walk_phase: float = 0.0
 var _weapon_recoil_anim: float = 0.0
+var _fire_pose_timer: float = 0.0
 var _shown_weapon_kind: int = -1
 var _prev_q_held: bool = false
+var _upper_arm_len: float = 0.30
+var _forearm_len: float = 0.28
+var _weapon_grip_local: Vector3 = Vector3(0.0, -0.04, 0.0)
+var _weapon_foregrip_local: Vector3 = Vector3(0.0, -0.015, -0.24)
+var _weapon_muzzle_local: Vector3 = Vector3(0.0, 0.035, -0.58)
+var _weapon_two_handed: bool = true
 
 ## Subsystems attached in Configure
 var status_effects: Node = null
@@ -337,9 +344,13 @@ func _rebuild_cartoon_visuals() -> void:
 		], 12)
 		HeroMeshBuilder.add_part(_head_pivot, goggle_c, Vector3(0.0, 0.245, -0.115), Vector3.ZERO, shade_mat, _mesh_parts)
 
-	# Two-Joint Articulated Sculpted Arms (Shoulder sphere -> Upper Arm -> Elbow -> Forearm -> Hand)
+	# Two-Joint Articulated Sculpted Arms sized cleanly for 2-bone IK onto rifle grip/foregrip
 	var sh_x: float = 0.285 if class_id != NetworkManager.CLASS_GUNNER else 0.345
 	var arm_r_scale: float = 1.22 if class_id == NetworkManager.CLASS_GUNNER else 1.0
+	var arm_len_scale: float = 1.12 if class_id == NetworkManager.CLASS_GUNNER else 1.0
+	_upper_arm_len = 0.30 * arm_len_scale
+	_forearm_len = 0.28 * arm_len_scale
+
 	var sh_sph := SphereMesh.new()
 	sh_sph.radius = 0.092 * arm_r_scale
 	sh_sph.height = sh_sph.radius * 2.0
@@ -351,8 +362,8 @@ func _rebuild_cartoon_visuals() -> void:
 	hand_sph.height = 0.145
 	var hand_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.22, 0.20, 0.18) if class_id == NetworkManager.CLASS_COMMANDO else Color.WHITE, "" if class_id == NetworkManager.CLASS_COMMANDO else "hero_skin", 0.72)
 
-	var upper_arm_mesh: ArrayMesh = HeroMeshBuilder.build_arm_segment_mesh(0.088 * arm_r_scale, 0.072 * arm_r_scale, 0.27)
-	var forearm_mesh: ArrayMesh = HeroMeshBuilder.build_arm_segment_mesh(0.070 * arm_r_scale, 0.066 * arm_r_scale, 0.25)
+	var upper_arm_mesh: ArrayMesh = HeroMeshBuilder.build_arm_segment_mesh(0.088 * arm_r_scale, 0.072 * arm_r_scale, _upper_arm_len)
+	var forearm_mesh: ArrayMesh = HeroMeshBuilder.build_arm_segment_mesh(0.070 * arm_r_scale, 0.064 * arm_r_scale, _forearm_len * 0.92)
 
 	_arm_l_pivot = Node3D.new()
 	_arm_l_pivot.position = Vector3(-sh_x, 0.53, 0.0)
@@ -361,11 +372,11 @@ func _rebuild_cartoon_visuals() -> void:
 	HeroMeshBuilder.add_part(_arm_l_pivot, upper_arm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
 
 	_forearm_l_pivot = Node3D.new()
-	_forearm_l_pivot.position = Vector3(0.0, -0.27, 0.0)
+	_forearm_l_pivot.position = Vector3(0.0, -_upper_arm_len, 0.0)
 	_arm_l_pivot.add_child(_forearm_l_pivot)
 	HeroMeshBuilder.add_part(_forearm_l_pivot, el_sph, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
 	HeroMeshBuilder.add_part(_forearm_l_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(_forearm_l_pivot, hand_sph, Vector3(0.0, -0.28, -0.02), Vector3.ZERO, hand_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_forearm_l_pivot, hand_sph, Vector3(0.0, -_forearm_len, 0.0), Vector3.ZERO, hand_mat, _mesh_parts)
 
 	_arm_r_pivot = Node3D.new()
 	_arm_r_pivot.position = Vector3(sh_x, 0.53, 0.0)
@@ -374,16 +385,16 @@ func _rebuild_cartoon_visuals() -> void:
 	HeroMeshBuilder.add_part(_arm_r_pivot, upper_arm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
 
 	_forearm_r_pivot = Node3D.new()
-	_forearm_r_pivot.position = Vector3(0.0, -0.27, 0.0)
+	_forearm_r_pivot.position = Vector3(0.0, -_upper_arm_len, 0.0)
 	_arm_r_pivot.add_child(_forearm_r_pivot)
 	HeroMeshBuilder.add_part(_forearm_r_pivot, el_sph, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
 	HeroMeshBuilder.add_part(_forearm_r_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, arm_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(_forearm_r_pivot, hand_sph, Vector3(0.0, -0.28, -0.02), Vector3.ZERO, hand_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(_forearm_r_pivot, hand_sph, Vector3(0.0, -_forearm_len, 0.0), Vector3.ZERO, hand_mat, _mesh_parts)
 
-	# Held Weapon Root mounted directly on Torso chest/hip so rifle points forward-left (like Image 2!)
+	# Held Weapon Root mounted on Torso (grip + foregrip sockets solved directly by IK!)
 	_held_weapon_root = Node3D.new()
 	_held_weapon_root.name = "HeldWeaponRoot"
-	_held_weapon_root.position = Vector3(0.15, 0.34, -0.20)
+	_held_weapon_root.position = Vector3(0.20, 0.30, -0.14)
 	_torso_pivot.add_child(_held_weapon_root)
 	_shown_weapon_kind = -1
 	_rebuild_held_weapon_mesh()
@@ -453,7 +464,11 @@ func _rebuild_held_weapon_mesh() -> void:
 	if w == null or w.weapon_kind == _shown_weapon_kind:
 		return
 	_shown_weapon_kind = w.weapon_kind
-	HeroMeshBuilder.populate_weapon_root(_held_weapon_root, w.weapon_kind)
+	var w_info: Dictionary = HeroMeshBuilder.populate_weapon_root(_held_weapon_root, w.weapon_kind)
+	_weapon_grip_local = w_info.get("grip", Vector3(0.0, -0.04, 0.0))
+	_weapon_foregrip_local = w_info.get("foregrip", Vector3(0.0, -0.015, -0.24))
+	_weapon_muzzle_local = w_info.get("muzzle", Vector3(0.0, 0.035, -0.58))
+	_weapon_two_handed = bool(w_info.get("two_handed", true))
 
 
 func apply_character_shader(shader: Shader) -> void:
@@ -477,8 +492,28 @@ func apply_character_shader(shader: Shader) -> void:
 		mi.material_override = smat
 
 
-func _on_weapon_fired_anim(_kind: int, _muzzle: Vector3, _hit: Vector3) -> void:
+func _on_weapon_fired_anim(w_kind: int, _muzzle: Vector3, _hit: Vector3) -> void:
+	trigger_weapon_fire_visual(w_kind, false)
+
+
+func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) -> void:
 	_weapon_recoil_anim = 1.0
+	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG) else 0.55
+	if apply_camera_kick and hero_camera != null:
+		var kick_rad: float = 0.022
+		if not weapons.is_empty():
+			var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
+			var w: WeaponBase = weapons[slot] as WeaponBase
+			if w != null:
+				kick_rad = w.recoil_rad
+		hero_camera.add_recoil(kick_rad)
+
+
+func get_muzzle_world_position() -> Vector3:
+	if is_scoping or _held_weapon_root == null or not is_inside_tree():
+		var fwd: Vector3 = -(Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
+		return global_position + Vector3(0.0, 1.48 if not is_crouching else 1.0, 0.0) + fwd * 0.65
+	return _held_weapon_root.to_global(_weapon_muzzle_local)
 
 
 func _input(event: InputEvent) -> void:
@@ -544,14 +579,17 @@ func _animate_character(delta: float) -> void:
 			_defeat_prop.rotation.y += 4.0 * delta
 
 	_weapon_recoil_anim = maxf(0.0, _weapon_recoil_anim - 7.5 * delta)
+	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
 
 	if is_defeated:
 		_hips_pivot.position.y = 0.35
 		_hips_pivot.rotation.x = -0.55 if not defeat_explosive else _hips_pivot.rotation.x + 8.0 * delta
 		_leg_l_pivot.rotation.x = 1.2
 		_leg_r_pivot.rotation.x = 1.2
-		_arm_l_pivot.rotation.x = 0.5
-		_arm_r_pivot.rotation.x = 0.5
+		_arm_l_pivot.rotation = Vector3(0.5, 0.0, 0.15)
+		_arm_r_pivot.rotation = Vector3(0.5, 0.0, -0.15)
+		_forearm_l_pivot.rotation = Vector3(0.3, 0.0, 0.0)
+		_forearm_r_pivot.rotation = Vector3(0.3, 0.0, 0.0)
 		return
 
 	_hips_pivot.rotation.x = 0.0
@@ -585,22 +623,98 @@ func _animate_character(delta: float) -> void:
 		_forearm_r_pivot.rotation = Vector3(0.8, 0.0, 0.0)
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
 	else:
+		var slot: int = clampi(selected_weapon_slot, 0, maxi(0, weapons.size() - 1))
+		var cur_w: WeaponBase = weapons[slot] as WeaponBase if slot < weapons.size() else null
+		var reloading: bool = cur_w != null and cur_w.is_reloading
+		var fire_blend: float = clampf(_fire_pose_timer * 3.2, 0.0, 1.0)
+		var kick: float = _weapon_recoil_anim
+
 		_leg_l_pivot.rotation.x = stride * 0.72 + (-0.55 if is_crouching else 0.0)
 		_leg_r_pivot.rotation.x = -stride * 0.72 + (-0.55 if is_crouching else 0.0)
-		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0)
+		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0) - kick * 0.05
+		_torso_pivot.rotation.y = lerpf(0.0, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
 		_head_pivot.rotation.x = aim_pitch * 0.35
-		# Natural two-arm BFH rifle stance matching Image 2 (upper arms slightly out, forearms bent across!)
-		_arm_r_pivot.rotation = Vector3(0.45 + aim_pitch * 0.4, 0.0, -0.24)
-		_forearm_r_pivot.rotation = Vector3(1.18 + _weapon_recoil_anim * 0.25, 0.42, 0.08)
-		_arm_l_pivot.rotation = Vector3(0.68 + aim_pitch * 0.4, -0.25, 0.22)
-		_forearm_l_pivot.rotation = Vector3(1.02, -0.58, -0.10)
+
+		var left_target: Vector3 = Vector3(-0.18, 0.34, -0.24)
+		var right_pole: Vector3 = Vector3(0.75, -0.45, 0.55)
+		var left_pole: Vector3 = Vector3(-0.80, -0.45, 0.45)
+
 		if _held_weapon_root != null:
-			if _shown_weapon_kind == WeaponBase.WeaponKind.BAZOOKA:
-				_held_weapon_root.position = Vector3(0.24, 0.56, -0.06)
-				_held_weapon_root.rotation = Vector3(aim_pitch * 0.6, 0.04, 0.0)
+			match _shown_weapon_kind:
+				WeaponBase.WeaponKind.BAZOOKA:
+					_held_weapon_root.position = Vector3(0.24, 0.58, -0.02 + kick * 0.09)
+					_held_weapon_root.rotation = Vector3(aim_pitch * 0.65 + kick * 0.15, 0.06, 0.0)
+				WeaponBase.WeaponKind.MG:
+					var reload_tilt: float = 0.45 if reloading else 0.0
+					_held_weapon_root.position = Vector3(0.24, 0.23, -0.14 + kick * 0.05)
+					_held_weapon_root.rotation = Vector3(aim_pitch * 0.45 + 0.04 + kick * 0.07 - reload_tilt * 0.4, lerpf(0.42, 0.14, fire_blend), reload_tilt)
+				WeaponBase.WeaponKind.PISTOL:
+					_held_weapon_root.position = Vector3(0.20, 0.44, -0.34 + kick * 0.05)
+					_held_weapon_root.rotation = Vector3(aim_pitch * 0.75 + kick * 0.28, lerpf(0.16, 0.04, fire_blend), 0.42 if reloading else 0.0)
+				WeaponBase.WeaponKind.KNIFE:
+					var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
+					_held_weapon_root.position = Vector3(0.25 - swing_phase * 0.42, 0.34 + swing_phase * 0.10, -0.22 - swing_phase * 0.24)
+					_held_weapon_root.rotation = Vector3(-0.22 + aim_pitch * 0.45 - swing_phase * 0.55, 0.40 + swing_phase * 1.15, -0.35 - swing_phase * 0.65)
+				WeaponBase.WeaponKind.TNT:
+					var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
+					_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
+					_held_weapon_root.rotation = Vector3(aim_pitch * 0.5 - throw_phase * 0.9, 0.20, 0.0)
+				_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
+					var r_tilt: float = 0.52 if reloading else 0.0
+					var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
+					_held_weapon_root.position = Vector3(0.21, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
+					_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3, lerpf(base_yaw, 0.20, fire_blend), -0.08 + r_tilt)
+
+			var right_target: Vector3 = _held_weapon_root.transform * _weapon_grip_local
+			_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, right_pole)
+
+			if reloading:
+				var dip: float = absf(sin(Time.get_ticks_msec() * 0.008))
+				left_target = Vector3(-0.04, 0.16 + dip * 0.16, -0.26)
+			elif _weapon_two_handed:
+				left_target = _held_weapon_root.transform * _weapon_foregrip_local
 			else:
-				_held_weapon_root.position = Vector3(0.15, 0.34, -0.20 + _weapon_recoil_anim * 0.06)
-				_held_weapon_root.rotation = Vector3(aim_pitch * 0.6 + 0.14 + _weapon_recoil_anim * 0.08, 0.34, 0.0)
+				left_target = Vector3(-0.20, 0.36, -0.26)
+			_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, left_pole)
+
+
+func _aim_segment_basis(dir_u: Vector3, pole_hint: Vector3) -> Basis:
+	var y_axis: Vector3 = -dir_u.normalized()
+	var x_axis: Vector3 = y_axis.cross(pole_hint)
+	if x_axis.length_squared() < 0.0001:
+		x_axis = y_axis.cross(Vector3.RIGHT)
+	x_axis = x_axis.normalized()
+	var z_axis: Vector3 = x_axis.cross(y_axis).normalized()
+	return Basis(x_axis, y_axis, z_axis)
+
+
+func _pose_arm_ik(arm_pivot: Node3D, forearm_pivot: Node3D, target_torso: Vector3, pole_hint: Vector3) -> void:
+	if arm_pivot == null or forearm_pivot == null:
+		return
+	var s_pos: Vector3 = arm_pivot.position
+	var diff: Vector3 = target_torso - s_pos
+	var max_reach: float = _upper_arm_len + _forearm_len - 0.006
+	var dist: float = clampf(diff.length(), 0.06, max_reach)
+	var dir_n: Vector3 = diff.normalized() if diff.length_squared() > 0.00001 else Vector3.DOWN
+
+	var perp: Vector3 = pole_hint - dir_n * pole_hint.dot(dir_n)
+	if perp.length_squared() < 0.0001:
+		perp = Vector3.DOWN - dir_n * Vector3.DOWN.dot(dir_n)
+	perp = perp.normalized()
+
+	var l1: float = _upper_arm_len
+	var l2: float = _forearm_len
+	var cos_a: float = clampf((l1 * l1 + dist * dist - l2 * l2) / (2.0 * l1 * dist), -0.998, 0.998)
+	var sin_a: float = sqrt(maxf(0.0, 1.0 - cos_a * cos_a))
+	var elbow_pos: Vector3 = s_pos + dir_n * (l1 * cos_a) + perp * (l1 * sin_a)
+	var hand_clamped: Vector3 = s_pos + dir_n * dist
+
+	var upper_dir: Vector3 = (elbow_pos - s_pos).normalized()
+	var lower_dir: Vector3 = (hand_clamped - elbow_pos).normalized()
+	var upper_b: Basis = _aim_segment_basis(upper_dir, pole_hint)
+	var lower_b: Basis = _aim_segment_basis(lower_dir, pole_hint)
+	arm_pivot.basis = upper_b
+	forearm_pivot.basis = upper_b.inverse() * lower_b
 
 
 func _physics_process(delta: float) -> void:
@@ -638,6 +752,19 @@ func _physics_process(delta: float) -> void:
 				is_on_floor(),
 				pre_jump_held
 			)
+			if not weapons.is_empty():
+				var w_slot: int = clampi(cmd.selected_weapon_slot, 0, weapons.size() - 1)
+				var cw: WeaponBase = weapons[w_slot] as WeaponBase
+				if cw != null:
+					var was_reloading: bool = cw.is_reloading
+					cw.step_timers(delta, cmd)
+					if not was_reloading and cw.is_reloading:
+						SoundSynthesizer.play_sfx("reload")
+					if cw.try_consume_fire(cmd):
+						trigger_weapon_fire_visual(cw.weapon_kind, true)
+						SoundSynthesizer.play_weapon_fire(cw.weapon_kind, 0.0)
+						var aim_dir: Vector3 = -(Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
+						StatusEffectsVFX.spawn_muzzle_flash(get_parent(), get_muzzle_world_position(), aim_dir, cw.weapon_kind)
 		NetworkManager.send_input_to_server(cmd)
 	elif multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) and multiplayer.is_server():
 		simulate_movement(latest_server_input, delta)
@@ -984,3 +1111,5 @@ func _on_scope_toggled(scoped: bool) -> void:
 	is_scoping = scoped
 	if visual_root != null and is_local_player:
 		visual_root.visible = not scoped
+	if is_local_player and not is_bot:
+		SoundSynthesizer.play_sfx("scope_in", 1.0 if scoped else 0.78)

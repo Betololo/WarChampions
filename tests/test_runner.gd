@@ -20,6 +20,7 @@ func _ready() -> void:
 	_test_seaside_map_and_12v12_bots_integration()
 	_test_overhaul_net_u32_fall_damage_and_assets()
 	_test_hero_visuals_camera_and_audio()
+	_test_ik_weapon_grip_shot_fx_and_scope()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -497,6 +498,68 @@ func _test_hero_visuals_camera_and_audio() -> void:
 	var m1: bool = SoundSynthesizer.toggle_music()
 	var m2: bool = SoundSynthesizer.toggle_music()
 	_assert(not m1 and m2 and SoundSynthesizer.music_enabled, "SoundSynthesizer.toggle_music() cleanly mutes and restores music")
+
+
+func _test_ik_weapon_grip_shot_fx_and_scope() -> void:
+	# 1. Verify two-bone arm IK connects Right & Left hands directly to rifle grip/foregrip (NOT held like a sword!)
+	var hero := HeroCharacter.new()
+	hero.setup_identity(701, "IKTester", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(hero)
+	hero._animate_character(0.016)
+	var hand_r_pos: Vector3 = hero._arm_r_pivot.transform * hero._forearm_r_pivot.transform * Vector3(0.0, -hero._forearm_len, 0.0)
+	var hand_l_pos: Vector3 = hero._arm_l_pivot.transform * hero._forearm_l_pivot.transform * Vector3(0.0, -hero._forearm_len, 0.0)
+	var grip_target: Vector3 = hero._held_weapon_root.transform * hero._weapon_grip_local
+	var foregrip_target: Vector3 = hero._held_weapon_root.transform * hero._weapon_foregrip_local
+	_assert(
+		hand_r_pos.distance_to(grip_target) < 0.025 and hand_l_pos.distance_to(foregrip_target) < 0.025,
+		"2-bone IK snaps Right/Left hands onto weapon grip & foregrip (err R=%.3fm, L=%.3fm)" % [hand_r_pos.distance_to(grip_target), hand_l_pos.distance_to(foregrip_target)]
+	)
+
+	hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.SMG, false)
+	_assert(hero._weapon_recoil_anim >= 0.99 and hero._fire_pose_timer > 0.3, "Weapon fire triggers recoil & aim-pose animation")
+
+	# 2. Verify HitscanWeapon broadcasts both shot_vfx and hit_vfx damage numbers on target hit
+	var target := HeroCharacter.new()
+	target.setup_identity(702, "DummyVictim", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(target)
+	target.global_position = Vector3(0.0, 0.0, -15.0)
+	hero.global_position = Vector3.ZERO
+
+	var lc := LagCompensator.new()
+	var heroes := {701: hero, 702: target}
+	NetworkManager.server_tick = 10
+	lc.record_frame(10, heroes)
+
+	var seen_shot: Array[bool] = [false]
+	var seen_dmg: Array[int] = [0]
+	var cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "shot_vfx" and int(payload.get("shooter_id", -1)) == 701:
+			seen_shot[0] = true
+		elif ev_type == "hit_vfx" and int(payload.get("attacker_id", -1)) == 701 and int(payload.get("damage", 0)) > 0:
+			seen_dmg[0] = int(payload.get("damage", 0))
+	NetworkManager.game_event_received.connect(cb)
+
+	var cmd := InputCmd.new()
+	cmd.aim_yaw = 0.0
+	cmd.aim_pitch = 0.0
+	var smg := hero.weapons[0] as HitscanWeapon
+	smg.spread_rad = 0.0
+	smg.fire_server(cmd, {"lag_compensator": lc, "heroes_by_id": heroes})
+	NetworkManager.game_event_received.disconnect(cb)
+
+	_assert(seen_shot[0] and seen_dmg[0] > 0, "Hitscan shot broadcasts shot_vfx and damage number in hit_vfx (%d dmg)" % seen_dmg[0])
+
+	# 3. Verify HUD SniperScopeOverlay & Floating Damage Numbers
+	var hud := HUDController.new()
+	add_child(hud)
+	_assert(hud._scope_overlay is HUDController.SniperScopeOverlay, "HUD uses custom-drawn SniperScopeOverlay optic reticle")
+	hud.spawn_damage_number(Vector3(0.0, 1.8, -15.0), seen_dmg[0], true)
+	_assert(hud._floating_dmgs.size() == 1 and (hud._floating_dmgs[0]["label"] as Label).text == ("-%d!" % seen_dmg[0]), "HUD spawns formatted crit damage number popup (-%d!)" % seen_dmg[0])
+
+	hud.free()
+	lc.free()
+	target.free()
+	hero.free()
 
 
 func _test_scene_compile_and_load() -> void:

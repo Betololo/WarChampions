@@ -67,6 +67,13 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 						enemy.apply_damage_server(blast_dmg, owner_hero.entity_id, false)
 						var dir: Vector3 = (diff.normalized() + Vector3(0.0, 0.65, 0.0)).normalized()
 						enemy.apply_knockback(dir * kb_power)
+						NetworkManager.broadcast_game_event("hit_vfx", {
+							"pos": enemy.global_position + Vector3(0.0, 1.75, 0.0),
+							"kind": "spark",
+							"attacker_id": owner_hero.entity_id,
+							"victim_id": enemy.entity_id,
+							"damage": blast_dmg,
+						})
 			if owner_hero.is_inside_tree():
 				for v in owner_hero.get_tree().get_nodes_in_group("vehicles"):
 					if v is RigidBody3D and (v as Node3D).global_position.distance_to(owner_hero.global_position) <= blast_radius + 2.0:

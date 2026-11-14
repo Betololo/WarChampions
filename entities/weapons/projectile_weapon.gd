@@ -35,4 +35,12 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	if parent_node != null:
 		parent_node.add_child(proj)
 
-	fired.emit(weapon_kind, origin, origin + dir * 20.0)
+	var end_pos: Vector3 = origin + dir * 20.0
+	fired.emit(weapon_kind, origin, end_pos)
+	NetworkManager.broadcast_game_event("shot_vfx", {
+		"shooter_id": owner_hero.entity_id,
+		"weapon_kind": weapon_kind,
+		"origin": origin,
+		"dir": dir,
+		"hits": [end_pos],
+	})
