@@ -598,10 +598,83 @@ static func _sprite_hp_cross() -> ImageTexture:
 
 
 static func _sprite_bullet() -> ImageTexture:
-	var img := _new_img(36, 48, Color(0, 0, 0, 0))
-	_draw_rect(img, 10, 16, 16, 26, Color(0.95, 0.72, 0.18))
-	_draw_circle(img, 18, 16, 8.0, Color(1.0, 0.86, 0.35))
-	_draw_rect(img, 12, 38, 12, 4, Color(0.65, 0.45, 0.12))
+	var img := _new_img(40, 52, Color(0, 0, 0, 0))
+	var cx: float = 19.5
+	var outline := Color(0.10, 0.08, 0.06, 0.96)
+
+	# Helper closure via row profile for crisp outlined vertical BFH brass cartridge
+	for y in range(4, 48):
+		var half_w: float = -1.0
+		var is_tip: bool = false
+		var is_groove: bool = false
+		var is_rim: bool = false
+		if y >= 6 and y <= 17:
+			# Pointed copper-jacketed ogive bullet tip (Y=6..17)
+			var t: float = float(y - 6) / 12.0
+			half_w = 1.1 + 4.3 * pow(t, 0.62)
+			is_tip = true
+		elif y >= 18 and y <= 21:
+			# Shoulder taper (Y=18..21)
+			var t_sh: float = float(y - 18) / 4.0
+			half_w = lerpf(5.4, 7.5, t_sh)
+		elif y >= 22 and y <= 41:
+			# Cylindrical brass casing (Y=22..41)
+			half_w = 7.5
+		elif y == 42:
+			# Extractor groove (Y=42)
+			half_w = 6.2
+			is_groove = true
+		elif y >= 43 and y <= 45:
+			# Extractor rim (Y=43..45)
+			half_w = 8.2
+			is_rim = true
+
+		# Outline cap rows (y=4..5 above tip, y=46..47 below rim)
+		var outer_hw: float = half_w + 1.8 if half_w > 0.0 else (2.4 if y == 5 else (1.5 if y == 4 else 9.2))
+		var x_min: int = maxi(0, int(floorf(cx - outer_hw)))
+		var x_max: int = mini(39, int(ceilf(cx + outer_hw)))
+		for x in range(x_min, x_max + 1):
+			var dx: float = absf(float(x) - cx)
+			if half_w < 0.0:
+				if dx <= outer_hw:
+					img.set_pixel(x, y, outline)
+				continue
+			if dx > half_w and dx <= outer_hw:
+				img.set_pixel(x, y, outline)
+			elif dx <= half_w:
+				# Normalized horizontal coordinate across cartridge (-1 = left, +1 = right)
+				var u: float = (float(x) - cx) / maxf(0.5, half_w)
+				var col: Color
+				if is_tip:
+					var base_cu := Color(0.86, 0.44, 0.16)
+					var hi_cu := Color(1.0, 0.80, 0.48)
+					var sh_cu := Color(0.56, 0.24, 0.08)
+					if u < -0.15 and u > -0.62:
+						col = hi_cu
+					elif u > 0.35:
+						col = base_cu.lerp(sh_cu, clampf((u - 0.35) / 0.65, 0.0, 1.0))
+					else:
+						col = base_cu
+				elif is_groove:
+					col = Color(0.48, 0.31, 0.08)
+				elif is_rim:
+					var base_rim := Color(0.92, 0.72, 0.22)
+					col = Color(1.0, 0.92, 0.56) if (u < -0.15 and u > -0.60 and y == 43) else (Color(0.62, 0.42, 0.10) if (u > 0.35 or y == 45) else base_rim)
+				else:
+					var base_br := Color(0.95, 0.73, 0.18)
+					var hi_br := Color(1.0, 0.94, 0.58)
+					var sh_br := Color(0.66, 0.44, 0.10)
+					if u >= -0.60 and u <= -0.22:
+						col = hi_br
+					elif u > 0.32:
+						col = base_br.lerp(sh_br, clampf((u - 0.32) / 0.68, 0.0, 1.0))
+					elif u < -0.75:
+						col = base_br.lerp(sh_br, 0.45)
+					else:
+						col = base_br
+					if y == 18 or y == 21:
+						col = col.darkened(0.10)
+				img.set_pixel(x, y, col)
 	return ImageTexture.create_from_image(img)
 
 

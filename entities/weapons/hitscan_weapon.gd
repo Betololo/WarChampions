@@ -14,7 +14,9 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("break_stealth"):
 		owner_hero.status_effects.break_stealth()
 
-	var aim: Dictionary = get_aim_origin_and_dir(cmd)
+	var world_3d: World3D = owner_hero.get_world_3d() if owner_hero.is_inside_tree() else null
+	var space_state: PhysicsDirectSpaceState3D = world_3d.direct_space_state if world_3d != null else null
+	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state)
 	var origin: Vector3 = aim["origin"]
 	var base_dir: Vector3 = aim["dir"]
 
@@ -31,7 +33,6 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 
 	var lag_comp: LagCompensator = context.get("lag_compensator", null)
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-	var world_3d: World3D = owner_hero.get_world_3d() if owner_hero.is_inside_tree() else null
 	var pellet_hits: Array[Vector3] = []
 	var pellet_arcs: Array[PackedVector3Array] = []
 	var dmg_by_victim: Dictionary = {}

@@ -148,13 +148,23 @@ var _weapon_slot_keys: Array[Label] = []
 var _skill_slot_bgs: Array[PanelContainer] = []
 var _skill_slot_icons: Array[TextureRect] = []
 var _skill_slot_cd_lbls: Array[Label] = []
+var _skill_slot_keys: Array[Label] = []
 var _upgrade_buttons: Array[Button] = []
 
 var _widget_slot_icons: Array[TextureRect] = []
 var _widget_slot_cd_lbls: Array[Label] = []
+var _widget_slot_keys: Array[Label] = []
 
 var _mastery_lbl: Label
 var _crosshair: Control
+var _crosshair_top: ColorRect
+var _crosshair_bottom: ColorRect
+var _crosshair_left: ColorRect
+var _crosshair_right: ColorRect
+var _crosshair_dot: ColorRect
+var _crosshair_spread_px: float = 6.0
+var _crosshair_bloom: float = 0.0
+var _bound_weapon_signals: Array[WeaponBase] = []
 var _scope_overlay: Control
 var _hitmarker_lbl: Label
 var _parachute_lbl: Label
@@ -228,10 +238,27 @@ func bind_context(p_conquest: ConquestManager, p_vehicles: Array[VehicleBase], p
 
 
 func set_local_hero(hero: HeroCharacter) -> void:
+	for old_w in _bound_weapon_signals:
+		if is_instance_valid(old_w) and old_w.fired.is_connected(_on_local_weapon_fired):
+			old_w.fired.disconnect(_on_local_weapon_fired)
+	_bound_weapon_signals.clear()
+
 	_local_hero = hero
 	_prev_hp_observed = hero.hp if hero != null else -1
 	_last_portrait_key = ""
+	_crosshair_bloom = 0.0
+	_crosshair_spread_px = 6.0
+	_apply_crosshair_spread(_crosshair_spread_px)
 	_refresh_hotbar_icons()
+
+
+func trigger_crosshair_bloom(amount: float = 6.0) -> void:
+	_crosshair_bloom = minf(20.0, _crosshair_bloom + amount)
+
+
+func _on_local_weapon_fired(w_kind: int, _muzzle: Vector3, _hit: Vector3) -> void:
+	var bump: float = 8.5 if (w_kind == WeaponBase.WeaponKind.SHOTGUN or w_kind == WeaponBase.WeaponKind.SNIPER or w_kind == WeaponBase.WeaponKind.BAZOOKA) else 5.0
+	trigger_crosshair_bloom(bump)
 
 
 func show_hitmarker(is_headshot: bool) -> void:
@@ -267,6 +294,53 @@ func _style_label(lbl: Label, font_size: int, color: Color = Color.WHITE) -> voi
 	lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.65))
 	lbl.add_theme_constant_override("shadow_offset_x", 2)
 	lbl.add_theme_constant_override("shadow_offset_y", 2)
+
+
+func _make_upgrade_button_style(bg_col: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg_col
+	sb.border_color = Color(0.12, 0.08, 0.02, 0.95)
+	sb.border_width_left = 1
+	sb.border_width_right = 1
+	sb.border_width_top = 1
+	sb.border_width_bottom = 1
+	sb.corner_radius_top_left = 4
+	sb.corner_radius_top_right = 4
+	sb.corner_radius_bottom_left = 4
+	sb.corner_radius_bottom_right = 4
+	sb.content_margin_left = 4.0
+	sb.content_margin_right = 4.0
+	sb.content_margin_top = 0.0
+	sb.content_margin_bottom = 0.0
+	return sb
+
+
+func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vector2) -> ColorRect:
+	var outline := ColorRect.new()
+	outline.name = node_name
+	outline.size = outer_size
+	outline.color = Color(0.04, 0.05, 0.07, 0.86)
+	outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var inner := ColorRect.new()
+	inner.name = "Fill"
+	inner.size = inner_size
+	inner.position = (outer_size - inner_size) * 0.5
+	inner.color = Color(1.0, 1.0, 1.0, 0.96)
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	outline.add_child(inner)
+	return outline
+
+
+func _apply_crosshair_spread(gap: float) -> void:
+	if _crosshair_top != null:
+		_crosshair_top.position = Vector2(-2.0, -gap - 10.0)
+	if _crosshair_bottom != null:
+		_crosshair_bottom.position = Vector2(-2.0, gap - 1.0)
+	if _crosshair_left != null:
+		_crosshair_left.position = Vector2(-gap - 10.0, -2.0)
+	if _crosshair_right != null:
+		_crosshair_right.position = Vector2(gap - 1.0, -2.0)
 
 
 func _make_slot_style(highlighted: bool) -> StyleBoxFlat:
@@ -461,10 +535,10 @@ func _build_hud() -> void:
 	br_hbox.anchor_right = 1.0
 	br_hbox.anchor_top = 1.0
 	br_hbox.anchor_bottom = 1.0
-	br_hbox.offset_left = -280.0
-	br_hbox.offset_top = -82.0
+	br_hbox.offset_left = -310.0
+	br_hbox.offset_top = -86.0
 	br_hbox.offset_right = -20.0
-	br_hbox.offset_bottom = -14.0
+	br_hbox.offset_bottom = -16.0
 	br_hbox.alignment = BoxContainer.ALIGNMENT_END
 	br_hbox.add_theme_constant_override("separation", 10)
 	br_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -472,6 +546,7 @@ func _build_hud() -> void:
 
 	var ammo_vbox := VBoxContainer.new()
 	ammo_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	ammo_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	ammo_vbox.add_theme_constant_override("separation", -4)
 	ammo_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	br_hbox.add_child(ammo_vbox)
@@ -489,9 +564,10 @@ func _build_hud() -> void:
 	ammo_vbox.add_child(_weapon_name_lbl)
 
 	_ammo_icon_tex = TextureRect.new()
-	_ammo_icon_tex.custom_minimum_size = Vector2(36, 56)
+	_ammo_icon_tex.custom_minimum_size = Vector2(34, 46)
 	_ammo_icon_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_ammo_icon_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_ammo_icon_tex.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_ammo_icon_tex.texture = CartoonAssets.get_texture("icon_ammo")
 	_ammo_icon_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	br_hbox.add_child(_ammo_icon_tex)
@@ -502,10 +578,11 @@ func _build_hud() -> void:
 	_hotbar_hbox.anchor_right = 0.5
 	_hotbar_hbox.anchor_top = 1.0
 	_hotbar_hbox.anchor_bottom = 1.0
-	_hotbar_hbox.offset_left = -360.0
-	_hotbar_hbox.offset_right = 360.0
-	_hotbar_hbox.offset_top = -84.0
+	_hotbar_hbox.offset_left = -370.0
+	_hotbar_hbox.offset_right = 370.0
+	_hotbar_hbox.offset_top = -114.0
 	_hotbar_hbox.offset_bottom = -8.0
+	_hotbar_hbox.clip_contents = false
 	_hotbar_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	_hotbar_hbox.add_theme_constant_override("separation", 6)
 	_hotbar_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -519,13 +596,13 @@ func _build_hud() -> void:
 		slot_v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 		var bg := PanelContainer.new()
-		bg.custom_minimum_size = Vector2(52, 46)
+		bg.custom_minimum_size = Vector2(42, 42)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(w_idx == 0))
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot_v.add_child(bg)
 
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(46, 38)
+		icon.custom_minimum_size = Vector2(36, 34)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = CartoonAssets.get_texture("icon_weapon_%d" % w_idx)
@@ -535,7 +612,7 @@ func _build_hud() -> void:
 		var k_lbl := Label.new()
 		k_lbl.text = "%d" % (w_idx + 1)
 		k_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_style_label(k_lbl, 13, Color(0.95, 0.95, 0.95))
+		_style_label(k_lbl, 11, Color(0.95, 0.95, 0.95))
 		slot_v.add_child(k_lbl)
 
 		_hotbar_hbox.add_child(slot_v)
@@ -546,15 +623,28 @@ func _build_hud() -> void:
 
 	# 5 Skill slots (5/F, 6/G, 7, 8, 9) with upgrade '+' buttons above
 	var sk_keys: Array[String] = ["5/F", "6/G", "7", "8", "9"]
+	var upg_sb_normal := _make_upgrade_button_style(Color(0.96, 0.78, 0.18, 0.94))
+	var upg_sb_hover := _make_upgrade_button_style(Color(1.0, 0.88, 0.34, 0.98))
+	var upg_sb_pressed := _make_upgrade_button_style(Color(0.84, 0.62, 0.10, 0.98))
 	for s_idx in range(5):
 		var sv := VBoxContainer.new()
 		sv.alignment = BoxContainer.ALIGNMENT_END
-		sv.add_theme_constant_override("separation", 1)
+		sv.add_theme_constant_override("separation", 2)
 		sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 		var upg := Button.new()
 		upg.text = "+"
-		upg.custom_minimum_size = Vector2(24, 18)
+		upg.custom_minimum_size = Vector2(36, 18)
+		upg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		upg.clip_text = true
+		upg.add_theme_font_size_override("font_size", 11)
+		upg.add_theme_color_override("font_color", Color(0.08, 0.06, 0.02))
+		upg.add_theme_color_override("font_hover_color", Color(0.05, 0.04, 0.01))
+		upg.add_theme_color_override("font_pressed_color", Color(0.05, 0.04, 0.01))
+		upg.add_theme_stylebox_override("normal", upg_sb_normal)
+		upg.add_theme_stylebox_override("hover", upg_sb_hover)
+		upg.add_theme_stylebox_override("pressed", upg_sb_pressed)
+		upg.add_theme_stylebox_override("focus", upg_sb_hover)
 		upg.visible = false
 		var captured: int = s_idx
 		upg.pressed.connect(func() -> void: upgrade_skill_requested.emit(captured))
@@ -562,13 +652,13 @@ func _build_hud() -> void:
 		_upgrade_buttons.append(upg)
 
 		var bg := PanelContainer.new()
-		bg.custom_minimum_size = Vector2(44, 44)
+		bg.custom_minimum_size = Vector2(42, 42)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sv.add_child(bg)
 
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(36, 36)
+		icon.custom_minimum_size = Vector2(34, 34)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = CartoonAssets.get_texture("icon_skill_%d" % s_idx)
@@ -585,13 +675,14 @@ func _build_hud() -> void:
 		var kl := Label.new()
 		kl.text = sk_keys[s_idx]
 		kl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_style_label(kl, 12, Color(0.95, 0.95, 0.95))
+		_style_label(kl, 11, Color(0.95, 0.95, 0.95))
 		sv.add_child(kl)
 
 		_hotbar_hbox.add_child(sv)
 		_skill_slot_bgs.append(bg)
 		_skill_slot_icons.append(icon)
 		_skill_slot_cd_lbls.append(cd_lbl)
+		_skill_slot_keys.append(kl)
 
 	# 3 Widget slots (Z/0, X, V)
 	var wd_keys: Array[String] = ["Z/0", "X", "V"]
@@ -625,12 +716,13 @@ func _build_hud() -> void:
 		var kl := Label.new()
 		kl.text = wd_keys[wj]
 		kl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_style_label(kl, 12, Color(0.95, 0.95, 0.95))
+		_style_label(kl, 11, Color(0.95, 0.95, 0.95))
 		wv.add_child(kl)
 
 		_hotbar_hbox.add_child(wv)
 		_widget_slot_icons.append(icon)
 		_widget_slot_cd_lbls.append(cd_lbl)
+		_widget_slot_keys.append(kl)
 
 	# 6. Mid-Right: Combat Mastery / Score XP (matching Screenshot 1)
 	_mastery_lbl = Label.new()
@@ -690,20 +782,32 @@ func _build_hud() -> void:
 	# 10. Center Crosshair, Hitmarker, Parachute Prompt, Vehicle Interact & Defeat
 	_crosshair = Control.new()
 	_crosshair.anchor_left = 0.5
+	_crosshair.anchor_right = 0.5
 	_crosshair.anchor_top = 0.5
+	_crosshair.anchor_bottom = 0.5
 	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_crosshair)
 
-	var dot := ColorRect.new()
-	dot.color = Color(1.0, 1.0, 1.0, 0.92)
-	dot.position = Vector2(-2, -2)
-	dot.size = Vector2(4, 4)
-	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_crosshair.add_child(dot)
+	_crosshair_dot = _make_crosshair_bar("CenterDot", Vector2(4, 4), Vector2(2, 2))
+	_crosshair_dot.position = Vector2(-2, -2)
+	_crosshair.add_child(_crosshair_dot)
+
+	_crosshair_top = _make_crosshair_bar("Top", Vector2(4, 11), Vector2(2, 9))
+	_crosshair.add_child(_crosshair_top)
+	_crosshair_bottom = _make_crosshair_bar("Bottom", Vector2(4, 11), Vector2(2, 9))
+	_crosshair.add_child(_crosshair_bottom)
+	_crosshair_left = _make_crosshair_bar("Left", Vector2(11, 4), Vector2(9, 2))
+	_crosshair.add_child(_crosshair_left)
+	_crosshair_right = _make_crosshair_bar("Right", Vector2(11, 4), Vector2(9, 2))
+	_crosshair.add_child(_crosshair_right)
+	_apply_crosshair_spread(_crosshair_spread_px)
 
 	_hitmarker_lbl = Label.new()
 	_hitmarker_lbl.text = "X"
-	_hitmarker_lbl.position = Vector2(-8, -15)
+	_hitmarker_lbl.size = Vector2(28, 28)
+	_hitmarker_lbl.position = Vector2(-14, -14)
+	_hitmarker_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hitmarker_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_style_label(_hitmarker_lbl, 22, Color.WHITE)
 	_hitmarker_lbl.visible = false
 	_crosshair.add_child(_hitmarker_lbl)
@@ -750,8 +854,8 @@ func _build_hud() -> void:
 	_veh_hp_panel.anchor_bottom = 1.0
 	_veh_hp_panel.offset_left = -160.0
 	_veh_hp_panel.offset_right = 160.0
-	_veh_hp_panel.offset_top = -132.0
-	_veh_hp_panel.offset_bottom = -94.0
+	_veh_hp_panel.offset_top = -138.0
+	_veh_hp_panel.offset_bottom = -100.0
 	_veh_hp_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var veh_sb := StyleBoxFlat.new()
 	veh_sb.bg_color = Color(0.06, 0.08, 0.12, 0.78)
@@ -830,6 +934,10 @@ func _refresh_hotbar_icons() -> void:
 			var w: WeaponBase = _local_hero.weapons[i] as WeaponBase
 			if w != null:
 				_weapon_slot_icons[i].texture = CartoonAssets.get_texture("icon_weapon_%d" % w.weapon_kind)
+				if not w.fired.is_connected(_on_local_weapon_fired):
+					w.fired.connect(_on_local_weapon_fired)
+				if not _bound_weapon_signals.has(w):
+					_bound_weapon_signals.append(w)
 		else:
 			_weapon_slot_boxes[i].visible = false
 
@@ -888,12 +996,28 @@ func _process(delta: float) -> void:
 	_hp_value_lbl.text = "%d" % _local_hero.hp
 	_shield_value_lbl.text = ("+%d ESCUDO" % _local_hero.shield) if _local_hero.shield > 0 else ""
 
+	var is_scoped: bool = _local_hero.is_scoping or (_local_hero.hero_camera != null and _local_hero.hero_camera.is_scoped)
 	if _scope_overlay != null:
-		_scope_overlay.visible = _local_hero.is_scoping
+		_scope_overlay.visible = is_scoped
 		if _scope_overlay.visible:
 			_scope_overlay.queue_redraw()
 	if _crosshair != null:
-		_crosshair.visible = not _local_hero.is_scoping
+		_crosshair.visible = not is_scoped
+		_crosshair_bloom = maxf(0.0, _crosshair_bloom - 26.0 * delta)
+		var speed_horiz: float = Vector2(_local_hero.velocity.x, _local_hero.velocity.z).length()
+		var move_bloom: float = clampf(speed_horiz / 8.0, 0.0, 1.5) * 6.0
+		var air_bloom: float = 6.0 if (not _local_hero.is_on_floor() and _local_hero.current_vehicle_id < 0) else 0.0
+		var crouch_bonus: float = -1.5 if _local_hero.is_crouching else 0.0
+		var weapon_spread_bonus: float = 0.0
+		if not _local_hero.weapons.is_empty():
+			var w_slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
+			var active_w: WeaponBase = _local_hero.weapons[w_slot] as WeaponBase
+			if active_w != null:
+				weapon_spread_bonus = clampf(active_w.spread_rad * 60.0, 0.0, 5.0)
+		var recoil_bloom: float = _crosshair_bloom + _local_hero._weapon_recoil_anim * 5.0
+		var target_spread: float = clampf(6.0 + weapon_spread_bonus + move_bloom + air_bloom + crouch_bonus + recoil_bloom, 4.0, 28.0)
+		_crosshair_spread_px = lerpf(_crosshair_spread_px, target_spread, minf(1.0, 18.0 * delta))
+		_apply_crosshair_spread(_crosshair_spread_px)
 
 	_update_floating_damage_numbers(delta)
 

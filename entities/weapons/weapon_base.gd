@@ -281,11 +281,55 @@ func compute_falloff_damage(distance_m: float, is_headshot: bool, bonus_mult: fl
 	return maxi(1, int(roundf(dmg)))
 
 
-func get_aim_origin_and_dir(cmd: InputCmd) -> Dictionary:
-	var eye_offset: float = 1.05 if (owner_hero != null and owner_hero.is_crouching) else 1.52
-	var origin: Vector3 = (owner_hero.global_position if owner_hero != null else global_position) + Vector3(0.0, eye_offset, 0.0)
-	var basis := Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0))
-	var dir: Vector3 = -basis.z.normalized()
+func get_aim_origin_and_dir(cmd: InputCmd, space_state: PhysicsDirectSpaceState3D = null) -> Dictionary:
+	var crouch: bool = owner_hero != null and owner_hero.is_crouching
+	var eye_offset: float = 1.05 if crouch else 1.52
+	if owner_hero == null:
+		var fallback_origin: Vector3 = global_position + Vector3(0.0, eye_offset, 0.0)
+		var fallback_basis := Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0))
+		return {"origin": fallback_origin, "dir": (-fallback_basis.z).normalized()}
+
+	var hero_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+	var in_vehicle: bool = owner_hero.current_vehicle_id >= 0
+	var scoped: bool = owner_hero.is_scoping or (is_sniper and cmd.has_button(InputCmd.BTN_AIM) and not in_vehicle)
+	var cam_ray: Dictionary = HeroCamera.compute_aim_ray(hero_pos, cmd.aim_yaw, cmd.aim_pitch, scoped, in_vehicle, crouch)
+	var cam_origin: Vector3 = cam_ray["origin"]
+	var cam_dir: Vector3 = cam_ray["dir"]
+
+	if scoped:
+		return {"origin": cam_origin, "dir": cam_dir}
+
+	var aim_basis := Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0))
+	var right_vec: Vector3 = aim_basis.x.normalized()
+	var fwd_vec: Vector3 = (-aim_basis.z).normalized()
+	var origin: Vector3 = hero_pos + Vector3(0.0, eye_offset, 0.0) + right_vec * 0.24 - fwd_vec * 0.25
+
+	var max_conv_dist: float = 180.0
+	var target_pt: Vector3 = cam_origin + cam_dir * 85.0
+	if space_state != null:
+		target_pt = cam_origin + cam_dir * max_conv_dist
+		var pivot_pt: Vector3 = cam_ray.get("pivot", cam_origin)
+		var spring_len: float = float(cam_ray.get("spring_length", 0.0))
+		var ray_end: Vector3 = cam_origin + cam_dir * max_conv_dist
+		var query := PhysicsRayQueryParameters3D.create(pivot_pt, ray_end, 1 | 2 | 8 | 64)
+		query.hit_from_inside = true
+		var excludes: Array[RID] = [owner_hero.get_rid()]
+		if in_vehicle and owner_hero.is_inside_tree():
+			for v_node in owner_hero.get_tree().get_nodes_in_group("vehicles"):
+				if v_node is VehicleBase and (v_node as VehicleBase).id == owner_hero.current_vehicle_id:
+					excludes.append((v_node as CollisionObject3D).get_rid())
+		query.exclude = excludes
+		var hit: Dictionary = space_state.intersect_ray(query)
+		if not hit.is_empty():
+			var hit_pos: Vector3 = hit["position"]
+			var dist_from_cam: float = (hit_pos - cam_origin).dot(cam_dir)
+			var min_dist: float = maxf(2.2, spring_len + 0.8)
+			if dist_from_cam < min_dist:
+				target_pt = cam_origin + cam_dir * min_dist
+			else:
+				target_pt = hit_pos
+
+	var dir: Vector3 = (target_pt - origin).normalized()
 	return {"origin": origin, "dir": dir}
 
 

@@ -26,6 +26,7 @@ func _ready() -> void:
 	_test_ik_weapon_grip_shot_fx_and_scope()
 	_test_ballistic_bullet_drop_and_tracers()
 	_test_vehicle_sculpted_models_and_animations()
+	await _test_hud_crosshair_and_aim_convergence()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -1476,6 +1477,212 @@ func _test_client_vehicle_freeze_and_buoyancy_sync() -> void:
 			boats_restored += 1
 	_assert(boats_restored == initial_boats and boats_restored >= 10, "Disconnecting back to offline unfreezes client boats (%d/%d)" % [boats_restored, initial_boats])
 	game.free()
+
+
+signal _deferred_flushed
+
+
+func _flush_deferred() -> void:
+	call_deferred("emit_signal", "_deferred_flushed")
+	await _deferred_flushed
+
+
+func _test_hud_crosshair_and_aim_convergence() -> void:
+	# Create shooter, HUD, and 12m/65m targets before the single physics_frame sync
+	# so both PhysicsServer3D and Container layout finish cleanly within the frame.
+	var shooter := HeroCharacter.new()
+	shooter.setup_identity(950, "HudAimHero", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(shooter)
+	shooter.set_physics_process(false)
+	shooter.global_position = Vector3.ZERO
+	if shooter.skill_manager is SkillManager:
+		(shooter.skill_manager as SkillManager).award_xp(150) # Level 2 -> grants 1 Hero Point so '+' upgrade buttons show
+
+	var target_12 := HeroCharacter.new()
+	target_12.setup_identity(951, "ConvergeTarget12", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(target_12)
+	target_12.set_physics_process(false)
+
+	var target_65 := HeroCharacter.new()
+	target_65.setup_identity(952, "ConvergeTarget65", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(target_65)
+	target_65.set_physics_process(false)
+
+	var cmd_12 := InputCmd.new()
+	cmd_12.aim_yaw = 0.25
+	cmd_12.aim_pitch = -0.04
+	var cam_ray_12: Dictionary = HeroCamera.compute_aim_ray(shooter.global_position, cmd_12.aim_yaw, cmd_12.aim_pitch, false, false, false)
+	var pt_12: Vector3 = (cam_ray_12["origin"] as Vector3) + (cam_ray_12["dir"] as Vector3) * (float(cam_ray_12["spring_length"]) + 12.0)
+	target_12.global_position = pt_12 - Vector3(0.0, 1.35, 0.0)
+
+	var cmd_65 := InputCmd.new()
+	cmd_65.aim_yaw = -0.35
+	cmd_65.aim_pitch = -0.02
+	var cam_ray_65: Dictionary = HeroCamera.compute_aim_ray(shooter.global_position, cmd_65.aim_yaw, cmd_65.aim_pitch, false, false, false)
+	var pt_65: Vector3 = (cam_ray_65["origin"] as Vector3) + (cam_ray_65["dir"] as Vector3) * (float(cam_ray_65["spring_length"]) + 65.0)
+	target_65.global_position = pt_65 - Vector3(0.0, 1.35, 0.0)
+
+	# Close-range wall 0.6m in front of shoulder pivot along +Z (opposite -Z targets, tests min_dist clamp)
+	var close_wall := StaticBody3D.new()
+	close_wall.collision_layer = 1
+	var close_col := CollisionShape3D.new()
+	var close_box := BoxShape3D.new()
+	close_box.size = Vector3(1.5, 2.0, 0.3)
+	close_col.shape = close_box
+	close_wall.add_child(close_col)
+	add_child(close_wall)
+	var cmd_close := InputCmd.new()
+	cmd_close.aim_yaw = PI
+	cmd_close.aim_pitch = 0.0
+	var cam_ray_close: Dictionary = HeroCamera.compute_aim_ray(shooter.global_position, cmd_close.aim_yaw, cmd_close.aim_pitch, false, false, false)
+	close_wall.global_position = (cam_ray_close["pivot"] as Vector3) + (cam_ray_close["dir"] as Vector3) * 0.6
+
+	var hud := HUDController.new()
+	add_child(hud)
+	hud.set_local_hero(shooter)
+	hud._process(0.016)
+
+	await get_tree().physics_frame
+	hud._process(0.016)
+	await _flush_deferred()
+	hud._process(0.016)
+	await _flush_deferred()
+
+	# 1. HUD Bottom Hotbar Unclipped at 1280x720 with Level-2 Soldier '+' Upgrade Buttons
+	var vp_h: float = float(hud.get_viewport().get_visible_rect().size.y)
+	var upg_visible_count: int = 0
+	for b in hud._upgrade_buttons:
+		if b.visible:
+			upg_visible_count += 1
+	var all_keys_unclipped: bool = true
+	var max_key_end_y: float = 0.0
+	var all_key_lbls: Array[Label] = []
+	all_key_lbls.append_array(hud._weapon_slot_keys)
+	all_key_lbls.append_array(hud._skill_slot_keys)
+	all_key_lbls.append_array(hud._widget_slot_keys)
+	for kl in all_key_lbls:
+		var box := kl.get_parent() as Control
+		if box != null and not box.visible:
+			continue
+		var rect := kl.get_global_rect()
+		max_key_end_y = maxf(max_key_end_y, rect.end.y)
+		if rect.position.y < 0.0 or rect.end.y > vp_h - 6.0:
+			all_keys_unclipped = false
+	_assert(
+		upg_visible_count == 5 and all_keys_unclipped and all_key_lbls.size() == 12,
+		"All 12 hotbar hotkey labels stay unclipped (max end.y=%.1f <= %.1f) with %d '+' upgrade buttons visible" % [max_key_end_y, vp_h - 6.0, upg_visible_count]
+	)
+
+	# 2. Crisp Vertical Bullet Icon & Balanced Bottom-Right Ammo Alignment
+	var bullet_tex: Texture2D = hud._ammo_icon_tex.texture
+	var bullet_img: Image = bullet_tex.get_image() if bullet_tex != null else null
+	var min_x: int = 999
+	var max_x: int = -1
+	var min_y: int = 999
+	var max_y: int = -1
+	if bullet_img != null:
+		for py in range(bullet_img.get_height()):
+			for px in range(bullet_img.get_width()):
+				if bullet_img.get_pixel(px, py).a > 0.1:
+					min_x = mini(min_x, px)
+					max_x = maxi(max_x, px)
+					min_y = mini(min_y, py)
+					max_y = maxi(max_y, py)
+	var x_asym: int = absi(min_x - (bullet_img.get_width() - 1 - max_x)) if bullet_img != null else 999
+	var y_asym: int = absi(min_y - (bullet_img.get_height() - 1 - max_y)) if bullet_img != null else 999
+	var icon_rect := hud._ammo_icon_tex.get_global_rect()
+	var ammo_rect := hud._ammo_value_lbl.get_global_rect()
+	_assert(
+		bullet_img != null and bullet_img.get_width() == 40 and bullet_img.get_height() == 52 and x_asym <= 1 and y_asym <= 1 and absf(icon_rect.get_center().y - (ammo_rect.get_center().y + 6.0)) < 18.0,
+		"Bullet icon is crisp 40x52 centered cartridge (asym X=%d, Y=%d) vertically balanced with ammo text" % [x_asym, y_asym]
+	)
+
+	# 3. Dynamic 4-Prong BFH Crosshair (prongs present, spread blooms on move/fire, hides when scoped)
+	var has_prongs: bool = (
+		hud._crosshair != null
+		and hud._crosshair.get_node_or_null("Top") != null
+		and hud._crosshair.get_node_or_null("Bottom") != null
+		and hud._crosshair.get_node_or_null("Left") != null
+		and hud._crosshair.get_node_or_null("Right") != null
+	)
+	var idle_spread: float = hud._crosshair_spread_px
+	shooter.velocity = Vector3(7.5, 0.0, 0.0)
+	for _i in range(10):
+		hud._process(0.016)
+	var move_spread: float = hud._crosshair_spread_px
+	hud.trigger_crosshair_bloom(9.0)
+	for _i in range(6):
+		hud._process(0.016)
+	var fire_spread: float = hud._crosshair_spread_px
+	shooter.hero_camera.set_scoped(true)
+	hud._process(0.016)
+	var hidden_when_scoped: bool = not hud._crosshair.visible and hud._scope_overlay.visible
+	shooter.hero_camera.set_scoped(false)
+	hud._process(0.016)
+	var restored_after_scope: bool = hud._crosshair.visible and not hud._scope_overlay.visible
+	_assert(
+		has_prongs and move_spread > idle_spread + 1.5 and fire_spread > move_spread + 1.5 and hidden_when_scoped and restored_after_scope,
+		"4-prong crosshair spreads on move/fire (idle=%.1f -> move=%.1f -> fire=%.1f) and toggles cleanly with Sniper scope" % [idle_spread, move_spread, fire_spread]
+	)
+
+	# 4. Over-Shoulder Crosshair Aim Convergence at 12.0m (close) and 65.0m (mid-range) + backwards-compat
+	var lc := LagCompensator.new()
+	var heroes := {950: shooter, 951: target_12, 952: target_65}
+	var smg := shooter.weapons[0] as HitscanWeapon
+	smg.spread_rad = 0.0
+
+	var sniper := HitscanWeapon.new()
+	sniper.configure(shooter, WeaponBase.WeaponKind.SNIPER, NetworkManager.ARCHETYPE_BALANCED)
+	sniper.spread_rad = 0.0
+	add_child(sniper)
+
+	var legacy_aim: Dictionary = smg.get_aim_origin_and_dir(cmd_12)
+	_assert(
+		(legacy_aim["dir"] as Vector3).length() > 0.99,
+		"WeaponBase.get_aim_origin_and_dir(cmd) preserves 1-arg compatibility"
+	)
+
+	NetworkManager.server_tick = 40
+	lc.record_frame(40, heroes)
+	var space: PhysicsDirectSpaceState3D = get_viewport().get_world_3d().direct_space_state
+
+	var aim_12: Dictionary = smg.get_aim_origin_and_dir(cmd_12, space)
+	var dist_to_ray_12: float = ((pt_12 - (aim_12["origin"] as Vector3)).cross(aim_12["dir"] as Vector3)).length()
+	var hp_before_12: int = target_12.hp
+	smg.fire_server(cmd_12, {"lag_compensator": lc, "heroes_by_id": heroes})
+	var hit_12: bool = target_12.hp < hp_before_12
+
+	var aim_65: Dictionary = sniper.get_aim_origin_and_dir(cmd_65, space)
+	var dist_to_ray_65: float = ((pt_65 - (aim_65["origin"] as Vector3)).cross(aim_65["dir"] as Vector3)).length()
+	var hp_before_65: int = target_65.hp
+	sniper.fire_server(cmd_65, {"lag_compensator": lc, "heroes_by_id": heroes})
+	var hit_65: bool = target_65.hp < hp_before_65
+
+	_assert(
+		hit_12 and hit_65 and dist_to_ray_12 < 0.05 and dist_to_ray_65 < 0.05,
+		"Over-shoulder aim converges onto HeroCamera crosshair target at 12m (err=%.3fm, hit=%s) and 65m (err=%.3fm, hit=%s)" % [dist_to_ray_12, str(hit_12), dist_to_ray_65, str(hit_65)]
+	)
+
+	var aim_close: Dictionary = smg.get_aim_origin_and_dir(cmd_close, space)
+	var close_dot: float = (aim_close["dir"] as Vector3).dot(cam_ray_close["dir"] as Vector3)
+	var cmd_scoped := InputCmd.new()
+	cmd_scoped.aim_yaw = -0.35
+	cmd_scoped.aim_pitch = -0.02
+	cmd_scoped.buttons = InputCmd.BTN_AIM
+	var cam_ray_scoped: Dictionary = HeroCamera.compute_aim_ray(shooter.global_position, cmd_scoped.aim_yaw, cmd_scoped.aim_pitch, true, false, false)
+	var aim_scoped: Dictionary = sniper.get_aim_origin_and_dir(cmd_scoped, space)
+	_assert(
+		close_dot > 0.7 and (aim_scoped["origin"] as Vector3).distance_to(cam_ray_scoped["origin"] as Vector3) < 0.001,
+		"Close-range convergence clamps forward (dot=%.3f) and scoped Sniper fires pinpoint from FPS eye" % close_dot
+	)
+
+	close_wall.free()
+	sniper.free()
+	lc.free()
+	target_65.free()
+	target_12.free()
+	hud.free()
+	shooter.free()
 
 
 func _test_scene_compile_and_load() -> void:

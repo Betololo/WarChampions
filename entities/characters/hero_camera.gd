@@ -76,6 +76,35 @@ func set_vehicle_mode(active: bool) -> void:
 		set_scoped(false)
 
 
+static func compute_aim_ray(
+	hero_pos: Vector3,
+	aim_yaw: float,
+	aim_pitch: float,
+	is_scoped: bool = false,
+	in_vehicle: bool = false,
+	crouch: bool = false
+) -> Dictionary:
+	var pivot_offset: Vector3 = TPS_SHOULDER_OFFSET
+	var spring_len: float = TPS_SPRING_LENGTH
+	if is_scoped:
+		pivot_offset = FPS_EYE_OFFSET
+		spring_len = 0.05
+	elif in_vehicle:
+		pivot_offset = VEHICLE_OFFSET
+		spring_len = VEHICLE_SPRING_LENGTH
+
+	if crouch and not in_vehicle:
+		pivot_offset.y -= 0.45
+
+	var clamped_pitch: float = clampf(aim_pitch, -1.40, 1.40)
+	var yaw_basis := Basis(Vector3.UP, aim_yaw)
+	var cam_basis := Basis.from_euler(Vector3(clamped_pitch, aim_yaw, 0.0))
+	var pivot_world: Vector3 = hero_pos + yaw_basis * pivot_offset
+	var cam_world_pos: Vector3 = pivot_world + cam_basis.z * spring_len
+	var cam_forward_dir: Vector3 = (-cam_basis.z).normalized()
+	return {"origin": cam_world_pos, "dir": cam_forward_dir, "pivot": pivot_world, "spring_length": spring_len}
+
+
 func _process(delta: float) -> void:
 	recoil_pitch_offset = lerpf(recoil_pitch_offset, 0.0, aim_punch_decay * delta)
 	var target_offset: Vector3 = TPS_SHOULDER_OFFSET
@@ -90,6 +119,10 @@ func _process(delta: float) -> void:
 		target_offset = VEHICLE_OFFSET
 		target_length = VEHICLE_SPRING_LENGTH
 		target_fov = 74.0
+
+	var p_hero: HeroCharacter = get_parent() as HeroCharacter
+	if p_hero != null and p_hero.is_crouching and not in_vehicle:
+		target_offset.y -= 0.45
 
 	pivot.position = pivot.position.lerp(target_offset, 18.0 * delta)
 	spring_arm.spring_length = lerpf(spring_arm.spring_length, target_length, 18.0 * delta)
