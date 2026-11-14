@@ -72,9 +72,21 @@ func _ready() -> void:
 		start_dedicated_server(port)
 
 
+func is_active_enet_connected() -> bool:
+	if multiplayer.multiplayer_peer == null or (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
+		return false
+	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+
+
+func is_server_authority() -> bool:
+	if multiplayer.multiplayer_peer == null or (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
+		return true
+	return multiplayer.is_server()
+
+
 func _process(delta: float) -> void:
 	_flush_delayed_packets()
-	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+	if is_active_enet_connected() and not multiplayer.is_server():
 		_ping_timer += delta
 		if _ping_timer >= 0.5:
 			_ping_timer = 0.0
@@ -82,7 +94,7 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if multiplayer.multiplayer_peer != null and multiplayer.is_server():
+	if is_active_enet_connected() and multiplayer.is_server():
 		server_tick += 1
 		_snapshot_accum += 1
 
@@ -145,9 +157,9 @@ func join_server(ip: String = "127.0.0.1", port: int = DEFAULT_PORT) -> Error:
 
 func shutdown_network() -> void:
 	_delayed_queue.clear()
-	if multiplayer.multiplayer_peer != null:
+	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer):
 		multiplayer.multiplayer_peer.close()
-		multiplayer.multiplayer_peer = null
+	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	players_info.clear()
 	server_tick = 0
 	_snapshot_accum = 0
@@ -177,7 +189,7 @@ func set_local_loadout(player_name: String, team: int, class_id: int, archetype:
 		"class_id": clampi(class_id, 0, 2),
 		"archetype": clampi(archetype, 0, 2),
 	}
-	if multiplayer.multiplayer_peer != null:
+	if is_active_enet_connected():
 		if multiplayer.is_server():
 			_register_player_internal(1, local_profile.duplicate())
 		else:
@@ -214,44 +226,45 @@ func register_bot(bot_id: int, bot_name: String, team: int, class_id: int, arche
 
 
 func send_input_to_server(cmd: InputCmd) -> void:
-	if multiplayer.multiplayer_peer == null:
+	if not is_active_enet_connected():
 		return
 	if multiplayer.is_server():
 		client_input_received.emit(1, cmd)
 		return
 	var packed: PackedByteArray = NetSerializer.pack_input_cmd(cmd)
 	_schedule_unreliable(func() -> void:
-		if multiplayer.multiplayer_peer != null:
+		if is_active_enet_connected() and not multiplayer.is_server():
 			_rpc_server_receive_input.rpc_id(1, packed)
 	)
 
 
 func send_authoritative_state(peer_id: int, packed_state: PackedByteArray) -> void:
-	if peer_id == 1 or peer_id >= 1000:
-		if peer_id == 1:
-			authoritative_state_received.emit(NetSerializer.unpack_authoritative_state(packed_state))
+	if peer_id == 1:
+		authoritative_state_received.emit(NetSerializer.unpack_authoritative_state(packed_state))
+		return
+	if bool(players_info.get(peer_id, {}).get("is_bot", false)):
 		return
 	_schedule_unreliable(func() -> void:
-		if multiplayer.multiplayer_peer != null:
+		if is_active_enet_connected() and multiplayer.get_peers().has(peer_id):
 			_rpc_client_receive_auth_state.rpc_id(peer_id, packed_state)
 	)
 
 
 func broadcast_world_snapshot(packed_snapshot: PackedByteArray) -> void:
-	if multiplayer.multiplayer_peer == null or not multiplayer.is_server():
+	if not is_active_enet_connected() or not multiplayer.is_server():
 		return
 	var peers: PackedInt32Array = multiplayer.get_peers()
 	if peers.is_empty():
 		return
 	_schedule_unreliable(func() -> void:
-		if multiplayer.multiplayer_peer != null:
-			for p in peers:
+		if is_active_enet_connected() and multiplayer.is_server():
+			for p in multiplayer.get_peers():
 				_rpc_client_receive_snapshot.rpc_id(p, packed_snapshot)
 	)
 
 
 func broadcast_game_event(event_type: String, payload: Dictionary) -> void:
-	if multiplayer.multiplayer_peer == null:
+	if not is_active_enet_connected():
 		game_event_received.emit(event_type, payload)
 		return
 	if multiplayer.is_server():

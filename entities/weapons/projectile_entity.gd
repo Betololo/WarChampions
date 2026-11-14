@@ -120,7 +120,7 @@ func _build_visual() -> void:
 
 
 func apply_damage_server(amount: int, _attacker_id: int, _dir: Vector3, _hit_pos: Vector3, _is_explosive: bool) -> void:
-	if _exploded or not multiplayer.is_server():
+	if _exploded or not NetworkManager.is_server_authority():
 		return
 	hp -= amount
 	if hp <= 0:
@@ -133,7 +133,7 @@ func _physics_process(delta: float) -> void:
 
 	lifetime -= delta
 	if lifetime <= 0.0:
-		if multiplayer.is_server() or multiplayer.multiplayer_peer == null:
+		if NetworkManager.is_server_authority():
 			_detonate()
 		else:
 			queue_free()
@@ -142,7 +142,7 @@ func _physics_process(delta: float) -> void:
 	velocity.y -= 18.0 * gravity_scale * delta
 	var next_pos: Vector3 = global_position + velocity * delta
 
-	if (multiplayer.is_server() or multiplayer.multiplayer_peer == null) and is_inside_tree():
+	if NetworkManager.is_server_authority() and is_inside_tree():
 		# Proximity fuse for AA Flak against planes/airborne targets
 		if proximity_air_radius > 0.0:
 			var vehicles: Array[Node] = get_tree().get_nodes_in_group("vehicles")

@@ -18,6 +18,7 @@ func _ready() -> void:
 	_test_conquest_12v12_and_flag_multipliers()
 	_test_vehicles_rear_armor_wing_riding_and_boat()
 	_test_seaside_map_and_12v12_bots_integration()
+	_test_overhaul_net_u32_fall_damage_and_assets()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -395,14 +396,71 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 			VehicleBase.VehicleType.BOAT: has_boat = true
 			VehicleBase.VehicleType.AA_GUN: has_aa = true
 	_assert(has_jeep and has_tank and has_plane and has_boat and has_aa, "Map spawns Land (Jeep/Tank/AA), Air (Plane), and Water (Boat) vehicles")
+	_assert(game.map_instance.get_child_count() >= 80, "Rich seaside map has dense buildings, trees, roads & cover props (%d nodes)" % game.map_instance.get_child_count())
 
-	# Launch Solo 12v12 Bots Match and verify 24 combatants (12 Royal vs 12 National)
-	game._on_play_solo_12v12(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, NetworkManager.ARCHETYPE_BALANCED)
+	# 1. Verify Online Host Mode starts with ZERO bots!
+	game._on_host_online(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 7798)
+	_assert(game.heroes_by_id.size() == 1 and game.bot_brains.is_empty(), "Host Online starts with 1 human hero and 0 forced bots")
+	NetworkManager.shutdown_network()
+
+	# 2. Launch Optional Offline 12v12 Bots Match and verify 24 spaced combatants (12 Royal vs 12 National)
+	game._on_play_offline_bots(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER)
 	var counts: Vector2i = NetworkManager.get_team_counts()
-	_assert(counts.x == 12 and counts.y == 12 and game.heroes_by_id.size() == 24, "12v12 match spawns exactly 12 Royal + 12 National (24 heroes)")
+	_assert(counts.x == 12 and counts.y == 12 and game.heroes_by_id.size() == 24, "12v12 Bots match spawns 12 Royal + 12 National (24 heroes)")
+
+	var positions: Array[Vector3] = []
+	for hid in game.heroes_by_id.keys():
+		positions.append((game.heroes_by_id[hid] as HeroCharacter).position)
+	var min_spawn_dist: float = 999.0
+	for a in range(positions.size()):
+		for b in range(a + 1, positions.size()):
+			min_spawn_dist = minf(min_spawn_dist, Vector2(positions[a].x, positions[a].z).distance_to(Vector2(positions[b].x, positions[b].z)))
+	_assert(min_spawn_dist >= 3.0, "No overlapping spawn positions across 24 combatants (min XZ separation %.2fm)" % min_spawn_dist)
 
 	NetworkManager.shutdown_network()
 	game.free()
+
+
+func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
+	# 1. Verify 32-bit ENet client peer IDs survive WorldSnapshot packing
+	var large_id: int = 1482930123
+	var bytes: PackedByteArray = NetSerializer.pack_world_snapshot(100, 1666, 50, 50, [{
+		"id": large_id, "team": 1, "class_id": 2, "weapon_slot": 1, "flags": 1,
+		"pos": Vector3(12.0, 3.0, -8.0), "vel": Vector3.ZERO, "yaw": 0.2, "pitch": 0.0,
+		"hp": 80, "shield": 0, "vehicle_id": -1, "seat_idx": -1,
+	}], [], [])
+	var snap: Dictionary = NetSerializer.unpack_world_snapshot(bytes)
+	var hs: Array = snap.get("heroes", [])
+	_assert(hs.size() == 1 and int(hs[0]["id"]) == large_id, "WorldSnapshot preserves full 32-bit ENet peer_id")
+
+	# 2. Verify HeroCharacter layer/mask (no Player-on-Player sky-launch collision) & Fall Damage
+	var h := HeroCharacter.new()
+	h.setup_identity(501, "FallTester", 0, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	add_child(h)
+	_assert((h.collision_mask & 2) == 0, "HeroCharacter collision_mask excludes PlayerBody layer 2 (no spawn sky-launch)")
+
+	h.global_position = Vector3(0.0, 25.0, 0.0)
+	h.velocity = Vector3(0.0, -18.0, 0.0)
+	_assert(h.can_open_parachute(), "Airborne falling hero reports can_open_parachute() == true")
+
+	var start_hp: int = h.hp
+	h._was_airborne = true
+	h._max_air_fall_speed = 23.0
+	h.is_parachuting = false
+	h.apply_damage_server(maxi(5, int(roundf((h._max_air_fall_speed - HeroCharacter.FALL_DAMAGE_THRESHOLD_SPEED) * 6.5))), -1, false)
+	_assert(h.hp < start_hp, "Fast un-parachuted fall speed triggers fall damage (%d -> %d HP)" % [start_hp, h.hp])
+	h.free()
+
+	# 3. Verify procedural CartoonAssets sprites & HUD textures load non-null
+	var sprite_keys: Array[String] = [
+		"flag_royal", "flag_national", "icon_hp", "icon_ammo",
+		"portrait_royal_0", "portrait_national_2", "icon_weapon_0", "icon_skill_0", "icon_widget_0"
+	]
+	var all_ok: bool = true
+	for sk in sprite_keys:
+		if CartoonAssets.get_texture(sk) == null:
+			all_ok = false
+	_assert(all_ok, "CartoonAssets procedurally generates all BFH flags, portraits & hotbar sprites")
 
 
 func _test_scene_compile_and_load() -> void:

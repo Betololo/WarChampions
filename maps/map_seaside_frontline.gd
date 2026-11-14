@@ -1,9 +1,10 @@
 class_name MapSeasideFrontline
 extends Node3D
 
-## Large 800m x 800m Coastal Island Map ("Seaside Frontline") for 12v12 Land, Air & Water combat.
-## Features 4 diamond/zig-zag Capture Points, 3-layer urban verticality, 110m runways, harbors,
-## destructible props, AA guns, and Jeep/Tank/Plane/Boat spawners.
+## Large 1200m x 1200m Coastal Island Map ("Seaside Frontline") for 12v12 Land, Air & Water combat.
+## Features hand-painted cartoon textures, cobblestone roads & sidewalks, 20+ detailed buildings,
+## 60+ lush stylized trees, 4 diamond Capture Points, 3-layer verticality, 140m runways, harbors,
+## bridges, destructible crates/fences/barrels, AA guns, and Jeep/Tank/Plane/Boat spawners.
 
 const WATER_SHADER: Shader = preload("res://vfx_shaders/water_toon.gdshader")
 
@@ -18,8 +19,10 @@ var _next_vehicle_id: int = 1
 func build_map(conquest: ConquestManager, vehicles_parent: Node3D, combat_context: Dictionary) -> void:
 	_build_sky_and_lighting()
 	_build_ocean_and_terrain()
+	_build_roads_and_sidewalks()
 	_build_runways_and_harbors()
 	_build_landmarks_and_village()
+	_build_trees_and_foliage()
 	_build_destructible_props(combat_context)
 	_build_capture_points(conquest)
 	_build_spawn_points()
@@ -36,14 +39,14 @@ func _build_sky_and_lighting() -> void:
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
 	var mat := ProceduralSkyMaterial.new()
-	mat.sky_top_color = Color(0.20, 0.58, 0.98)
-	mat.sky_horizon_color = Color(0.64, 0.86, 0.99)
+	mat.sky_top_color = Color(0.16, 0.56, 0.98)
+	mat.sky_horizon_color = Color(0.62, 0.86, 1.0)
 	mat.ground_bottom_color = Color(0.12, 0.44, 0.68)
-	mat.ground_horizon_color = Color(0.64, 0.86, 0.99)
+	mat.ground_horizon_color = Color(0.62, 0.86, 1.0)
 	sky.sky_material = mat
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.65
+	env.ambient_light_energy = 0.72
 
 	var world_env := WorldEnvironment.new()
 	world_env.name = "WorldEnvironment"
@@ -52,7 +55,7 @@ func _build_sky_and_lighting() -> void:
 
 	var sun := DirectionalLight3D.new()
 	sun.name = "SunLight"
-	sun.light_energy = 1.4
+	sun.light_energy = 1.45
 	sun.light_color = Color(1.0, 0.96, 0.86)
 	sun.rotation_degrees = Vector3(-48.0, 36.0, 0.0)
 	sun.shadow_enabled = not DisplayServer.get_name().contains("headless")
@@ -60,107 +63,248 @@ func _build_sky_and_lighting() -> void:
 
 
 func _build_ocean_and_terrain() -> void:
-	# 840m x 840m Navigable Ocean Plane at Y = 0.0
+	# 1200m x 1200m Navigable Ocean Plane at Y = 0.0
 	var ocean_mesh := MeshInstance3D.new()
 	ocean_mesh.name = "Ocean"
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(840.0, 840.0)
-	plane.subdivide_width = 48
-	plane.subdivide_depth = 48
+	plane.size = Vector2(1200.0, 1200.0)
+	plane.subdivide_width = 64
+	plane.subdivide_depth = 64
 	ocean_mesh.mesh = plane
 	var water_mat := ShaderMaterial.new()
 	water_mat.shader = WATER_SHADER
 	ocean_mesh.material_override = water_mat
 	add_child(ocean_mesh)
 
-	# Seafloor under ocean (so sunken objects/characters stop cleanly)
-	_create_solid_box("Seafloor", Vector3(840.0, 2.0, 840.0), Vector3(0.0, -7.0, 0.0), Color(0.18, 0.34, 0.42))
+	# Seafloor under ocean
+	_create_solid_box("Seafloor", Vector3(1200.0, 2.0, 1200.0), Vector3(0.0, -7.0, 0.0), CartoonAssets.make_standard_material("sand", Color(0.5, 0.6, 0.55), Vector2(30, 30)))
 
-	# Main Island Plateau (Emerald Green Grass + Sandy Beach Rim)
-	_create_solid_box("BeachBase", Vector3(540.0, 2.4, 340.0), Vector3(0.0, 0.2, 0.0), Color(0.92, 0.83, 0.56))
-	_create_solid_box("GrassMainland", Vector3(480.0, 2.6, 280.0), Vector3(0.0, 0.8, 0.0), Color(0.22, 0.68, 0.28))
+	# Main Island Plateau (820m x 640m coastal landmass)
+	_create_solid_box("BeachBase", Vector3(820.0, 2.4, 540.0), Vector3(0.0, 0.2, 0.0), CartoonAssets.make_standard_material("sand", Color.WHITE, Vector2(36, 24)))
+	_create_solid_box("GrassMainland", Vector3(740.0, 2.6, 460.0), Vector3(0.0, 0.8, 0.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(44, 28)))
 
-	# Elevated Hill for Windmill (North-West, Flag B) + gentle ramps
-	_create_solid_box("WindmillPlateau", Vector3(85.0, 10.0, 85.0), Vector3(-85.0, 7.0, -95.0), Color(0.25, 0.72, 0.30))
-	_create_ramp("WindmillRampS", Vector3(18.0, 2.0, 48.0), Vector3(-85.0, 6.2, -36.0), Vector3(0.22, 0.0, 0.0), Color(0.68, 0.60, 0.44))
-	_create_ramp("WindmillRampW", Vector3(48.0, 2.0, 18.0), Vector3(-144.0, 6.2, -95.0), Vector3(0.0, 0.0, 0.22), Color(0.68, 0.60, 0.44))
+	# North-West Windmill Hill (Flag B) + 2 broad driving ramps
+	_create_solid_box("WindmillPlateau", Vector3(110.0, 10.0, 110.0), Vector3(-115.0, 7.0, -125.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(8, 8)))
+	_create_ramp("WindmillRampS", Vector3(22.0, 2.0, 56.0), Vector3(-115.0, 6.2, -52.0), Vector3(0.20, 0.0, 0.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(2, 6)))
+	_create_ramp("WindmillRampW", Vector3(56.0, 2.0, 22.0), Vector3(-188.0, 6.2, -125.0), Vector3(0.0, 0.0, 0.20), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(6, 2)))
 
-	# Elevated Ruin Cliff (North-East, Flag D) + ramp
-	_create_solid_box("RuinsCliff", Vector3(80.0, 6.0, 80.0), Vector3(115.0, 4.5, -105.0), Color(0.46, 0.52, 0.38))
-	_create_ramp("RuinsRamp", Vector3(20.0, 2.0, 36.0), Vector3(115.0, 4.2, -52.0), Vector3(0.16, 0.0, 0.0), Color(0.66, 0.58, 0.42))
+	# North-East Harbor Ruins Cliff (Flag D) + ramp
+	_create_solid_box("RuinsCliff", Vector3(105.0, 6.0, 105.0), Vector3(145.0, 4.5, -135.0), CartoonAssets.make_standard_material("grass", Color(0.85, 0.92, 0.78), Vector2(8, 8)))
+	_create_ramp("RuinsRamp", Vector3(22.0, 2.0, 42.0), Vector3(145.0, 4.2, -68.0), Vector3(0.15, 0.0, 0.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(2, 4)))
 
-	# Coastal Cliff for Lighthouse (South-West, Flag A) + ramp
-	_create_solid_box("LighthouseCliff", Vector3(72.0, 3.5, 68.0), Vector3(-105.0, 2.6, 115.0), Color(0.76, 0.72, 0.52))
-	_create_ramp("LighthouseRamp", Vector3(18.0, 2.0, 26.0), Vector3(-105.0, 2.8, 72.0), Vector3(-0.14, 0.0, 0.0), Color(0.66, 0.58, 0.42))
+	# South-West Lighthouse Cliff (Flag A) + ramp
+	_create_solid_box("LighthouseCliff", Vector3(95.0, 3.6, 95.0), Vector3(-140.0, 2.7, 150.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(7, 7)))
+	_create_ramp("LighthouseRamp", Vector3(20.0, 2.0, 32.0), Vector3(-140.0, 2.8, 92.0), Vector3(-0.12, 0.0, 0.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(2, 4)))
+
+
+func _build_roads_and_sidewalks() -> void:
+	var cobble_mat := CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(28, 2))
+	var cobble_ns := CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(2, 18))
+	var sw_mat := CartoonAssets.make_standard_material("sidewalk", Color.WHITE, Vector2(28, 1))
+	var sw_ns := CartoonAssets.make_standard_material("sidewalk", Color.WHITE, Vector2(1, 18))
+
+	# Main East-West Cobblestone Boulevard through Town Square
+	_create_solid_box("MainRoadEW", Vector3(640.0, 0.22, 14.0), Vector3(0.0, 2.05, 55.0), cobble_mat)
+	_create_solid_box("SidewalkNorth", Vector3(640.0, 0.36, 3.2), Vector3(0.0, 2.10, 46.5), sw_mat)
+	_create_solid_box("SidewalkSouth", Vector3(640.0, 0.36, 3.2), Vector3(0.0, 2.10, 63.5), sw_mat)
+
+	# Cross Town North-South Avenue
+	_create_solid_box("CrossRoadNS", Vector3(14.0, 0.22, 340.0), Vector3(35.0, 2.04, 0.0), cobble_ns)
+	_create_solid_box("CrossWalkW", Vector3(3.0, 0.34, 340.0), Vector3(26.5, 2.08, 0.0), sw_ns)
+	_create_solid_box("CrossWalkE", Vector3(3.0, 0.34, 340.0), Vector3(43.5, 2.08, 0.0), sw_ns)
+
+	# Street Utility Poles along the boulevard (like Image 1!)
+	for x in range(-200, 220, 55):
+		_create_solid_box("PoleN_%d" % x, Vector3(0.35, 9.0, 0.35), Vector3(float(x), 6.5, 45.2), CartoonAssets.make_standard_material("bark"))
+		_create_solid_box("PoleS_%d" % x, Vector3(0.35, 9.0, 0.35), Vector3(float(x) + 25.0, 6.5, 64.8), CartoonAssets.make_standard_material("bark"))
 
 
 func _build_runways_and_harbors() -> void:
-	# Royal Main Base Airfield (West, 120m clear obstacle-free runway)
-	_create_solid_box("RoyalRunway", Vector3(120.0, 1.0, 22.0), Vector3(-235.0, 1.9, 10.0), Color(0.32, 0.34, 0.36))
-	# Royal Harbor Pier extending into navigable ocean (South-West)
-	_create_solid_box("RoyalPier", Vector3(34.0, 1.8, 48.0), Vector3(-210.0, 1.2, 182.0), Color(0.56, 0.40, 0.24))
+	var tarmac := CartoonAssets.make_standard_material("sidewalk", Color(0.45, 0.47, 0.50), Vector2(10, 2))
+	var wood := CartoonAssets.make_standard_material("wood_crate", Color(0.85, 0.72, 0.56), Vector2(4, 6))
 
-	# National Main Base Airfield (East, 120m clear obstacle-free runway)
-	_create_solid_box("NationalRunway", Vector3(120.0, 1.0, 22.0), Vector3(235.0, 1.9, -10.0), Color(0.32, 0.34, 0.36))
+	# Royal West Airfield (140m clear runway + hangar + tower)
+	_create_solid_box("RoyalRunway", Vector3(140.0, 0.6, 24.0), Vector3(-285.0, 2.0, -25.0), tarmac)
+	_create_detailed_building("RoyalHangar", Vector3(-320.0, 2.1, -60.0), Vector3(18.0, 8.0, 20.0), "stucco_cream", "terracotta", false)
+	# Royal Harbor Pier extending into navigable ocean (South-West)
+	_create_solid_box("RoyalPier", Vector3(36.0, 1.8, 60.0), Vector3(-250.0, 1.2, 265.0), wood)
+
+	# National East Airfield (140m clear runway + hangar)
+	_create_solid_box("NationalRunway", Vector3(140.0, 0.6, 24.0), Vector3(285.0, 2.0, 25.0), tarmac)
+	_create_detailed_building("NationalHangar", Vector3(320.0, 2.1, 60.0), Vector3(18.0, 8.0, 20.0), "stucco_cream", "terracotta", false)
 	# National Harbor Pier extending into navigable ocean (North-East)
-	_create_solid_box("NationalPier", Vector3(34.0, 1.8, 48.0), Vector3(210.0, 1.2, -182.0), Color(0.56, 0.40, 0.24))
+	_create_solid_box("NationalPier", Vector3(36.0, 1.8, 60.0), Vector3(250.0, 1.2, -265.0), wood)
 
 
 func _build_landmarks_and_village() -> void:
+	var stucco_y := CartoonAssets.make_standard_material("stucco_yellow", Color.WHITE, Vector2(2, 2))
+	var stucco_c := CartoonAssets.make_standard_material("stucco_cream", Color.WHITE, Vector2(2, 2))
+	var roof_mat := CartoonAssets.make_standard_material("terracotta", Color.WHITE, Vector2(3, 3))
+
 	# 1. Lighthouse Tower (Flag A)
-	_create_solid_box("LighthouseBase", Vector3(8.0, 14.0, 8.0), Vector3(-120.0, 11.0, 126.0), Color(0.95, 0.95, 0.95))
-	_create_solid_box("LighthouseStripe", Vector3(8.2, 4.0, 8.2), Vector3(-120.0, 12.5, 126.0), Color(0.86, 0.18, 0.16))
-	_create_solid_box("LighthouseLamp", Vector3(6.0, 3.0, 6.0), Vector3(-120.0, 19.5, 126.0), Color(1.0, 0.92, 0.4))
+	_create_solid_box("LighthouseBase", Vector3(8.5, 16.0, 8.5), Vector3(-156.0, 12.0, 164.0), stucco_c)
+	_create_solid_box("LighthouseStripe", Vector3(8.8, 4.2, 8.8), Vector3(-156.0, 14.0, 164.0), roof_mat)
+	_create_solid_box("LighthouseLamp", Vector3(6.2, 3.2, 6.2), Vector3(-156.0, 21.5, 164.0), CartoonAssets.make_standard_material("stucco_yellow", Color(1.0, 0.94, 0.45)))
 
 	# 2. Windmill Landmark (Flag B)
-	_create_solid_box("WindmillTower", Vector3(8.0, 15.0, 8.0), Vector3(-98.0, 19.5, -108.0), Color(0.92, 0.86, 0.72))
-	_create_solid_box("WindmillRoof", Vector3(9.0, 3.0, 9.0), Vector3(-98.0, 28.0, -108.0), Color(0.76, 0.32, 0.20))
+	_create_solid_box("WindmillTower", Vector3(8.5, 16.0, 8.5), Vector3(-130.0, 20.0, -138.0), stucco_c)
+	_create_solid_box("WindmillRoof", Vector3(9.5, 3.2, 9.5), Vector3(-130.0, 29.0, -138.0), roof_mat)
 	_windmill_blades = Node3D.new()
-	_windmill_blades.position = Vector3(-98.0, 24.5, -103.5)
+	_windmill_blades.position = Vector3(-130.0, 25.0, -133.0)
 	add_child(_windmill_blades)
-	_add_visual_box(_windmill_blades, Vector3(1.2, 16.0, 0.3), Vector3.ZERO, Color(0.62, 0.42, 0.22))
-	_add_visual_box(_windmill_blades, Vector3(16.0, 1.2, 0.3), Vector3.ZERO, Color(0.62, 0.42, 0.22))
+	_add_visual_box(_windmill_blades, Vector3(1.2, 16.0, 0.35), Vector3.ZERO, CartoonAssets.make_standard_material("wood_crate"))
+	_add_visual_box(_windmill_blades, Vector3(16.0, 1.2, 0.35), Vector3.ZERO, CartoonAssets.make_standard_material("wood_crate"))
 
-	# 3. Town Square Church & Multi-Layer Urban Village (Flag C: Street -> Balconies -> Rooftops)
-	_create_solid_box("ChurchBody", Vector3(14.0, 9.5, 22.0), Vector3(35.0, 6.8, 28.0), Color(0.94, 0.90, 0.80))
-	_create_solid_box("ChurchRoof", Vector3(15.2, 2.2, 23.2), Vector3(35.0, 12.6, 28.0), Color(0.78, 0.34, 0.22))
-	_create_solid_box("ChurchBellTower", Vector3(6.5, 18.0, 6.5), Vector3(35.0, 11.0, 19.0), Color(0.92, 0.88, 0.78))
-	_create_solid_box("ChurchSpire", Vector3(5.0, 4.5, 5.0), Vector3(35.0, 22.2, 19.0), Color(0.78, 0.34, 0.22))
+	# 3. Town Square Church (Flag C)
+	_create_solid_box("ChurchBody", Vector3(16.0, 10.5, 24.0), Vector3(35.0, 7.2, 24.0), stucco_c)
+	_create_solid_box("ChurchRoof", Vector3(17.2, 2.4, 25.2), Vector3(35.0, 13.4, 24.0), roof_mat)
+	_create_solid_box("ChurchBellTower", Vector3(7.0, 20.0, 7.0), Vector3(35.0, 12.0, 13.0), stucco_c)
+	_create_solid_box("ChurchSpire", Vector3(5.2, 5.0, 5.2), Vector3(35.0, 24.5, 13.0), roof_mat)
 
-	# Flanking Town Houses with Balconies & Rooftop Ramps (3-Layer Verticality!)
-	var house_positions: Array[Vector3] = [
-		Vector3(12.0, 5.5, 52.0),
-		Vector3(58.0, 5.5, 52.0),
-		Vector3(10.0, 5.5, 24.0),
-		Vector3(60.0, 5.5, 24.0),
+	# 4. Rich Urban Village Houses lining Main Road & Side Streets (20 buildings with pitched roofs, windows, balconies & stairs!)
+	var house_spots: Array[Dictionary] = [
+		{"pos": Vector3(-35.0, 2.1, 32.0), "size": Vector3(14, 8, 12), "wall": "stucco_yellow", "stairs": true},
+		{"pos": Vector3(-5.0, 2.1, 32.0), "size": Vector3(13, 7, 12), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(68.0, 2.1, 32.0), "size": Vector3(15, 8, 13), "wall": "stucco_yellow", "stairs": true},
+		{"pos": Vector3(95.0, 2.1, 32.0), "size": Vector3(13, 7, 12), "wall": "stucco_cream", "stairs": false},
+		{"pos": Vector3(-35.0, 2.1, 78.0), "size": Vector3(14, 8, 12), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(2.0, 2.1, 78.0), "size": Vector3(13, 7, 12), "wall": "stucco_yellow", "stairs": true},
+		{"pos": Vector3(68.0, 2.1, 78.0), "size": Vector3(14, 8, 12), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(96.0, 2.1, 78.0), "size": Vector3(13, 7, 12), "wall": "stucco_yellow", "stairs": false},
+		# Outpost Cottages near Base Approaches & Countryside
+		{"pos": Vector3(-115.0, 2.1, 32.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": true},
+		{"pos": Vector3(-155.0, 2.1, 78.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": false},
+		{"pos": Vector3(145.0, 2.1, 32.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": true},
+		{"pos": Vector3(165.0, 2.1, 78.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": false},
+		{"pos": Vector3(-55.0, 2.1, -35.0), "size": Vector3(13, 7, 11), "wall": "stucco_cream", "stairs": false},
+		{"pos": Vector3(85.0, 2.1, -40.0), "size": Vector3(13, 7, 11), "wall": "stucco_yellow", "stairs": true},
+		{"pos": Vector3(12.0, 2.1, 130.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_yellow", "stairs": false},
+		{"pos": Vector3(-65.0, 2.1, 135.0), "size": Vector3(12, 6.5, 11), "wall": "stucco_cream", "stairs": false},
 	]
-	for idx in range(house_positions.size()):
-		var hp: Vector3 = house_positions[idx]
-		_create_solid_box("House_%d" % idx, Vector3(12.0, 7.0, 12.0), hp, Color(0.92, 0.85, 0.72))
-		# Terracotta walkable rooftop
-		_create_solid_box("HouseRoof_%d" % idx, Vector3(13.0, 0.8, 13.0), hp + Vector3(0.0, 3.9, 0.0), Color(0.80, 0.36, 0.24))
-		# 2nd-floor Balcony
-		_create_solid_box("HouseBalcony_%d" % idx, Vector3(14.5, 0.5, 4.0), hp + Vector3(0.0, 1.2, 7.2), Color(0.58, 0.42, 0.26))
-		# External Stairs/Ramp up to Balcony & Rooftop
-		_create_ramp("HouseStair_%d" % idx, Vector3(3.2, 0.6, 11.0), hp + Vector3(7.6, 0.2, 0.0), Vector3(-0.62, 0.0, 0.0), Color(0.56, 0.40, 0.24))
+	for i in range(house_spots.size()):
+		var h: Dictionary = house_spots[i]
+		_create_detailed_building("VillageHouse_%d" % i, h["pos"], h["size"], str(h["wall"]), "terracotta", bool(h["stairs"]))
 
-	# 4. Harbor Ruins Walls (Flag D)
-	_create_solid_box("RuinWallA", Vector3(18.0, 4.8, 2.2), Vector3(108.0, 9.8, -118.0), Color(0.62, 0.60, 0.54))
-	_create_solid_box("RuinWallB", Vector3(2.2, 4.8, 16.0), Vector3(128.0, 9.8, -104.0), Color(0.62, 0.60, 0.54))
-	_create_solid_box("RuinArch", Vector3(12.0, 2.0, 4.0), Vector3(115.0, 12.0, -90.0), Color(0.58, 0.56, 0.50))
+	# 5. Harbor Ruins Fortress Walls (Flag D)
+	_create_solid_box("RuinWallA", Vector3(20.0, 5.2, 2.4), Vector3(138.0, 10.0, -152.0), stucco_c)
+	_create_solid_box("RuinWallB", Vector3(2.4, 5.2, 18.0), Vector3(160.0, 10.0, -135.0), stucco_c)
+	_create_solid_box("RuinArch", Vector3(14.0, 2.2, 4.0), Vector3(145.0, 12.2, -116.0), stucco_y)
+
+
+func _create_detailed_building(b_name: String, base_pos: Vector3, size: Vector3, wall_tex: String, roof_tex: String, add_stairs: bool) -> void:
+	var wall_mat := CartoonAssets.make_standard_material(wall_tex, Color.WHITE, Vector2(2, 2))
+	var roof_mat := CartoonAssets.make_standard_material(roof_tex, Color.WHITE, Vector2(3, 2))
+	var trim_mat := CartoonAssets.make_standard_material("wood_crate", Color(0.45, 0.30, 0.18))
+
+	_create_solid_box(b_name + "_Body", size, base_pos + Vector3(0.0, size.y * 0.5, 0.0), wall_mat)
+	# Walkable pitched/stepped terracotta roof
+	_create_solid_box(b_name + "_RoofLower", Vector3(size.x + 1.4, 0.9, size.z + 1.4), base_pos + Vector3(0.0, size.y + 0.45, 0.0), roof_mat)
+	_create_solid_box(b_name + "_RoofUpper", Vector3(size.x * 0.72, 1.1, size.z * 0.72), base_pos + Vector3(0.0, size.y + 1.4, 0.0), roof_mat)
+
+	# Dark cartoon windows & front door visuals
+	for wx in [-size.x * 0.28, size.x * 0.28]:
+		_create_solid_box(b_name + "_WinF_%d" % int(wx * 10), Vector3(1.8, 2.0, 0.3), base_pos + Vector3(wx, size.y * 0.62, size.z * 0.5 + 0.1), trim_mat)
+		_create_solid_box(b_name + "_WinB_%d" % int(wx * 10), Vector3(1.8, 2.0, 0.3), base_pos + Vector3(wx, size.y * 0.62, -size.z * 0.5 - 0.1), trim_mat)
+	_create_solid_box(b_name + "_Door", Vector3(2.1, 3.0, 0.3), base_pos + Vector3(0.0, 1.5, size.z * 0.5 + 0.1), trim_mat)
+
+	if add_stairs:
+		_create_solid_box(b_name + "_Balcony", Vector3(size.x + 1.6, 0.5, 3.2), base_pos + Vector3(0.0, size.y * 0.55, size.z * 0.5 + 1.6), trim_mat)
+		_create_ramp(b_name + "_Stair", Vector3(2.8, 0.5, 10.5), base_pos + Vector3(size.x * 0.5 + 1.8, size.y * 0.45, 0.0), Vector3(-0.68, 0.0, 0.0), trim_mat)
+
+
+func _build_trees_and_foliage() -> void:
+	var bark_mat := CartoonAssets.make_standard_material("bark", Color.WHITE, Vector2(1, 2))
+	var leaf_mat := CartoonAssets.make_standard_material("foliage", Color.WHITE, Vector2(2, 2))
+
+	# 64 lush cartoon trees framing roads, hills, village yards, and beaches (never blocking runways!)
+	var tree_positions: Array[Vector3] = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 2009
+	for i in range(68):
+		var tx: float = rng.randf_range(-330.0, 330.0)
+		var tz: float = rng.randf_range(-205.0, 205.0)
+		# Keep runways, roads, and spawn pads clear
+		if absf(tz - 55.0) < 16.0 or absf(tx - 35.0) < 15.0:
+			continue
+		if absf(tx + 285.0) < 85.0 and absf(tz + 25.0) < 28.0:
+			continue
+		if absf(tx - 285.0) < 85.0 and absf(tz - 25.0) < 28.0:
+			continue
+		if tx < -200.0 and tz > 20.0 and tz < 110.0:
+			continue
+		if tx > 200.0 and tz < -20.0 and tz > -110.0:
+			continue
+		var ty: float = 2.1
+		if tx < -60.0 and tx > -170.0 and tz < -70.0 and tz > -180.0:
+			ty = 12.0
+		elif tx > 90.0 and tx < 200.0 and tz < -80.0 and tz > -190.0:
+			ty = 7.5
+		elif tx < -90.0 and tx > -190.0 and tz > 100.0 and tz < 200.0:
+			ty = 4.5
+		tree_positions.append(Vector3(tx, ty, tz))
+
+	# Hand-placed boulevard trees right along the town street like Image 1!
+	for bx in [-75.0, -20.0, 18.0, 52.0, 115.0, -125.0, 130.0]:
+		tree_positions.append(Vector3(bx, 2.1, 41.0))
+		tree_positions.append(Vector3(bx + 12.0, 2.1, 69.0))
+
+	for idx in range(tree_positions.size()):
+		_create_cartoon_tree("Tree_%d" % idx, tree_positions[idx], bark_mat, leaf_mat)
+
+
+func _create_cartoon_tree(t_name: String, base_pos: Vector3, bark_mat: Material, leaf_mat: Material) -> void:
+	var tree := StaticBody3D.new()
+	tree.name = t_name
+	tree.collision_layer = 1
+	tree.position = base_pos
+
+	var col := CollisionShape3D.new()
+	var cyl_col := CylinderShape3D.new()
+	cyl_col.radius = 0.65
+	cyl_col.height = 6.0
+	col.shape = cyl_col
+	col.position = Vector3(0.0, 3.0, 0.0)
+	tree.add_child(col)
+
+	var trunk := MeshInstance3D.new()
+	var tm := CylinderMesh.new()
+	tm.top_radius = 0.42
+	tm.bottom_radius = 0.72
+	tm.height = 6.5
+	trunk.mesh = tm
+	trunk.position = Vector3(0.0, 3.25, 0.0)
+	trunk.material_override = bark_mat
+	tree.add_child(trunk)
+
+	for offset in [Vector3(0.0, 7.8, 0.0), Vector3(-1.8, 6.8, 0.9), Vector3(1.8, 6.9, -0.8), Vector3(0.4, 9.2, 0.3)]:
+		var crown := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 3.2 if offset.y < 8.5 else 2.5
+		sm.height = sm.radius * 1.65
+		crown.mesh = sm
+		crown.position = offset
+		crown.material_override = leaf_mat
+		tree.add_child(crown)
+
+	add_child(tree)
 
 
 func _build_destructible_props(combat_context: Dictionary) -> void:
 	var prop_spots: Array[Dictionary] = [
-		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(24.0, 2.1, 40.0), "rot": 0.0},
-		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(46.0, 2.1, 40.0), "rot": 0.0},
-		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(20.0, 2.1, 60.0), "rot": 1.57},
-		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(30.0, 2.1, 36.0), "rot": 0.3},
-		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(-88.0, 12.0, -86.0), "rot": 0.2},
-		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(38.0, 2.1, 44.0), "rot": 0.0},
-		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(-98.0, 4.4, 110.0), "rot": 0.0},
-		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(112.0, 7.5, -98.0), "rot": 0.0},
-		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(-78.0, 12.0, -92.0), "rot": 0.0},
+		# Stacked wooden crate cover on cobblestone street (just like Image 1!)
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(14.0, 2.15, 51.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(15.4, 2.15, 51.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(14.7, 3.45, 51.0), "rot": 0.1},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(54.0, 2.15, 58.0), "rot": 0.2},
+		{"kind": DestructibleProp.PropKind.CRATE, "pos": Vector3(55.4, 2.15, 58.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(20.0, 2.15, 44.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(50.0, 2.15, 44.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(-25.0, 2.15, 66.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.WHITE_FENCE, "pos": Vector3(82.0, 2.15, 66.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(32.0, 2.15, 54.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(-130.0, 4.5, 145.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(140.0, 7.5, -130.0), "rot": 0.0},
+		{"kind": DestructibleProp.PropKind.RED_BARREL, "pos": Vector3(-108.0, 12.0, -120.0), "rot": 0.0},
 	]
 	for p in prop_spots:
 		var prop := DestructibleProp.new()
@@ -170,10 +314,10 @@ func _build_destructible_props(combat_context: Dictionary) -> void:
 
 func _build_capture_points(conquest: ConquestManager) -> void:
 	var specs: Array[Dictionary] = [
-		{"name": "Lighthouse Cove", "pos": Vector3(-105.0, 4.4, 115.0), "owner": NetworkManager.TEAM_ROYAL},
-		{"name": "Windmill Hill", "pos": Vector3(-85.0, 12.0, -95.0), "owner": -1},
-		{"name": "Town Square Church", "pos": Vector3(35.0, 2.1, 45.0), "owner": -1},
-		{"name": "Harbor Ruins", "pos": Vector3(115.0, 7.5, -105.0), "owner": NetworkManager.TEAM_NATIONAL},
+		{"name": "Lighthouse Cove", "pos": Vector3(-140.0, 4.5, 150.0), "owner": NetworkManager.TEAM_ROYAL},
+		{"name": "Windmill Hill", "pos": Vector3(-115.0, 12.0, -125.0), "owner": -1},
+		{"name": "Town Square Church", "pos": Vector3(35.0, 2.15, 55.0), "owner": -1},
+		{"name": "Harbor Ruins", "pos": Vector3(145.0, 7.5, -135.0), "owner": NetworkManager.TEAM_NATIONAL},
 	]
 	capture_points.clear()
 	for i in range(specs.size()):
@@ -188,12 +332,12 @@ func _build_capture_points(conquest: ConquestManager) -> void:
 func _build_spawn_points() -> void:
 	royal_spawns.clear()
 	national_spawns.clear()
-	# 12 Royal & 12 National initial spawns (for 12v12!)
+	# 12 Royal & 12 National well-spaced spawn pads (6m apart, clean ground height Y=2.3)
 	for i in range(12):
 		var row: int = i / 4
 		var col: int = i % 4
-		royal_spawns.append(Vector3(-235.0 - float(row) * 4.5, 3.0, 40.0 + float(col) * 4.5))
-		national_spawns.append(Vector3(235.0 + float(row) * 4.5, 3.0, -40.0 - float(col) * 4.5))
+		royal_spawns.append(Vector3(-255.0 - float(row) * 6.0, 2.3, 42.0 + float(col) * 6.0))
+		national_spawns.append(Vector3(255.0 + float(row) * 6.0, 2.3, -42.0 - float(col) * 6.0))
 
 
 func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:
@@ -203,27 +347,27 @@ func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:
 	_next_vehicle_id = 1
 
 	# Land Vehicles (Jeeps & Tanks)
-	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-200.0, 3.2, 35.0), -PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-195.0, 3.2, 55.0), -PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_ROYAL, Vector3(-210.0, 3.4, 72.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-220.0, 3.0, 48.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-215.0, 3.0, 74.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_ROYAL, Vector3(-230.0, 3.2, 92.0), -PI * 0.5)
 
-	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(200.0, 3.2, -35.0), PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(195.0, 3.2, -55.0), PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_NATIONAL, Vector3(210.0, 3.4, -72.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(220.0, 3.0, -48.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(215.0, 3.0, -74.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_NATIONAL, Vector3(230.0, 3.2, -92.0), PI * 0.5)
 
-	# Air Vehicles (Fighter Planes on 120m clear Runways)
-	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_ROYAL, Vector3(-265.0, 3.4, 10.0), -PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_NATIONAL, Vector3(265.0, 3.4, -10.0), PI * 0.5)
+	# Air Vehicles (Fighter Planes on 140m clear Runways)
+	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_ROYAL, Vector3(-315.0, 3.2, -25.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_NATIONAL, Vector3(315.0, 3.2, 25.0), PI * 0.5)
 
-	# Water Vehicles (Aquatic Patrol / Landing Boats in ocean harbors!)
-	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_ROYAL, Vector3(-185.0, 0.8, 200.0), PI)
-	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_ROYAL, Vector3(-235.0, 0.8, 200.0), PI)
-	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_NATIONAL, Vector3(185.0, 0.8, -200.0), 0.0)
-	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_NATIONAL, Vector3(235.0, 0.8, -200.0), 0.0)
+	# Water Vehicles (Aquatic Patrol Boats in ocean harbors!)
+	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_ROYAL, Vector3(-225.0, 0.8, 290.0), PI)
+	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_ROYAL, Vector3(-275.0, 0.8, 290.0), PI)
+	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_NATIONAL, Vector3(225.0, 0.8, -290.0), 0.0)
+	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_NATIONAL, Vector3(275.0, 0.8, -290.0), 0.0)
 
 	# Fixed Anti-Aircraft Flak Guns
-	_spawn_vehicle(vehicles_parent, AAGun.new(), NetworkManager.TEAM_ROYAL, Vector3(-95.0, 4.4, 102.0), -PI * 0.5)
-	_spawn_vehicle(vehicles_parent, AAGun.new(), NetworkManager.TEAM_NATIONAL, Vector3(105.0, 7.5, -92.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, AAGun.new(), NetworkManager.TEAM_ROYAL, Vector3(-125.0, 4.5, 136.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, AAGun.new(), NetworkManager.TEAM_NATIONAL, Vector3(135.0, 7.5, -120.0), PI * 0.5)
 
 
 func _spawn_vehicle(parent: Node3D, v: VehicleBase, p_team: int, pos: Vector3, rot_y: float) -> void:
@@ -242,10 +386,10 @@ func get_spawn_position(team: int, slot_index: int) -> Vector3:
 		return royal_spawns[posmod(slot_index, royal_spawns.size())]
 	if not national_spawns.is_empty():
 		return national_spawns[posmod(slot_index, national_spawns.size())]
-	return Vector3(0.0, 5.0, 0.0)
+	return Vector3(0.0, 4.0, 0.0)
 
 
-func _create_solid_box(node_name: String, size: Vector3, pos: Vector3, color: Color) -> StaticBody3D:
+func _create_solid_box(node_name: String, size: Vector3, pos: Vector3, material: Material) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.collision_layer = 1
@@ -262,29 +406,24 @@ func _create_solid_box(node_name: String, size: Vector3, pos: Vector3, color: Co
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	mi.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = 0.85
-	mi.material_override = mat
+	mi.material_override = material
 	body.add_child(mi)
 
 	add_child(body)
 	return body
 
 
-func _create_ramp(node_name: String, size: Vector3, pos: Vector3, rot: Vector3, color: Color) -> StaticBody3D:
-	var body := _create_solid_box(node_name, size, pos, color)
+func _create_ramp(node_name: String, size: Vector3, pos: Vector3, rot: Vector3, material: Material) -> StaticBody3D:
+	var body := _create_solid_box(node_name, size, pos, material)
 	body.rotation = rot
 	return body
 
 
-func _add_visual_box(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> void:
+func _add_visual_box(parent: Node3D, size: Vector3, pos: Vector3, material: Material) -> void:
 	var mi := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = size
 	mi.mesh = box
 	mi.position = pos
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mi.material_override = mat
+	mi.material_override = material
 	parent.add_child(mi)

@@ -164,7 +164,7 @@ static func pack_world_snapshot(
 	buf.put_u8(hero_count)
 	for i in range(hero_count):
 		var h: Dictionary = heroes[i]
-		buf.put_u16(int(h.get("id", 0)) & 0xFFFF)
+		buf.put_u32(int(h.get("id", 0)))
 		var meta: int = (int(h.get("team", 0)) & 0x3) | ((int(h.get("class_id", 0)) & 0x3) << 2) | ((int(h.get("weapon_slot", 0)) & 0x3) << 4)
 		buf.put_u8(meta)
 		buf.put_u16(int(h.get("flags", 0)) & 0xFFFF)
@@ -234,7 +234,7 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 	var heroes_out: Array[Dictionary] = []
 	var hero_count: int = buf.get_u8()
 	for i in range(hero_count):
-		var id: int = buf.get_u16()
+		var id: int = buf.get_u32()
 		var meta: int = buf.get_u8()
 		var flags: int = buf.get_u16()
 		var pos := Vector3(buf.get_float(), buf.get_float(), buf.get_float())

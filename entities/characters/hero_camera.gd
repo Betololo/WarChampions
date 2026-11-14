@@ -1,23 +1,23 @@
 class_name HeroCamera
 extends Node3D
 
-## Over-the-right-shoulder TPS camera with smooth FPS Sniper Scope transition.
+## Tight BFH Over-the-Right-Shoulder TPS camera + 1st-person Sniper Scope transition.
 signal scope_toggled(is_scoped: bool)
 
-const TPS_SHOULDER_OFFSET: Vector3 = Vector3(0.72, 1.78, 0.0)
-const TPS_SPRING_LENGTH: float = 3.35
-const TPS_FOV: float = 72.0
+const TPS_SHOULDER_OFFSET: Vector3 = Vector3(0.46, 1.54, 0.0)
+const TPS_SPRING_LENGTH: float = 2.25
+const TPS_FOV: float = 68.0
 
-const FPS_EYE_OFFSET: Vector3 = Vector3(0.0, 1.56, 0.0)
-const FPS_SCOPE_FOV: float = 24.0
+const FPS_EYE_OFFSET: Vector3 = Vector3(0.0, 1.58, 0.0)
+const FPS_SCOPE_FOV: float = 22.0
 
-const VEHICLE_SPRING_LENGTH: float = 6.2
+const VEHICLE_SPRING_LENGTH: float = 6.5
 const VEHICLE_OFFSET: Vector3 = Vector3(0.0, 2.35, 0.0)
 
 var mouse_sensitivity: float = 0.0024
-var scope_sensitivity_mult: float = 0.38
+var scope_sensitivity_mult: float = 0.36
 var yaw: float = 0.0
-var pitch: float = -0.12
+var pitch: float = -0.08
 var is_scoped: bool = false
 var in_vehicle: bool = false
 var recoil_pitch_offset: float = 0.0
@@ -37,13 +37,13 @@ func _ready() -> void:
 	spring_arm.name = "SpringArm3D"
 	spring_arm.spring_length = TPS_SPRING_LENGTH
 	spring_arm.collision_mask = 1
-	spring_arm.margin = 0.25
+	spring_arm.margin = 0.22
 	pivot.add_child(spring_arm)
 
 	camera = Camera3D.new()
 	camera.name = "Camera3D"
 	camera.fov = TPS_FOV
-	camera.far = 1400.0
+	camera.far = 1600.0
 	spring_arm.add_child(camera)
 	pivot.position = TPS_SHOULDER_OFFSET
 
@@ -56,11 +56,11 @@ func set_active_camera(active: bool) -> void:
 func apply_look_delta(relative: Vector2) -> void:
 	var sens: float = mouse_sensitivity * (scope_sensitivity_mult if is_scoped else 1.0)
 	yaw = wrapf(yaw - relative.x * sens, -PI, PI)
-	pitch = clampf(pitch - relative.y * sens, -1.36, 1.36)
+	pitch = clampf(pitch - relative.y * sens, -1.35, 1.35)
 
 
 func add_recoil(amount_rad: float) -> void:
-	recoil_pitch_offset = clampf(recoil_pitch_offset + amount_rad, 0.0, 0.25)
+	recoil_pitch_offset = clampf(recoil_pitch_offset + amount_rad, 0.0, 0.22)
 
 
 func set_scoped(scoped: bool) -> void:
@@ -89,14 +89,14 @@ func _process(delta: float) -> void:
 	elif in_vehicle:
 		target_offset = VEHICLE_OFFSET
 		target_length = VEHICLE_SPRING_LENGTH
-		target_fov = 76.0
+		target_fov = 74.0
 
 	pivot.position = pivot.position.lerp(target_offset, 18.0 * delta)
 	spring_arm.spring_length = lerpf(spring_arm.spring_length, target_length, 18.0 * delta)
 	camera.fov = lerpf(camera.fov, target_fov, 18.0 * delta)
 
 	rotation.y = yaw
-	pivot.rotation.x = clampf(pitch + recoil_pitch_offset, -1.42, 1.42)
+	pivot.rotation.x = clampf(pitch + recoil_pitch_offset, -1.40, 1.40)
 
 
 func get_aim_ray_origin() -> Vector3:

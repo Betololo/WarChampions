@@ -22,6 +22,8 @@ var heroes_by_id: Dictionary = {}
 var vehicles_by_id: Dictionary = {}
 var bot_brains: Dictionary = {}
 var _prev_interact_state: Dictionary = {}
+var _royal_spawn_idx: int = 0
+var _national_spawn_idx: int = 0
 
 
 func _ready() -> void:
@@ -60,12 +62,40 @@ func _ready() -> void:
 	NetworkManager.player_registered.connect(_on_player_registered)
 	NetworkManager.player_unregistered.connect(_on_player_unregistered)
 	NetworkManager.game_event_received.connect(_on_game_event)
+	NetworkManager.connection_state_changed.connect(_on_connection_state_changed)
 
 	_load_map()
 	_setup_ui()
 
 	if NetworkManager.is_dedicated_server:
 		class_menu.visible = false
+	else:
+		_check_cli_autostart()
+
+
+func _check_cli_autostart() -> void:
+	var args: PackedStringArray = OS.get_cmdline_user_args()
+	for arg in args:
+		if arg == "--host":
+			class_menu.hide_menu()
+			_on_host_online(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, NetworkManager.DEFAULT_PORT)
+			return
+		elif arg.begins_with("--join="):
+			var ip: String = arg.trim_prefix("--join=")
+			class_menu.hide_menu()
+			_on_join_online(NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, ip, NetworkManager.DEFAULT_PORT)
+			return
+
+
+func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
+	if hud == null:
+		return
+	if connected and is_srv:
+		hud.add_killfeed("SALA ONLINE ATIVA (0 Bots) — Aguardando jogadores na porta 7777!")
+	elif connected:
+		hud.add_killfeed("Conectado ao servidor multiplayer!")
+	else:
+		hud.add_killfeed("Desconectado da partida.")
 
 
 func _load_map() -> void:
@@ -93,9 +123,9 @@ func _setup_ui() -> void:
 	class_menu = ClassSelectMenu.new()
 	class_menu.name = "ClassSelectMenu"
 	add_child(class_menu)
-	class_menu.play_solo_12v12_pressed.connect(_on_play_solo_12v12)
-	class_menu.host_match_pressed.connect(_on_host_match)
-	class_menu.join_match_pressed.connect(_on_join_match)
+	class_menu.host_online_pressed.connect(_on_host_online)
+	class_menu.join_online_pressed.connect(_on_join_online)
+	class_menu.play_offline_bots_pressed.connect(_on_play_offline_bots)
 
 	if DisplayServer.get_name().contains("headless"):
 		hud.visible = false
@@ -121,31 +151,33 @@ func _unhandled_input(event: InputEvent) -> void:
 				NetworkManager.sim_packet_loss = 0.0
 
 
-func _on_play_solo_12v12(team: int, class_id: int, archetype: int) -> void:
+func _on_host_online(team: int, class_id: int, port: int) -> void:
 	_clear_match_entities()
 	conquest_manager.reset_match()
-	NetworkManager.set_local_loadout("Hero", team, class_id, archetype)
+	NetworkManager.set_local_loadout("HostHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
+	NetworkManager.start_host(port, false)
+	SoundSynthesizer.start_whistle_theme()
+
+
+func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
+	_clear_match_entities()
+	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
+	NetworkManager.join_server(ip, port)
+	SoundSynthesizer.start_whistle_theme()
+
+
+func _on_play_offline_bots(team: int, class_id: int) -> void:
+	_clear_match_entities()
+	conquest_manager.reset_match()
+	NetworkManager.set_local_loadout("Hero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
 	NetworkManager.start_host(NetworkManager.DEFAULT_PORT, true)
 	_spawn_12v12_bots(team)
 	SoundSynthesizer.start_whistle_theme()
 
 
-func _on_host_match(team: int, class_id: int, archetype: int, port: int) -> void:
-	_clear_match_entities()
-	conquest_manager.reset_match()
-	NetworkManager.set_local_loadout("HostHero", team, class_id, archetype)
-	NetworkManager.start_host(port, false)
-	SoundSynthesizer.start_whistle_theme()
-
-
-func _on_join_match(team: int, class_id: int, archetype: int, ip: String, port: int) -> void:
-	_clear_match_entities()
-	NetworkManager.set_local_loadout("ClientHero", team, class_id, archetype)
-	NetworkManager.join_server(ip, port)
-	SoundSynthesizer.start_whistle_theme()
-
-
 func _clear_match_entities() -> void:
+	_royal_spawn_idx = 0
+	_national_spawn_idx = 0
 	for b in bots_root.get_children():
 		b.queue_free()
 	bot_brains.clear()
@@ -189,7 +221,7 @@ func _on_damage_dealt_xp(attacker: HeroCharacter, _victim: HeroCharacter, dealt:
 
 
 func _physics_process(delta: float) -> void:
-	if multiplayer.multiplayer_peer != null and multiplayer.is_server():
+	if multiplayer.multiplayer_peer != null and not (multiplayer.multiplayer_peer is OfflineMultiplayerPeer) and multiplayer.is_server():
 		var combat_ctx: Dictionary = _build_combat_context()
 
 		# 1. Step AI Bots
@@ -206,8 +238,8 @@ func _physics_process(delta: float) -> void:
 			var hero: HeroCharacter = heroes_by_id[id_key]
 			if hero.is_defeated:
 				if hero.defeat_timer <= 0.0:
-					var sp: Vector3 = map_instance.get_spawn_position(hero.team, hero.entity_id) if map_instance != null else Vector3(0.0, 4.0, 0.0)
-					hero.respawn_at(sp, 0.0)
+					var sp: Vector3 = _get_next_spawn_pos(hero.team)
+					hero.respawn_at(sp, 0.0 if hero.team == NetworkManager.TEAM_ROYAL else PI)
 				continue
 
 			_handle_vehicle_interact(hero)
@@ -224,7 +256,7 @@ func _physics_process(delta: float) -> void:
 					if w.try_consume_fire(hero.latest_server_input):
 						w.fire_server(hero.latest_server_input, combat_ctx)
 
-			if not hero.is_bot and hero.entity_id < 1000:
+			if not hero.is_bot and hero.entity_id != 1:
 				var packed: PackedByteArray = NetSerializer.pack_authoritative_state(
 					hero.latest_server_input.tick,
 					hero.global_position,
@@ -308,6 +340,19 @@ func _on_player_unregistered(peer_id: int) -> void:
 		hero.queue_free()
 
 
+func _get_next_spawn_pos(p_team: int) -> Vector3:
+	if map_instance == null:
+		return Vector3(0.0, 4.0, 0.0)
+	var idx: int = 0
+	if p_team == NetworkManager.TEAM_ROYAL:
+		idx = _royal_spawn_idx
+		_royal_spawn_idx += 1
+	else:
+		idx = _national_spawn_idx
+		_national_spawn_idx += 1
+	return map_instance.get_spawn_position(p_team, idx)
+
+
 func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 	if heroes_by_id.has(entity_id):
 		return heroes_by_id[entity_id]
@@ -323,10 +368,11 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 		is_local,
 		is_bot
 	)
-	var sp: Vector3 = map_instance.get_spawn_position(hero.team, entity_id) if map_instance != null else Vector3(0.0, 4.0, 0.0)
+	var sp: Vector3 = _get_next_spawn_pos(hero.team)
 	hero.position = sp
 	heroes_root.add_child(hero)
 	heroes_by_id[entity_id] = hero
+	print("[MainGame] Spawned %s (id=%d, team=%d, bot=%s, total=%d)" % [hero.hero_name, entity_id, hero.team, str(is_bot), heroes_by_id.size()])
 
 	hero.defeated.connect(_on_hero_defeated.bind(hero))
 	hero.emote_triggered.connect(func(_idx: int) -> void: SoundSynthesizer.play_faction_emote(hero.team))
@@ -334,7 +380,7 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 	if is_local and hud != null:
 		hud.set_local_hero(hero)
 
-	if is_bot and (multiplayer.is_server() or multiplayer.multiplayer_peer == null):
+	if is_bot and NetworkManager.is_server_authority():
 		var brain := BotController.new()
 		brain.setup(hero)
 		bots_root.add_child(brain)
@@ -344,7 +390,7 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 
 
 func _on_hero_defeated(killer_id: int, _explosive: bool, victim: HeroCharacter) -> void:
-	if not (multiplayer.is_server() or multiplayer.multiplayer_peer == null):
+	if not NetworkManager.is_server_authority():
 		return
 	if victim.current_vehicle_id >= 0:
 		var cur_v: VehicleBase = vehicles_by_id.get(victim.current_vehicle_id, null)
@@ -397,11 +443,12 @@ func _on_world_snapshot(snapshot: Dictionary) -> void:
 		if hid == NetworkManager.local_peer_id:
 			continue
 		if not heroes_by_id.has(hid):
+			var p_info: Dictionary = NetworkManager.players_info.get(hid, {})
 			spawn_hero(hid, {
-				"name": "Hero_%d" % hid,
+				"name": str(p_info.get("name", "Hero_%d" % hid)),
 				"team": int(h_dict.get("team", 0)),
 				"class_id": int(h_dict.get("class_id", 0)),
-				"is_bot": hid >= 1000,
+				"is_bot": bool(p_info.get("is_bot", hid >= 1000 and hid <= 1099)),
 			})
 		(heroes_by_id[hid] as HeroCharacter).push_remote_snapshot(srv_tick, srv_time_ms, h_dict)
 
@@ -442,7 +489,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			if hud != null:
 				hud.add_killfeed("VICTORY: %s WINS!" % str(payload.get("winner", "")))
 		"upgrade_skill":
-			if multiplayer.is_server() or multiplayer.multiplayer_peer == null:
+			if NetworkManager.is_server_authority():
 				var hid: int = int(payload.get("hero_id", -1))
 				var h: HeroCharacter = heroes_by_id.get(hid, null)
 				if h != null and h.skill_manager != null and h.skill_manager.has_method("upgrade_skill"):

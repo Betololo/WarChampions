@@ -53,7 +53,7 @@ func _physics_process(delta: float) -> void:
 		clear_all()
 		return
 
-	if not (multiplayer.is_server() or multiplayer.multiplayer_peer == null):
+	if not NetworkManager.is_server_authority():
 		return
 
 	# Process Burn DoT (1 tick/sec)

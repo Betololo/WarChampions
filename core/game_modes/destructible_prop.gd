@@ -107,7 +107,7 @@ func _break_prop(attacker_id: int) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if is_broken and (multiplayer.is_server() or multiplayer.multiplayer_peer == null):
+	if is_broken and NetworkManager.is_server_authority():
 		_respawn_timer -= delta
 		if _respawn_timer <= 0.0:
 			is_broken = false
