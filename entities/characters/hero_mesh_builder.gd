@@ -217,14 +217,19 @@ static func add_part(parent: Node3D, mesh: Mesh, pos: Vector3, rot: Vector3, mat
 	return mi
 
 
-static func make_sculpted_mat(col: Color, tex_key: String = "", roughness: float = 0.68) -> StandardMaterial3D:
+static func make_sculpted_mat(col: Color, tex_key: String = "", roughness: float = 0.68, metallic: float = 0.0) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = col
+	if col.a < 0.99:
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	else:
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	mat.vertex_color_use_as_albedo = true
 	if not tex_key.is_empty():
 		mat.albedo_texture = CartoonAssets.get_texture(tex_key)
 		mat.set_meta("tex_key", tex_key)
 	mat.roughness = roughness
+	mat.metallic = metallic
 	return mat
 
 
@@ -956,15 +961,42 @@ static func build_boot_mesh() -> ArrayMesh:
 	])
 
 
+static func _add_box_part(parent: Node3D, size: Vector3, pos: Vector3, rot: Vector3, mat: Material, parts: Array[MeshInstance3D]) -> MeshInstance3D:
+	var bm := BoxMesh.new()
+	bm.size = size
+	return add_part(parent, bm, pos, rot, mat, parts)
+
+
+static func _add_cyl_part(parent: Node3D, r_top: float, r_bot: float, h: float, pos: Vector3, rot: Vector3, mat: Material, segs: int, parts: Array[MeshInstance3D]) -> MeshInstance3D:
+	var cm := CylinderMesh.new()
+	cm.top_radius = r_top
+	cm.bottom_radius = r_bot
+	cm.height = h
+	cm.radial_segments = segs
+	return add_part(parent, cm, pos, rot, mat, parts)
+
+
+static func build_weapon_mesh(w_kind: int) -> Node3D:
+	var root := Node3D.new()
+	populate_weapon_root(root, w_kind)
+	return root
+
+
 static func populate_weapon_root(root: Node3D, w_kind: int) -> Dictionary:
 	for c in root.get_children():
 		c.queue_free()
 
-	var metal_mat := make_sculpted_mat(Color(0.22, 0.24, 0.28), "", 0.45)
-	var steel_mat := make_sculpted_mat(Color(0.46, 0.50, 0.54), "", 0.35)
-	var brass_mat := make_sculpted_mat(Color(0.66, 0.54, 0.24), "", 0.40)
+	var metal_mat := make_sculpted_mat(Color(0.20, 0.22, 0.26), "", 0.45, 0.35)
+	var blued_metal_mat := make_sculpted_mat(Color(0.16, 0.20, 0.25), "", 0.38, 0.45)
+	var steel_mat := make_sculpted_mat(Color(0.48, 0.52, 0.56), "", 0.35, 0.55)
+	var brass_mat := make_sculpted_mat(Color(0.72, 0.58, 0.24), "", 0.32, 0.65)
+	var copper_mat := make_sculpted_mat(Color(0.78, 0.42, 0.26), "", 0.35, 0.50)
 	var wood_mat := make_sculpted_mat(Color.WHITE, "hero_gun_wood", 0.65)
+	var leather_mat := make_sculpted_mat(Color(0.28, 0.18, 0.11), "", 0.70, 0.08)
 	var baz_mat := make_sculpted_mat(Color(0.26, 0.38, 0.22), "", 0.60)
+	var red_dyn_mat := make_sculpted_mat(Color(0.84, 0.18, 0.14), "", 0.65)
+	var white_dial_mat := make_sculpted_mat(Color(0.96, 0.96, 0.94), "", 0.40)
+	var lens_mat := make_sculpted_mat(Color(0.45, 0.75, 0.95), "", 0.12, 0.65)
 	var dummy: Array[MeshInstance3D] = []
 
 	# Origin (0, 0, 0) = Trigger / Right Hand Grip.
@@ -980,160 +1012,212 @@ static func populate_weapon_root(root: Node3D, w_kind: int) -> Dictionary:
 	p_grip.size = Vector3(0.034, 0.11, 0.044)
 
 	match w_kind:
-		4: # Sniper Rifle (sleek walnut stock, pistol wrist, bolt receiver, elevated brass scope, long barrel)
+		4: # Sniper Rifle (sleek walnut stock, cheekpiece swell, bolt receiver, elevated brass scope with ocular lenses, fluted barrel)
 			add_part(root, p_grip, Vector3(0.0, -0.045, 0.01), Vector3(-0.28, 0.0, 0.0), wood_mat, dummy)
 			var stock := make_loft([
-				{"y": 0.0, "rx": 0.024, "rz": 0.056, "p": 2.2, "col": Color(0.9, 0.9, 0.9)},
+				{"y": 0.00, "rx": 0.022, "rz": 0.056, "p": 2.2, "col": Color(0.9, 0.9, 0.9)},
+				{"y": 0.16, "rx": 0.025, "rz": 0.048, "p": 2.2, "col": Color.WHITE},
 				{"y": 0.28, "rx": 0.028, "rz": 0.038, "p": 2.2, "col": Color.WHITE},
 			], 12)
-			add_part(root, stock, Vector3(0.0, -0.01, 0.26), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+			add_part(root, stock, Vector3(0.0, -0.01, 0.28), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
 			var forend := make_loft([
-				{"y": 0.0, "rx": 0.028, "rz": 0.036, "p": 2.2, "col": Color.WHITE},
-				{"y": 0.38, "rx": 0.022, "rz": 0.028, "p": 2.1, "col": Color.WHITE},
+				{"y": 0.00, "rx": 0.026, "rz": 0.034, "p": 2.2, "col": Color.WHITE},
+				{"y": 0.38, "rx": 0.020, "rz": 0.026, "p": 2.1, "col": Color.WHITE},
 			], 12)
 			add_part(root, forend, Vector3(0.0, 0.005, 0.02), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
-			var rec_s := BoxMesh.new()
-			rec_s.size = Vector3(0.050, 0.058, 0.26)
-			add_part(root, rec_s, Vector3(0.0, 0.038, -0.10), Vector3.ZERO, metal_mat, dummy)
+			var rec_s := make_loft([
+				{"y": 0.00, "rx": 0.025, "rz": 0.028, "p": 2.2},
+				{"y": 0.24, "rx": 0.025, "rz": 0.028, "p": 2.2},
+			], 12)
+			add_part(root, rec_s, Vector3(0.0, 0.038, 0.02), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
+			_add_cyl_part(root, 0.006, 0.006, 0.045, Vector3(0.028, 0.042, -0.05), Vector3(0.0, 0.0, PI * 0.4), steel_mat, 8, dummy)
 			var barrel := make_loft([
-				{"y": 0.0, "rx": 0.017, "rz": 0.017, "p": 2.0},
+				{"y": 0.00, "rx": 0.017, "rz": 0.017, "p": 2.0},
 				{"y": 0.52, "rx": 0.013, "rz": 0.013, "p": 2.0},
+				{"y": 0.55, "rx": 0.016, "rz": 0.016, "p": 2.0},
 			], 10)
 			add_part(root, barrel, Vector3(0.0, 0.042, -0.22), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, dummy)
 			var scope := make_loft([
-				{"y": 0.0, "rx": 0.026, "rz": 0.026, "p": 2.0},
-				{"y": 0.26, "rx": 0.028, "rz": 0.028, "p": 2.0},
+				{"y": 0.00, "rx": 0.026, "rz": 0.026, "p": 2.0},
+				{"y": 0.06, "rx": 0.020, "rz": 0.020, "p": 2.0},
+				{"y": 0.22, "rx": 0.020, "rz": 0.020, "p": 2.0},
+				{"y": 0.28, "rx": 0.028, "rz": 0.028, "p": 2.0},
 			], 12)
-			add_part(root, scope, Vector3(0.0, 0.095, 0.03), Vector3(-PI * 0.5, 0.0, 0.0), brass_mat, dummy)
+			add_part(root, scope, Vector3(0.0, 0.095, 0.05), Vector3(-PI * 0.5, 0.0, 0.0), brass_mat, dummy)
+			_add_box_part(root, Vector3(0.018, 0.035, 0.02), Vector3(0.0, 0.065, -0.04), Vector3.ZERO, steel_mat, dummy)
+			_add_box_part(root, Vector3(0.018, 0.035, 0.02), Vector3(0.0, 0.065, -0.16), Vector3.ZERO, steel_mat, dummy)
+			_add_cyl_part(root, 0.024, 0.024, 0.01, Vector3(0.0, 0.095, -0.23), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 12, dummy)
+			_add_cyl_part(root, 0.022, 0.022, 0.01, Vector3(0.0, 0.095, 0.05), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 12, dummy)
 			info["foregrip"] = Vector3(0.0, -0.015, -0.26)
 			info["muzzle"] = Vector3(0.0, 0.042, -0.76)
 
-		0: # SMG (compact MP40/Thompson chassis, walnut stock, curved vertical magazine)
+		0: # SMG (tapered walnut stock, beveled oval receiver, perforated shroud, curved banana mag)
 			add_part(root, p_grip, Vector3(0.0, -0.050, 0.01), Vector3(-0.28, 0.0, 0.0), wood_mat, dummy)
 			var butt_smg := make_loft([
-				{"y": 0.0, "rx": 0.024, "rz": 0.048, "p": 2.3},
-				{"y": 0.22, "rx": 0.026, "rz": 0.032, "p": 2.3},
-			], 10)
-			add_part(root, butt_smg, Vector3(0.0, -0.01, 0.22), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
-			var rec_smg := BoxMesh.new()
-			rec_smg.size = Vector3(0.062, 0.068, 0.32)
-			add_part(root, rec_smg, Vector3(0.0, 0.030, -0.14), Vector3.ZERO, metal_mat, dummy)
+				{"y": 0.00, "rx": 0.022, "rz": 0.045, "p": 2.2, "col": Color(0.9, 0.9, 0.9)},
+				{"y": 0.14, "rx": 0.024, "rz": 0.038, "p": 2.2, "col": Color.WHITE},
+				{"y": 0.24, "rx": 0.026, "rz": 0.030, "p": 2.2, "col": Color.WHITE},
+			], 12)
+			add_part(root, butt_smg, Vector3(0.0, -0.01, 0.24), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+			var rec_smg := make_loft([
+				{"y": 0.00, "rx": 0.028, "rz": 0.034, "p": 2.2},
+				{"y": 0.16, "rx": 0.030, "rz": 0.035, "p": 2.2},
+				{"y": 0.28, "rx": 0.028, "rz": 0.034, "p": 2.2},
+			], 12)
+			add_part(root, rec_smg, Vector3(0.0, 0.030, -0.02), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
 			var shroud := make_loft([
-				{"y": 0.0, "rx": 0.022, "rz": 0.022, "p": 2.0},
+				{"y": 0.00, "rx": 0.020, "rz": 0.020, "p": 2.0},
 				{"y": 0.22, "rx": 0.015, "rz": 0.015, "p": 2.0},
 			], 10)
 			add_part(root, shroud, Vector3(0.0, 0.035, -0.29), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, dummy)
-			var mag := BoxMesh.new()
-			mag.size = Vector3(0.030, 0.18, 0.040)
-			add_part(root, mag, Vector3(0.0, -0.08, -0.15), Vector3(0.18, 0.0, 0.0), metal_mat, dummy)
+			_add_box_part(root, Vector3(0.008, 0.018, 0.012), Vector3(0.0, 0.054, -0.48), Vector3.ZERO, steel_mat, dummy)
+			_add_cyl_part(root, 0.008, 0.008, 0.022, Vector3(-0.032, 0.040, -0.16), Vector3(0.0, 0.0, PI * 0.5), steel_mat, 8, dummy)
+			var mag := make_loft([
+				{"y": 0.00, "rx": 0.014, "rz": 0.024, "p": 2.0},
+				{"y": 0.10, "rx": 0.014, "rz": 0.024, "p": 2.0},
+				{"y": 0.20, "rx": 0.013, "rz": 0.022, "p": 2.0},
+			], 10)
+			add_part(root, mag, Vector3(0.0, 0.01, -0.14), Vector3(PI * 0.5 + 0.18, 0.0, 0.0), metal_mat, dummy)
 			info["foregrip"] = Vector3(0.0, -0.015, -0.23)
 			info["muzzle"] = Vector3(0.0, 0.035, -0.52)
 
-		1: # Heavy MG (Gunner hip-slung MG with ammo drum, heavy cooling shroud & top carry handle!)
+		1: # Heavy MG (ribbed water-cooling jacket with muzzle bell, drum mag with brass rim, carry handle, walnut stock)
 			add_part(root, p_grip, Vector3(0.0, -0.040, 0.01), Vector3(-0.22, 0.0, 0.0), wood_mat, dummy)
-			var mg_stock := BoxMesh.new()
-			mg_stock.size = Vector3(0.058, 0.078, 0.20)
-			add_part(root, mg_stock, Vector3(0.0, 0.010, 0.12), Vector3.ZERO, wood_mat, dummy)
-			var mg_rec := BoxMesh.new()
-			mg_rec.size = Vector3(0.092, 0.096, 0.34)
-			add_part(root, mg_rec, Vector3(0.0, 0.025, -0.16), Vector3.ZERO, metal_mat, dummy)
-			var jacket := make_loft([
-				{"y": 0.0, "rx": 0.042, "rz": 0.042, "p": 2.0},
-				{"y": 0.32, "rx": 0.036, "rz": 0.036, "p": 2.0},
+			var mg_stock := make_loft([
+				{"y": 0.00, "rx": 0.026, "rz": 0.042, "p": 2.2},
+				{"y": 0.22, "rx": 0.028, "rz": 0.032, "p": 2.2},
 			], 12)
+			add_part(root, mg_stock, Vector3(0.0, 0.010, 0.22), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+			var mg_rec := make_loft([
+				{"y": 0.00, "rx": 0.044, "rz": 0.046, "p": 2.3},
+				{"y": 0.32, "rx": 0.044, "rz": 0.046, "p": 2.3},
+			], 12)
+			add_part(root, mg_rec, Vector3(0.0, 0.025, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
+			var jacket := make_loft([
+				{"y": 0.00, "rx": 0.042, "rz": 0.042, "p": 2.0},
+				{"y": 0.28, "rx": 0.038, "rz": 0.038, "p": 2.0},
+				{"y": 0.36, "rx": 0.048, "rz": 0.048, "p": 2.0},
+			], 14)
 			add_part(root, jacket, Vector3(0.0, 0.030, -0.32), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, dummy)
-			var mg_brl := CylinderMesh.new()
-			mg_brl.top_radius = 0.016
-			mg_brl.bottom_radius = 0.020
-			mg_brl.height = 0.16
-			add_part(root, mg_brl, Vector3(0.0, 0.030, -0.66), Vector3(-PI * 0.5, 0.0, 0.0), metal_mat, dummy)
-			var drum := CylinderMesh.new()
-			drum.top_radius = 0.095
-			drum.bottom_radius = 0.095
-			drum.height = 0.11
-			add_part(root, drum, Vector3(-0.08, -0.03, -0.16), Vector3(0.0, 0.0, PI * 0.5), baz_mat, dummy)
-			var belt := BoxMesh.new()
-			belt.size = Vector3(0.03, 0.04, 0.14)
-			add_part(root, belt, Vector3(-0.07, 0.03, -0.16), Vector3.ZERO, brass_mat, dummy)
-			var handle := BoxMesh.new()
-			handle.size = Vector3(0.028, 0.065, 0.14)
-			add_part(root, handle, Vector3(-0.02, 0.105, -0.20), Vector3.ZERO, wood_mat, dummy)
+			_add_cyl_part(root, 0.016, 0.016, 0.12, Vector3(0.0, 0.030, -0.68), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 10, dummy)
+			_add_cyl_part(root, 0.095, 0.095, 0.11, Vector3(-0.08, -0.03, -0.16), Vector3(0.0, 0.0, PI * 0.5), baz_mat, 16, dummy)
+			_add_cyl_part(root, 0.098, 0.098, 0.02, Vector3(-0.08, -0.03, -0.16), Vector3(0.0, 0.0, PI * 0.5), brass_mat, 16, dummy)
+			_add_box_part(root, Vector3(0.03, 0.04, 0.14), Vector3(-0.07, 0.03, -0.16), Vector3.ZERO, brass_mat, dummy)
+			var handle := make_loft([
+				{"y": 0.00, "rx": 0.012, "rz": 0.012, "p": 2.0},
+				{"y": 0.12, "rx": 0.014, "rz": 0.014, "p": 2.0},
+			], 8)
+			add_part(root, handle, Vector3(-0.02, 0.105, -0.14), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+			_add_box_part(root, Vector3(0.025, 0.05, 0.04), Vector3(0.0, -0.025, -0.42), Vector3.ZERO, steel_mat, dummy)
 			info["foregrip"] = Vector3(-0.03, 0.10, -0.22)
 			info["muzzle"] = Vector3(0.0, 0.030, -0.74)
 
-		2: # Combat Shotgun
+		2: # Combat Shotgun (walnut buttstock + comb, oval blued receiver with ejection port, pump slide, bead sight)
 			add_part(root, p_grip, Vector3(0.0, -0.042, 0.01), Vector3(-0.28, 0.0, 0.0), wood_mat, dummy)
 			var s_butt := make_loft([
-				{"y": 0.0, "rx": 0.028, "rz": 0.052, "p": 2.3},
-				{"y": 0.25, "rx": 0.028, "rz": 0.040, "p": 2.3},
+				{"y": 0.00, "rx": 0.024, "rz": 0.054, "p": 2.3},
+				{"y": 0.14, "rx": 0.026, "rz": 0.048, "p": 2.3},
+				{"y": 0.26, "rx": 0.028, "rz": 0.036, "p": 2.2},
 			], 12)
 			add_part(root, s_butt, Vector3(0.0, -0.01, 0.26), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
-			var s_rec := BoxMesh.new()
-			s_rec.size = Vector3(0.056, 0.068, 0.22)
-			add_part(root, s_rec, Vector3(0.0, 0.030, -0.09), Vector3.ZERO, metal_mat, dummy)
+			var s_rec := make_loft([
+				{"y": 0.00, "rx": 0.026, "rz": 0.034, "p": 2.2},
+				{"y": 0.22, "rx": 0.026, "rz": 0.034, "p": 2.2},
+			], 12)
+			add_part(root, s_rec, Vector3(0.0, 0.030, 0.02), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
+			_add_box_part(root, Vector3(0.010, 0.018, 0.055), Vector3(0.024, 0.036, -0.09), Vector3.ZERO, steel_mat, dummy)
 			var s_brl := make_loft([
-				{"y": 0.0, "rx": 0.020, "rz": 0.020, "p": 2.0},
-				{"y": 0.38, "rx": 0.018, "rz": 0.018, "p": 2.0},
+				{"y": 0.00, "rx": 0.019, "rz": 0.019, "p": 2.0},
+				{"y": 0.38, "rx": 0.016, "rz": 0.016, "p": 2.0},
 			], 10)
 			add_part(root, s_brl, Vector3(0.0, 0.045, -0.19), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, dummy)
+			_add_cyl_part(root, 0.014, 0.014, 0.28, Vector3(0.0, 0.018, -0.32), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 10, dummy)
+			_add_cyl_part(root, 0.004, 0.004, 0.008, Vector3(0.0, 0.062, -0.56), Vector3.ZERO, brass_mat, 6, dummy)
 			var pump := make_loft([
-				{"y": 0.0, "rx": 0.026, "rz": 0.028, "p": 2.2},
-				{"y": 0.18, "rx": 0.026, "rz": 0.028, "p": 2.2},
-			], 10)
-			add_part(root, pump, Vector3(0.0, 0.008, -0.22), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+				{"y": 0.00, "rx": 0.024, "rz": 0.026, "p": 2.2},
+				{"y": 0.16, "rx": 0.024, "rz": 0.026, "p": 2.2},
+			], 12)
+			add_part(root, pump, Vector3(0.0, 0.016, -0.22), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
 			info["foregrip"] = Vector3(0.0, -0.015, -0.29)
 			info["muzzle"] = Vector3(0.0, 0.045, -0.58)
 
-		6: # Bazooka (shoulder tube balanced around trigger grip at Y=-0.10, Z=0)
+		6: # Bazooka (flared blast funnel, front bell cone, bands, warhead nose tip, wood grip & foregrip)
 			var tube := make_loft([
-				{"y": 0.0, "rx": 0.092, "rz": 0.092, "p": 2.0},
-				{"y": 0.14, "rx": 0.068, "rz": 0.068, "p": 2.0},
-				{"y": 1.12, "rx": 0.070, "rz": 0.070, "p": 2.0},
-				{"y": 1.24, "rx": 0.096, "rz": 0.096, "p": 2.0},
-			], 14)
+				{"y": 0.00, "rx": 0.096, "rz": 0.096, "p": 2.0},
+				{"y": 0.16, "rx": 0.068, "rz": 0.068, "p": 2.0},
+				{"y": 1.10, "rx": 0.068, "rz": 0.068, "p": 2.0},
+				{"y": 1.24, "rx": 0.092, "rz": 0.092, "p": 2.0},
+			], 16)
 			add_part(root, tube, Vector3(0.0, 0.0, 0.42), Vector3(-PI * 0.5, 0.0, 0.0), baz_mat, dummy)
+			_add_cyl_part(root, 0.076, 0.076, 0.04, Vector3(0.0, 0.0, 0.08), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 12, dummy)
+			_add_cyl_part(root, 0.076, 0.076, 0.04, Vector3(0.0, 0.0, -0.38), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 12, dummy)
+			_add_box_part(root, Vector3(0.045, 0.045, 0.010), Vector3(0.065, 0.070, -0.72), Vector3.ZERO, steel_mat, dummy)
+			var warhead := make_loft([
+				{"y": 0.00, "rx": 0.060, "rz": 0.060, "p": 2.0},
+				{"y": 0.08, "rx": 0.052, "rz": 0.052, "p": 2.0},
+				{"y": 0.15, "rx": 0.010, "rz": 0.010, "p": 2.0},
+			], 12)
+			add_part(root, warhead, Vector3(0.0, 0.0, -0.80), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
 			add_part(root, p_grip, Vector3(0.0, -0.10, 0.0), Vector3(-0.18, 0.0, 0.0), wood_mat, dummy)
-			add_part(root, p_grip, Vector3(0.0, -0.095, -0.24), Vector3(0.0, 0.0, 0.0), metal_mat, dummy)
+			add_part(root, p_grip, Vector3(0.0, -0.095, -0.24), Vector3.ZERO, wood_mat, dummy)
+			_add_box_part(root, Vector3(0.014, 0.045, 0.055), Vector3(0.0, -0.065, -0.05), Vector3.ZERO, steel_mat, dummy)
 			info["grip"] = Vector3(0.0, -0.11, 0.0)
 			info["foregrip"] = Vector3(0.0, -0.105, -0.24)
 			info["muzzle"] = Vector3(0.0, 0.0, -0.85)
 
-		5: # Commando Knife (tactical dagger held in palm)
-			var hdl := CylinderMesh.new()
-			hdl.top_radius = 0.022
-			hdl.bottom_radius = 0.022
-			hdl.height = 0.12
-			add_part(root, hdl, Vector3(0.0, 0.0, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
-			var guard := BoxMesh.new()
-			guard.size = Vector3(0.075, 0.018, 0.018)
-			add_part(root, guard, Vector3(0.0, 0.0, -0.065), Vector3.ZERO, brass_mat, dummy)
+		5: # Commando Knife (fuller dagger blade, brass S-crossguard, stacked leather grip, brass pommel)
+			var hdl := make_loft([
+				{"y": 0.00, "rx": 0.018, "rz": 0.022, "p": 2.1},
+				{"y": 0.06, "rx": 0.020, "rz": 0.024, "p": 2.1},
+				{"y": 0.12, "rx": 0.018, "rz": 0.022, "p": 2.1},
+			], 10)
+			add_part(root, hdl, Vector3(0.0, 0.0, 0.06), Vector3(-PI * 0.5, 0.0, 0.0), leather_mat, dummy)
+			_add_cyl_part(root, 0.022, 0.020, 0.018, Vector3(0.0, 0.0, 0.065), Vector3(PI * 0.5, 0.0, 0.0), brass_mat, 10, dummy)
+			_add_box_part(root, Vector3(0.080, 0.016, 0.018), Vector3(0.0, 0.0, -0.065), Vector3(0.0, 0.18, 0.0), brass_mat, dummy)
 			var blade := make_loft([
-				{"y": 0.0, "rx": 0.008, "rz": 0.026, "p": 2.5},
-				{"y": 0.22, "rx": 0.004, "rz": 0.005, "p": 2.0},
-			], 8)
+				{"y": 0.00, "rx": 0.006, "rz": 0.024, "p": 2.4},
+				{"y": 0.14, "rx": 0.005, "rz": 0.022, "p": 2.2},
+				{"y": 0.22, "rx": 0.003, "rz": 0.005, "p": 2.0},
+			], 10)
 			add_part(root, blade, Vector3(0.0, 0.005, -0.075), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, dummy)
 			info["grip"] = Vector3(0.0, 0.0, 0.01)
 			info["foregrip"] = Vector3.ZERO
 			info["muzzle"] = Vector3(0.0, 0.005, -0.30)
 			info["two_handed"] = false
 
-		7: # TNT Satchel
-			var pack := BoxMesh.new()
-			pack.size = Vector3(0.18, 0.13, 0.12)
-			add_part(root, pack, Vector3(0.0, 0.0, -0.04), Vector3.ZERO, make_sculpted_mat(Color(0.84, 0.18, 0.16), "", 0.6), dummy)
-			var strap := BoxMesh.new()
-			strap.size = Vector3(0.19, 0.035, 0.13)
-			add_part(root, strap, Vector3(0.0, 0.0, -0.04), Vector3.ZERO, metal_mat, dummy)
+		7: # TNT (bundle of 4 red dynamite sticks, leather straps with brass buckles, clockwork detonator & copper fuse)
+			for dx in [-0.042, 0.042]:
+				for dy in [-0.042, 0.042]:
+					_add_cyl_part(root, 0.038, 0.038, 0.22, Vector3(dx, dy, -0.04), Vector3(PI * 0.5, 0.0, 0.0), red_dyn_mat, 12, dummy)
+			_add_box_part(root, Vector3(0.185, 0.185, 0.030), Vector3(0.0, 0.0, 0.03), Vector3.ZERO, leather_mat, dummy)
+			_add_box_part(root, Vector3(0.185, 0.185, 0.030), Vector3(0.0, 0.0, -0.11), Vector3.ZERO, leather_mat, dummy)
+			_add_box_part(root, Vector3(0.030, 0.030, 0.034), Vector3(0.0, 0.095, 0.03), Vector3.ZERO, brass_mat, dummy)
+			_add_box_part(root, Vector3(0.030, 0.030, 0.034), Vector3(0.0, 0.095, -0.11), Vector3.ZERO, brass_mat, dummy)
+			_add_cyl_part(root, 0.052, 0.052, 0.024, Vector3(0.0, 0.096, -0.04), Vector3.ZERO, brass_mat, 14, dummy)
+			_add_cyl_part(root, 0.044, 0.044, 0.026, Vector3(0.0, 0.098, -0.04), Vector3.ZERO, white_dial_mat, 14, dummy)
+			_add_box_part(root, Vector3(0.006, 0.030, 0.028), Vector3(0.008, 0.100, -0.04), Vector3(0.0, 0.45, 0.0), metal_mat, dummy)
+			_add_cyl_part(root, 0.006, 0.006, 0.09, Vector3(0.035, 0.055, 0.08), Vector3(0.4, 0.2, 0.5), copper_mat, 8, dummy)
+			_add_cyl_part(root, 0.006, 0.006, 0.09, Vector3(-0.035, 0.055, 0.08), Vector3(-0.4, -0.2, 0.5), copper_mat, 8, dummy)
 			info["grip"] = Vector3(0.0, -0.02, 0.02)
 			info["foregrip"] = Vector3.ZERO
 			info["muzzle"] = Vector3(0.0, 0.0, -0.16)
 			info["two_handed"] = false
 
-		_: # Service Pistol
-			add_part(root, p_grip, Vector3(0.0, -0.045, 0.0), Vector3(-0.22, 0.0, 0.0), wood_mat, dummy)
-			var slide := BoxMesh.new()
-			slide.size = Vector3(0.038, 0.052, 0.22)
-			add_part(root, slide, Vector3(0.0, 0.032, -0.08), Vector3.ZERO, metal_mat, dummy)
+		_: # Service Pistol (angled checkered grip, beveled slide loft, iron sights, brass trigger)
+			var pist_grip := make_loft([
+				{"y": 0.00, "rx": 0.016, "rz": 0.024, "p": 2.2},
+				{"y": 0.11, "rx": 0.018, "rz": 0.022, "p": 2.2},
+			], 10)
+			add_part(root, pist_grip, Vector3(0.0, -0.095, -0.015), Vector3(0.24, 0.0, 0.0), wood_mat, dummy)
+			_add_box_part(root, Vector3(0.012, 0.035, 0.045), Vector3(0.0, -0.015, -0.045), Vector3.ZERO, metal_mat, dummy)
+			_add_box_part(root, Vector3(0.006, 0.018, 0.010), Vector3(0.0, -0.012, -0.035), Vector3(-0.2, 0.0, 0.0), brass_mat, dummy)
+			var slide := make_loft([
+				{"y": 0.00, "rx": 0.018, "rz": 0.024, "p": 2.1},
+				{"y": 0.22, "rx": 0.018, "rz": 0.024, "p": 2.1},
+			], 12)
+			add_part(root, slide, Vector3(0.0, 0.032, 0.03), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
+			_add_box_part(root, Vector3(0.016, 0.008, 0.008), Vector3(0.0, 0.058, 0.01), Vector3.ZERO, steel_mat, dummy)
+			_add_box_part(root, Vector3(0.006, 0.010, 0.008), Vector3(0.0, 0.058, -0.18), Vector3.ZERO, steel_mat, dummy)
 			info["grip"] = Vector3(0.0, -0.045, 0.0)
 			info["foregrip"] = Vector3(-0.015, -0.055, -0.01)
 			info["muzzle"] = Vector3(0.0, 0.035, -0.21)

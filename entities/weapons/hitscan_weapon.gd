@@ -16,13 +16,17 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 
 	var world_3d: World3D = owner_hero.get_world_3d() if owner_hero.is_inside_tree() else null
 	var space_state: PhysicsDirectSpaceState3D = world_3d.direct_space_state if world_3d != null else null
-	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state)
+	var lag_comp: LagCompensator = context.get("lag_compensator", null)
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
+	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state, lag_comp, heroes_by_id)
 	var origin: Vector3 = aim["origin"]
 	var base_dir: Vector3 = aim["dir"]
 
 	var spread_mult: float = 1.0
 	if is_sniper and cmd.has_button(InputCmd.BTN_AIM):
-		spread_mult = 0.08
+		spread_mult = 0.0
+	elif pellet_count == 1 and is_first_shot():
+		spread_mult = 0.0
 	elif owner_hero.status_effects != null and owner_hero.status_effects.has_method("has_frenzy_fire"):
 		if weapon_kind == WeaponKind.MG and owner_hero.status_effects.has_frenzy_fire():
 			spread_mult = 0.35
@@ -31,8 +35,12 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	if is_sniper and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_piercing_shot_mult"):
 		dmg_mult *= owner_hero.status_effects.get_piercing_shot_mult()
 
-	var lag_comp: LagCompensator = context.get("lag_compensator", null)
-	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
+	var exclude_rids: Array[RID] = []
+	if owner_hero.current_vehicle_id >= 0 and owner_hero.is_inside_tree():
+		for v_node in owner_hero.get_tree().get_nodes_in_group("vehicles"):
+			if v_node is VehicleBase and (v_node as VehicleBase).id == owner_hero.current_vehicle_id:
+				exclude_rids.append((v_node as CollisionObject3D).get_rid())
+
 	var pellet_hits: Array[Vector3] = []
 	var pellet_arcs: Array[PackedVector3Array] = []
 	var dmg_by_victim: Dictionary = {}
@@ -43,17 +51,16 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		var shot_dir: Vector3 = apply_spread(base_dir, spread_mult)
 		var trace: Dictionary
 		if lag_comp != null:
-			trace = lag_comp.trace_ballistic_arc(
+			trace = lag_comp.trace_rewound_ray(
 				owner_hero,
 				origin,
-				shot_dir * bullet_speed_mps,
-				base_gravity_mps2 * bullet_gravity_scale,
+				shot_dir,
 				max_range_m,
-				12.0,
 				cmd.view_interp_tick_delta,
 				NetworkManager.server_tick,
 				heroes_by_id,
-				world_3d
+				world_3d,
+				exclude_rids
 			)
 		else:
 			var fallback_end: Vector3 = origin + shot_dir * max_range_m
@@ -68,7 +75,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			}
 
 		var hit_pos: Vector3 = trace.get("hit_pos", origin + shot_dir * max_range_m)
-		var arc_pts: PackedVector3Array = trace.get("arc_points", PackedVector3Array([origin, hit_pos]))
+		var arc_pts := PackedVector3Array([origin, hit_pos])
 		pellet_hits.append(hit_pos)
 		pellet_arcs.append(arc_pts)
 		fired.emit(weapon_kind, origin, hit_pos)

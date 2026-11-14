@@ -22,6 +22,7 @@ const RECONCILE_THRESHOLD_METERS: float = 0.05
 const STAND_HEIGHT: float = 1.85
 const CROUCH_HEIGHT: float = 1.15
 const FALL_DAMAGE_THRESHOLD_SPEED: float = 13.5
+const MAX_STEP_HEIGHT: float = 0.50
 
 var entity_id: int = 1
 var hero_name: String = "Hero"
@@ -614,13 +615,7 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) ->
 	_weapon_recoil_anim = 1.0
 	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG) else 0.55
 	if apply_camera_kick and hero_camera != null:
-		var kick_rad: float = 0.022
-		if not weapons.is_empty():
-			var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
-			var w: WeaponBase = weapons[slot] as WeaponBase
-			if w != null:
-				kick_rad = w.recoil_rad
-		hero_camera.add_recoil(kick_rad)
+		hero_camera.add_recoil(0.0)
 
 
 func get_muzzle_world_position() -> Vector3:
@@ -657,14 +652,6 @@ func _process(delta: float) -> void:
 	if is_local_player or is_bot or NetworkManager.is_server_authority():
 		_pred_error_offset = _pred_error_offset.lerp(Vector3.ZERO, minf(1.0, 14.0 * delta))
 		visual_error_offset = _pred_error_offset
-		if visual_root != null:
-			if current_vehicle_id >= 0:
-				visual_root.global_position = global_position
-			else:
-				var frac: float = Engine.get_physics_interpolation_fraction()
-				var interp_world: Vector3 = _prev_phys_pos.lerp(_curr_phys_pos, frac)
-				visual_root.global_position = interp_world + _pred_error_offset
-			visual_root.rotation.y = aim_yaw
 	else:
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())
 		if sample != null:
@@ -676,11 +663,23 @@ func _process(delta: float) -> void:
 			is_parachuting = (active_flags & NetSerializer.SNAP_PARACHUTING) != 0
 			is_crouching = (active_flags & NetSerializer.SNAP_CROUCHING) != 0
 			is_defeated = (active_flags & NetSerializer.SNAP_DEFEATED) != 0
+			collision_layer = 0 if is_defeated else 2
 			is_stealthed = (active_flags & NetSerializer.SNAP_STEALTHED) != 0
 			is_emoting = (active_flags & NetSerializer.SNAP_EMOTING) != 0
-			if visual_root != null:
-				visual_root.global_position = global_position
-				visual_root.rotation.y = aim_yaw
+
+	if current_vehicle_id >= 0:
+		_sync_seated_visual_transform()
+	elif visual_root != null:
+		visual_root.rotation.x = 0.0
+		visual_root.rotation.z = 0.0
+		if is_local_player or is_bot or NetworkManager.is_server_authority():
+			var frac: float = Engine.get_physics_interpolation_fraction()
+			var interp_world: Vector3 = _prev_phys_pos.lerp(_curr_phys_pos, frac)
+			visual_root.global_position = interp_world + _pred_error_offset
+			visual_root.rotation.y = aim_yaw
+		else:
+			visual_root.global_position = global_position
+			visual_root.rotation.y = aim_yaw
 
 	_rebuild_held_weapon_mesh()
 	_animate_character(delta)
@@ -759,11 +758,22 @@ func _animate_character(delta: float) -> void:
 			_head_pivot.rotation.x = aim_pitch * 0.35
 
 		if can_shoot_seat:
+			_head_pivot.rotation.y = 0.0
 			_pose_held_weapon_and_arms(0.0, fire_blend, kick, reloading)
 		else:
+			var veh: VehicleBase = _resolve_current_vehicle()
+			if veh != null:
+				var veh_fwd: Vector3 = -veh.global_transform.basis.z
+				var veh_yaw: float = atan2(-veh_fwd.x, -veh_fwd.z)
+				var glance: float = clampf(angle_difference(veh_yaw, aim_yaw), -0.5, 0.5)
+				_head_pivot.rotation.y = glance
+			else:
+				_head_pivot.rotation.y = 0.0
 			_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, Vector3(0.20, 0.34, -0.36), Vector3(0.75, -0.45, 0.55))
 			_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, Vector3(-0.20, 0.34, -0.36), Vector3(-0.80, -0.45, 0.45))
 		return
+
+	_head_pivot.rotation.y = 0.0
 
 	# Remote client fall time tracking in animation loop (local player and server track deterministically in simulate_movement)
 	if not is_local_player and not is_bot and not NetworkManager.is_server_authority():
@@ -1174,7 +1184,7 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	velocity.x = lerpf(velocity.x, wish_dir.x * move_speed, minf(1.0, accel * delta))
 	velocity.z = lerpf(velocity.z, wish_dir.z * move_speed, minf(1.0, accel * delta))
 
-	move_and_slide()
+	_move_and_slide_with_steps(delta, wish_dir, grounded)
 
 	# Emote state
 	if cmd.has_button(InputCmd.BTN_EMOTE) and grounded and not is_emoting:
@@ -1202,6 +1212,63 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 		active_flags |= NetSerializer.SNAP_SCOPING
 	if is_emoting:
 		active_flags |= NetSerializer.SNAP_EMOTING
+
+
+## Deterministic step-climbing ("degraus") used in 60Hz movement simulation.
+func _move_and_slide_with_steps(delta: float, wish_dir: Vector3, grounded: bool) -> void:
+	var pre_pos: Vector3 = global_position
+	var pre_vel: Vector3 = velocity
+	move_and_slide()
+
+	if wish_dir.length_squared() <= 0.001 or not (grounded or is_on_floor()):
+		return
+
+	var actual_disp: Vector3 = Vector3(global_position.x - pre_pos.x, 0.0, global_position.z - pre_pos.z)
+	var actual_progress: float = actual_disp.dot(wish_dir)
+	var horiz_vel_len: float = Vector2(pre_vel.x, pre_vel.z).length()
+	var desired_dist: float = maxf(1.5, horiz_vel_len) * delta
+
+	# Check if any slide collision hit a steep vertical step/wall (abs(normal.y) < 0.35)
+	var hit_steep_wall: bool = false
+	var col_count: int = get_slide_collision_count()
+	for i in range(col_count):
+		var col := get_slide_collision(i)
+		if absf(col.get_normal().y) < 0.35:
+			hit_steep_wall = true
+			break
+
+	if not hit_steep_wall or actual_progress >= desired_dist * 0.85:
+		return
+
+	var slide_pos: Vector3 = global_position
+	var slide_vel: Vector3 = velocity
+
+	# Test stepping up via move_and_collide starting from pre_pos
+	global_position = pre_pos
+	velocity = pre_vel
+
+	# 1) Lift up +Vector3.UP * MAX_STEP_HEIGHT (halt early if hitting ceiling)
+	var _up_col := move_and_collide(Vector3.UP * MAX_STEP_HEIGHT)
+
+	# 2) Advance horizontally along wish_dir (minimum 0.12m probe so slow walk still mounts steps)
+	var step_advance: float = maxf(0.12, desired_dist)
+	var _fwd_col := move_and_collide(wish_dir * step_advance)
+
+	# 3) Sweep back down -Vector3.UP * (MAX_STEP_HEIGHT + 0.08) checking for valid floor
+	var down_col := move_and_collide(Vector3.DOWN * (MAX_STEP_HEIGHT + 0.08))
+
+	# 4) Validate surface and progress
+	var valid_floor: bool = down_col != null and down_col.get_normal().y >= 0.68
+	var stepped_disp: Vector3 = Vector3(global_position.x - pre_pos.x, 0.0, global_position.z - pre_pos.z)
+	var stepped_progress: float = stepped_disp.dot(wish_dir)
+
+	if valid_floor and stepped_progress > actual_progress + 0.005:
+		velocity.y = maxf(0.0, pre_vel.y)
+		return
+
+	# Step failed or didn't improve progress; cleanly restore move_and_slide result
+	global_position = slide_pos
+	velocity = slide_vel
 
 
 func _update_capsule_height(crouched: bool) -> void:
@@ -1262,8 +1329,73 @@ func clear_vehicle_state() -> void:
 		hero_camera.set_vehicle_mode(false)
 		if visual_root != null:
 			hero_camera.global_position = visual_root.global_position
-	if visual_root != null and not is_scoping:
+	if visual_root != null:
+		visual_root.rotation.x = 0.0
+		visual_root.rotation.z = 0.0
+		if not is_scoping:
+			visual_root.visible = true
+
+
+## Locates the current occupied VehicleBase instance across Host, Dedicated Server, and Remote Clients.
+func _resolve_current_vehicle() -> VehicleBase:
+	if current_vehicle_id < 0 or not is_inside_tree():
+		return null
+	var tree := get_tree()
+	if tree == null:
+		return null
+	var vehs := tree.get_nodes_in_group("vehicles")
+	for v in vehs:
+		if v is VehicleBase and (v as VehicleBase).id == current_vehicle_id:
+			return v as VehicleBase
+	return null
+
+
+## Synchronizes seated character position and visual transform with the vehicle.
+func _sync_seated_visual_transform(veh: VehicleBase = null) -> void:
+	if visual_root == null or current_vehicle_id < 0:
+		return
+	if veh == null:
+		veh = _resolve_current_vehicle()
+	if veh != null:
+		visual_root.global_position = veh.get_seat_world_pos_for_hero(self)
+		_sync_seated_visual_orientation(veh)
+	else:
+		visual_root.global_position = global_position
+		visual_root.rotation.y = aim_yaw
+		visual_root.rotation.x = 0.0
+		visual_root.rotation.z = 0.0
+
+
+## Synchronizes seated character visual transform and facing with the vehicle chassis.
+func _sync_seated_visual_orientation(veh: VehicleBase) -> void:
+	if visual_root == null or veh == null:
+		return
+	if current_seat_pose == "hidden":
+		visual_root.visible = false
+		return
+	elif not is_scoping:
 		visual_root.visible = true
+
+	var seat: VehicleBase.SeatSlot = veh.get_seat(current_seat_index)
+	var follow_turret: bool = seat != null and seat.follow_turret
+
+	if follow_turret:
+		visual_root.global_transform.basis = Basis(Vector3.UP, veh.turret_yaw)
+	elif not current_seat_can_shoot and current_seat_index == 0:
+		# Non-shooting Driver/Pilot (Jeep Driver, Boat Driver, Plane Pilot)
+		visual_root.global_transform.basis = veh.global_transform.basis
+	else:
+		# Open shooting Passengers / Wing-riders
+		var is_shooting: bool = _fire_pose_timer > 0.0 or (is_local_player and not is_bot and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or (latest_server_input != null and latest_server_input.has_button(InputCmd.BTN_FIRE))
+		if is_shooting:
+			var veh_basis: Basis = veh.global_transform.basis
+			var veh_fwd: Vector3 = -veh_basis.z
+			var veh_yaw: float = atan2(-veh_fwd.x, -veh_fwd.z)
+			var local_yaw: float = wrapf(aim_yaw - veh_yaw, -PI, PI)
+			visual_root.global_transform.basis = veh_basis * Basis(Vector3.UP, local_yaw)
+		else:
+			visual_root.global_transform.basis = veh.global_transform.basis
+
 
 func reconcile_with_server(state: Dictionary) -> void:
 	var is_active_host: bool = NetworkManager.is_active_host_authority()
@@ -1286,9 +1418,18 @@ func reconcile_with_server(state: Dictionary) -> void:
 			_body_collision.disabled = (current_vehicle_id >= 0)
 		if hero_camera != null:
 			hero_camera.set_vehicle_mode(current_vehicle_id >= 0)
-		if current_vehicle_id < 0 and visual_root != null and not is_scoping:
-			visual_root.visible = true
+		if current_vehicle_id < 0 and visual_root != null:
+			visual_root.rotation.x = 0.0
+			visual_root.rotation.z = 0.0
+			if not is_scoping:
+				visual_root.visible = true
+	var was_defeated: bool = is_defeated
 	is_defeated = (auth_flags & NetSerializer.SNAP_DEFEATED) != 0
+	if is_defeated:
+		collision_layer = 0
+	elif was_defeated and not is_defeated:
+		collision_layer = 2
+		reset_weapons_full()
 	stats_changed.emit()
 
 	if current_vehicle_id >= 0 or prev_vid >= 0:
@@ -1369,6 +1510,9 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 		_reset_seat_metadata()
 	if _body_collision != null:
 		_body_collision.disabled = (current_vehicle_id >= 0)
+	var def: bool = (flags & NetSerializer.SNAP_DEFEATED) != 0 or hp <= 0
+	is_defeated = def
+	collision_layer = 0 if def else 2
 	var rot := Quaternion(Vector3.UP, yaw)
 	snapshot_interpolator.push_snapshot(server_tick, server_time_ms, pos, rot, vel, yaw, pitch, 0.0, flags)
 
@@ -1414,6 +1558,7 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 	if hp <= 0:
 		hp = 0
 		is_defeated = true
+		collision_layer = 0
 		defeat_timer = 5.0
 		_defeat_elapsed = 0.0
 		_airborne_fall_time = 0.0
@@ -1439,6 +1584,20 @@ func heal_server(amount: int) -> int:
 	return hp - prev
 
 
+func reset_weapons_full() -> void:
+	for w_node in weapons:
+		var w: WeaponBase = w_node as WeaponBase
+		if w != null:
+			w.ammo_in_mag = w.mag_size
+			w.is_reloading = false
+			w.reload_timer = 0.0
+			w.cooldown_timer = 0.0
+			w._burst_bloom = 0.0
+			w._was_first_shot = true
+			w._prev_fire_held = false
+			w.ammo_changed.emit(w.ammo_in_mag, w.mag_size, false)
+
+
 func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
@@ -1448,6 +1607,8 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	hp = max_hp
 	shield = 0
 	is_defeated = false
+	collision_layer = 2
+	reset_weapons_full()
 	_defeat_elapsed = 0.0
 	_airborne_fall_time = 0.0
 	_knockback_stun_timer = 0.0

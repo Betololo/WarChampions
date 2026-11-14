@@ -17,10 +17,10 @@ func _setup_vehicle_stats_and_seats() -> void:
 func _build_vehicle_mesh() -> void:
 	var col := CollisionShape3D.new()
 	var cyl := CylinderShape3D.new()
-	cyl.radius = 1.6
-	cyl.height = 1.8
+	cyl.radius = 1.4
+	cyl.height = 1.0
 	col.shape = cyl
-	col.position = Vector3(0.0, 0.9, 0.0)
+	col.position = Vector3(0.0, 0.5, 0.0)
 	add_child(col)
 	_apply_built_visuals(VehicleMeshBuilder.build_aa_visuals(_visual_root, team))
 

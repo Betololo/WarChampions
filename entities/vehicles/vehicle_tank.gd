@@ -3,7 +3,11 @@ extends VehicleBase
 
 ## Heavy Armor Tank: 360-deg turret, parabolic cannon with splash & projectile drop,
 ## 2.0x rear armor damage, and external rear passenger/repair seat.
-const MAX_SPEED: float = 12.5
+const MAX_SPEED: float = 14.0
+const ACCEL: float = 26.0
+const TURN_RATE: float = 2.1
+const LATERAL_GRIP: float = 14.0
+const IDLE_DRAG: float = 5.5
 const CANNON_COOLDOWN: float = 1.85
 const SHELL_SPEED: float = 62.0
 
@@ -19,27 +23,35 @@ func _setup_vehicle_stats_and_seats() -> void:
 
 
 func _build_vehicle_mesh() -> void:
-	var col := CollisionShape3D.new()
+	# Main hull box with elevated belly clearance (bottom y = 0.60m, top y = 2.10m)
+	var col_hull := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(3.4, 2.0, 5.6)
-	col.shape = box
-	col.position = Vector3(0.0, 1.15, 0.0)
-	add_child(col)
+	box.size = Vector3(3.2, 1.5, 5.2)
+	col_hull.shape = box
+	col_hull.position = Vector3(0.0, 1.35, 0.0)
+	add_child(col_hull)
+
+	# Rounded front/rear tread sprocket skids (y = 0.0..1.05)
+	for tx in [-1.45, 1.45]:
+		for tz in [-2.15, 2.15]:
+			var col_sprocket := CollisionShape3D.new()
+			var sph := SphereShape3D.new()
+			sph.radius = 0.525
+			col_sprocket.shape = sph
+			col_sprocket.position = Vector3(tx, 0.525, tz)
+			add_child(col_sprocket)
+
 	_apply_built_visuals(VehicleMeshBuilder.build_tank_visuals(_visual_root, team))
 
 
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:
-	var forward: Vector3 = -global_transform.basis.z
-	var flat_fwd := Vector3(forward.x, 0.0, forward.z).normalized()
-	if driver != null:
-		var cmd: InputCmd = driver.latest_server_input
-		var throttle: float = -cmd.move_dir.y
-		var turn: float = -cmd.move_dir.x
-		var cur_fwd_speed: float = linear_velocity.dot(flat_fwd)
-		if absf(throttle) > 0.05 and absf(cur_fwd_speed) < MAX_SPEED:
-			apply_central_force(flat_fwd * throttle * 20.0 * mass)
-		if absf(turn) > 0.05:
-			angular_velocity.y = lerpf(angular_velocity.y, turn * 1.9, 5.0 * delta)
+	var cmd: InputCmd = driver.latest_server_input if driver != null else null
+	_apply_arcade_drive(delta, cmd, MAX_SPEED, ACCEL, TURN_RATE, LATERAL_GRIP, IDLE_DRAG, 0.65)
+	var throttle: float = -cmd.move_dir.y if cmd != null else 0.0
+	_assist_curb_climb(throttle, 2.7, 0.55)
+	_process_roadkill(driver, context, Vector2(1.7, 2.8), 5.5)
+
+	if driver != null and cmd != null:
 		turret_yaw = cmd.aim_yaw
 		turret_pitch = cmd.aim_pitch
 
@@ -66,9 +78,3 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 				"hits": [],
 				"vehicle_shot": true,
 			})
-	else:
-		linear_velocity.x = lerpf(linear_velocity.x, 0.0, 4.0 * delta)
-		linear_velocity.z = lerpf(linear_velocity.z, 0.0, 4.0 * delta)
-
-	rotation.x = lerpf(rotation.x, 0.0, 8.0 * delta)
-	rotation.z = lerpf(rotation.z, 0.0, 8.0 * delta)

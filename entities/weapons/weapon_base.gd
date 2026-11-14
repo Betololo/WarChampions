@@ -40,7 +40,7 @@ var is_melee: bool = false
 var is_sniper: bool = false
 var is_explosive_weapon: bool = false
 var bullet_speed_mps: float = 150.0
-var bullet_gravity_scale: float = 1.0
+var bullet_gravity_scale: float = 0.0
 var base_gravity_mps2: float = 18.0
 
 ## Runtime state (Infinite reserve ammo!)
@@ -53,9 +53,16 @@ var spread_rad: float = 0.022
 var reserve_ammo: int = -1 # -1 represents infinite reserve
 
 var cooldown_timer: float = 0.0
+var fire_cooldown: float:
+	get:
+		return cooldown_timer
+	set(val):
+		cooldown_timer = val
 var reload_timer: float = 0.0
 var is_reloading: bool = false
 var _prev_fire_held: bool = false
+var _burst_bloom: float = 0.0
+var _was_first_shot: bool = true
 
 
 func configure(p_owner: HeroCharacter, p_kind: int, p_archetype: int) -> void:
@@ -65,6 +72,8 @@ func configure(p_owner: HeroCharacter, p_kind: int, p_archetype: int) -> void:
 	_load_weapon_stats()
 	_apply_archetype_modifiers()
 	ammo_in_mag = mag_size
+	_burst_bloom = 0.0
+	_was_first_shot = true
 
 
 func _load_weapon_stats() -> void:
@@ -83,7 +92,7 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.012
 			is_automatic = true
 			bullet_speed_mps = 135.0
-			bullet_gravity_scale = 1.0
+			bullet_gravity_scale = 0.0
 		WeaponKind.MG:
 			weapon_name = "Heavy Machine Gun"
 			base_damage_max = 15.0
@@ -98,7 +107,7 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.016
 			is_automatic = true
 			bullet_speed_mps = 145.0
-			bullet_gravity_scale = 1.0
+			bullet_gravity_scale = 0.0
 		WeaponKind.SHOTGUN:
 			weapon_name = "Combat Shotgun"
 			base_damage_max = 10.0
@@ -114,7 +123,7 @@ func _load_weapon_stats() -> void:
 			pellet_count = 8
 			is_automatic = false
 			bullet_speed_mps = 105.0
-			bullet_gravity_scale = 1.1
+			bullet_gravity_scale = 0.0
 		WeaponKind.PISTOL:
 			weapon_name = "Service Pistol"
 			base_damage_max = 19.0
@@ -129,7 +138,7 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.022
 			is_automatic = false
 			bullet_speed_mps = 120.0
-			bullet_gravity_scale = 1.0
+			bullet_gravity_scale = 0.0
 		WeaponKind.SNIPER:
 			weapon_name = "Sniper Rifle"
 			base_damage_max = 46.0
@@ -145,7 +154,7 @@ func _load_weapon_stats() -> void:
 			is_automatic = false
 			is_sniper = true
 			bullet_speed_mps = 195.0
-			bullet_gravity_scale = 1.0
+			bullet_gravity_scale = 0.0
 		WeaponKind.KNIFE:
 			weapon_name = "Commando Knife"
 			base_damage_max = 42.0
@@ -233,6 +242,10 @@ func step_timers(delta: float, cmd: InputCmd) -> void:
 	if cooldown_timer > 0.0:
 		cooldown_timer = maxf(0.0, cooldown_timer - delta)
 
+	_burst_bloom = maxf(0.0, _burst_bloom - delta / 0.28)
+	if _burst_bloom <= 0.05:
+		_was_first_shot = true
+
 	if is_reloading:
 		reload_timer -= delta
 		if reload_timer <= 0.0:
@@ -248,6 +261,8 @@ func start_reload() -> void:
 		return
 	is_reloading = true
 	reload_timer = reload_duration
+	_burst_bloom = 0.0
+	_was_first_shot = true
 	ammo_changed.emit(ammo_in_mag, mag_size, true)
 
 
@@ -263,6 +278,9 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 		start_reload()
 		return false
 
+	_was_first_shot = (_burst_bloom <= 0.05)
+	_burst_bloom = minf(1.0, _burst_bloom + 0.20)
+
 	cooldown_timer = fire_interval
 	if not is_melee:
 		ammo_in_mag -= 1
@@ -270,6 +288,21 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 		if ammo_in_mag == 0:
 			start_reload()
 	return true
+
+
+func is_first_shot() -> bool:
+	return _was_first_shot or _burst_bloom <= 0.05
+
+
+func reset_weapon() -> void:
+	ammo_in_mag = mag_size
+	is_reloading = false
+	reload_timer = 0.0
+	cooldown_timer = 0.0
+	_burst_bloom = 0.0
+	_was_first_shot = true
+	_prev_fire_held = false
+	ammo_changed.emit(ammo_in_mag, mag_size, false)
 
 
 func compute_falloff_damage(distance_m: float, is_headshot: bool, bonus_mult: float = 1.0) -> int:
@@ -281,7 +314,12 @@ func compute_falloff_damage(distance_m: float, is_headshot: bool, bonus_mult: fl
 	return maxi(1, int(roundf(dmg)))
 
 
-func get_aim_origin_and_dir(cmd: InputCmd, space_state: PhysicsDirectSpaceState3D = null) -> Dictionary:
+func get_aim_origin_and_dir(
+	cmd: InputCmd,
+	space_state: PhysicsDirectSpaceState3D = null,
+	lag_comp: LagCompensator = null,
+	heroes_by_id: Dictionary = {}
+) -> Dictionary:
 	var crouch: bool = owner_hero != null and owner_hero.is_crouching
 	var eye_offset: float = 1.05 if crouch else 1.52
 	if owner_hero == null:
@@ -304,14 +342,18 @@ func get_aim_origin_and_dir(cmd: InputCmd, space_state: PhysicsDirectSpaceState3
 	var fwd_vec: Vector3 = (-aim_basis.z).normalized()
 	var origin: Vector3 = hero_pos + Vector3(0.0, eye_offset, 0.0) + right_vec * 0.24 - fwd_vec * 0.25
 
-	var max_conv_dist: float = 180.0
-	var target_pt: Vector3 = cam_origin + cam_dir * 85.0
+	var convergence_range: float = minf(max_range_m, 260.0)
+	var pivot_pt: Vector3 = cam_ray.get("pivot", cam_origin)
+	var spring_len: float = float(cam_ray.get("spring_length", 0.0))
+	var min_dist: float = maxf(1.4, spring_len + 0.45)
+
+	var best_hit_dist: float = convergence_range
+	var target_pt: Vector3 = cam_origin + cam_dir * convergence_range
+
 	if space_state != null:
-		target_pt = cam_origin + cam_dir * max_conv_dist
-		var pivot_pt: Vector3 = cam_ray.get("pivot", cam_origin)
-		var spring_len: float = float(cam_ray.get("spring_length", 0.0))
-		var ray_end: Vector3 = cam_origin + cam_dir * max_conv_dist
-		var query := PhysicsRayQueryParameters3D.create(pivot_pt, ray_end, 1 | 2 | 8 | 64)
+		var ray_end: Vector3 = cam_origin + cam_dir * convergence_range
+		var mask: int = (1 | 8 | 64) if lag_comp != null else (1 | 2 | 8 | 64)
+		var query := PhysicsRayQueryParameters3D.create(pivot_pt, ray_end, mask)
 		query.hit_from_inside = true
 		var excludes: Array[RID] = [owner_hero.get_rid()]
 		if in_vehicle and owner_hero.is_inside_tree():
@@ -323,11 +365,29 @@ func get_aim_origin_and_dir(cmd: InputCmd, space_state: PhysicsDirectSpaceState3
 		if not hit.is_empty():
 			var hit_pos: Vector3 = hit["position"]
 			var dist_from_cam: float = (hit_pos - cam_origin).dot(cam_dir)
-			var min_dist: float = maxf(2.2, spring_len + 0.8)
-			if dist_from_cam < min_dist:
-				target_pt = cam_origin + cam_dir * min_dist
-			else:
+			if dist_from_cam < best_hit_dist:
+				best_hit_dist = dist_from_cam
 				target_pt = hit_pos
+
+	if lag_comp != null and best_hit_dist - spring_len > 0.001:
+		var hero_hit: Dictionary = lag_comp.find_closest_rewound_hero_hit(
+			owner_hero,
+			pivot_pt,
+			cam_dir,
+			best_hit_dist - spring_len,
+			cmd.view_interp_tick_delta,
+			NetworkManager.server_tick,
+			heroes_by_id
+		)
+		if bool(hero_hit.get("hit", false)):
+			var h_pos: Vector3 = hero_hit["pos"]
+			var dist_from_cam: float = (h_pos - cam_origin).dot(cam_dir)
+			if dist_from_cam < best_hit_dist:
+				best_hit_dist = dist_from_cam
+				target_pt = h_pos
+
+	if best_hit_dist < min_dist:
+		target_pt = cam_origin + cam_dir * min_dist
 
 	var dir: Vector3 = (target_pt - origin).normalized()
 	return {"origin": origin, "dir": dir}

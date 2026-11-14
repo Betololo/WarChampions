@@ -57,6 +57,7 @@ var _wheels: Array[Node3D] = []
 var _driver_fire_cd: float = 0.0
 var _last_heroes_by_id: Dictionary = {}
 var _damage_smoke_timer: float = 0.0
+var _roadkill_cooldowns: Dictionary = {}
 
 
 static func is_hero_enclosed(hero: HeroCharacter, vehicles_by_id: Dictionary) -> bool:
@@ -135,6 +136,16 @@ func _seat_world_pos(s: SeatSlot) -> Vector3:
 	return transform * off
 
 
+## Returns the precise world seat position for an occupant hero.
+func get_seat_world_pos_for_hero(hero: HeroCharacter) -> Vector3:
+	if hero == null:
+		return global_position if is_inside_tree() else position
+	var seat: SeatSlot = get_seat(hero.current_seat_index)
+	if seat != null:
+		return _seat_world_pos(seat)
+	return global_position if is_inside_tree() else position
+
+
 func _place_hero_at(hero: HeroCharacter, world_pos: Vector3, vel: Vector3) -> void:
 	if hero.is_inside_tree():
 		hero.global_position = world_pos
@@ -152,6 +163,8 @@ func _sync_hero_seat_state(hero: HeroCharacter, s: SeatSlot) -> void:
 	hero.current_seat_can_shoot = s.can_shoot
 	if s.follow_turret:
 		_sync_turret_occupant_facing(hero)
+	elif hero.has_method("_sync_seated_visual_transform"):
+		hero._sync_seated_visual_transform(self)
 
 
 func _sync_turret_occupant_facing(hero: HeroCharacter) -> void:
@@ -323,6 +336,7 @@ func _respawn_vehicle() -> void:
 	is_destroyed = false
 	hp = max_hp
 	_damage_smoke_timer = 0.0
+	_roadkill_cooldowns.clear()
 	for s in seats:
 		s.occupant_id = -1
 	global_transform = spawn_transform
@@ -356,6 +370,204 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 
 func _drive_physics(_driver: HeroCharacter, _delta: float, _context: Dictionary) -> void:
 	pass
+
+
+## Unified arcade chassis physics: aggressive lateral slip cancellation, snappy yaw turning, and responsive throttle.
+func _apply_arcade_drive(
+	delta: float,
+	cmd: InputCmd,
+	max_speed: float,
+	accel: float,
+	turn_rate: float,
+	lateral_grip: float,
+	idle_drag: float,
+	reverse_mult: float = 0.65
+) -> void:
+	var basis_ref: Basis = global_transform.basis if is_inside_tree() else transform.basis
+	var forward_3d: Vector3 = -basis_ref.z
+	var right_3d: Vector3 = basis_ref.x
+	var flat_fwd: Vector3 = Vector3(forward_3d.x, 0.0, forward_3d.z)
+	var flat_right: Vector3 = Vector3(right_3d.x, 0.0, right_3d.z)
+	if flat_fwd.length_squared() > 0.001:
+		flat_fwd = flat_fwd.normalized()
+	else:
+		flat_fwd = -Vector3.FORWARD
+	if flat_right.length_squared() > 0.001:
+		flat_right = flat_right.normalized()
+	else:
+		flat_right = Vector3.RIGHT
+
+	var cur_vy: float = linear_velocity.y
+	var fwd_speed: float = linear_velocity.dot(flat_fwd)
+	var side_speed: float = linear_velocity.dot(flat_right)
+
+	# Aggressively cancel lateral slip so vehicle tracks strictly where pointed
+	side_speed = lerpf(side_speed, 0.0, minf(1.0, lateral_grip * delta))
+
+	var throttle: float = -cmd.move_dir.y if cmd != null else 0.0
+	var steer: float = -cmd.move_dir.x if cmd != null else 0.0
+
+	var is_tank: bool = (vehicle_type == VehicleType.TANK)
+	var steer_factor: float = 1.0
+	var dir_sign: float = 1.0
+	if not is_tank:
+		if throttle < -0.1 and fwd_speed < -0.5:
+			dir_sign = -1.0
+		steer_factor = clampf(maxf(absf(throttle), absf(fwd_speed) / 3.5), 0.45, 1.0)
+
+	var target_yaw_rate: float = steer * turn_rate * steer_factor * dir_sign
+	angular_velocity.y = lerpf(angular_velocity.y, target_yaw_rate, minf(1.0, 10.0 * delta))
+	angular_velocity.x = lerpf(angular_velocity.x, 0.0, minf(1.0, 10.0 * delta))
+	angular_velocity.z = lerpf(angular_velocity.z, 0.0, minf(1.0, 10.0 * delta))
+
+	rotation.x = lerpf(rotation.x, 0.0, minf(1.0, 6.0 * delta))
+	rotation.z = lerpf(rotation.z, 0.0, minf(1.0, 6.0 * delta))
+
+	if absf(throttle) > 0.05:
+		if throttle > 0.0:
+			var target_fwd: float = max_speed * throttle
+			if fwd_speed < target_fwd:
+				fwd_speed = minf(target_fwd, fwd_speed + accel * delta)
+			elif fwd_speed < 0.0:
+				fwd_speed = minf(0.0, fwd_speed + accel * 1.5 * delta)
+		else:
+			var max_rev: float = max_speed * reverse_mult
+			var target_rev: float = -max_rev * (-throttle)
+			if fwd_speed > 0.5:
+				fwd_speed = maxf(0.0, fwd_speed - accel * 1.4 * delta)
+			elif fwd_speed > target_rev:
+				fwd_speed = maxf(target_rev, fwd_speed - accel * reverse_mult * delta)
+	else:
+		fwd_speed = lerpf(fwd_speed, 0.0, minf(1.0, idle_drag * delta))
+
+	linear_velocity = flat_fwd * fwd_speed + flat_right * side_speed + Vector3.UP * cur_vy
+
+
+## Upward step/curb climb assist for ground vehicles (Jeep, Tank).
+func _assist_curb_climb(throttle: float, lookahead_z: float, max_step: float = 0.55) -> void:
+	if absf(throttle) <= 0.05 or not is_inside_tree():
+		return
+	# Do not apply step lift if the vehicle is already rising
+	if linear_velocity.y >= 1.5:
+		return
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return
+
+	var basis_ref: Basis = global_transform.basis
+	var forward: Vector3 = -basis_ref.z
+	var drive_dir: Vector3 = (forward if throttle > 0.0 else -forward)
+	drive_dir.y = 0.0
+	if drive_dir.length_squared() < 0.001:
+		return
+	drive_dir = drive_dir.normalized()
+
+	var ray_dist: float = lookahead_z + 0.45
+	var low_start: Vector3 = global_position + Vector3(0.0, 0.18, 0.0)
+	var low_end: Vector3 = low_start + drive_dir * ray_dist
+
+	var low_query := PhysicsRayQueryParameters3D.create(low_start, low_end, 1 | 64, [get_rid()])
+	var low_hit: Dictionary = space.intersect_ray(low_query)
+	if low_hit.is_empty():
+		return
+
+	var low_norm: Vector3 = low_hit.get("normal", Vector3.UP)
+	# Require a steep step face; gentle driveable ramps/slopes (abs(norm.y) >= 0.45) do not need assist
+	if absf(low_norm.y) >= 0.45:
+		return
+
+	var hit_pos: Vector3 = low_hit.get("position", Vector3.ZERO)
+	var dist_to_hit: float = (hit_pos - low_start).length()
+	if dist_to_hit > lookahead_z + 0.15:
+		return
+
+	var up_start: Vector3 = global_position + Vector3(0.0, 0.65, 0.0)
+	var up_end: Vector3 = up_start + drive_dir * (dist_to_hit + 0.35)
+	var up_query := PhysicsRayQueryParameters3D.create(up_start, up_end, 1 | 64, [get_rid()])
+	var up_hit: Dictionary = space.intersect_ray(up_query)
+	if not up_hit.is_empty():
+		return
+
+	# Downward probe from ahead to find exact step top surface
+	var top_probe_start: Vector3 = hit_pos + drive_dir * 0.30 + Vector3(0.0, max_step + 0.20, 0.0)
+	var top_probe_end: Vector3 = hit_pos + drive_dir * 0.30 - Vector3(0.0, 0.20, 0.0)
+	var top_query := PhysicsRayQueryParameters3D.create(top_probe_start, top_probe_end, 1 | 64, [get_rid()])
+	var top_hit: Dictionary = space.intersect_ray(top_query)
+	if top_hit.is_empty() or top_hit.get("normal", Vector3.ZERO).y < 0.60:
+		return
+
+	var step_top_y: float = float(top_hit.get("position", Vector3.ZERO).y)
+	var step_h: float = step_top_y - global_position.y
+
+	# Require valid curb height and ensure vehicle is still below the step top (+0.04 margin)
+	if step_h < 0.06 or step_h > max_step or global_position.y >= step_top_y + 0.04:
+		return
+
+	# Bounded step lift proportional to step height
+	var target_vy: float = minf(2.8, sqrt(2.0 * 9.8 * step_h) + 0.65)
+	linear_velocity.y = maxf(linear_velocity.y, target_vy)
+	linear_velocity += drive_dir * 0.8
+
+
+## Shared high-speed roadkill logic for ground, water, and skimming vehicles.
+func _process_roadkill(driver: HeroCharacter, context: Dictionary, half_extents: Vector2, min_speed: float = 5.5) -> void:
+	if driver == null or is_destroyed:
+		return
+	var spd: float = linear_velocity.length()
+	var horiz_spd: float = Vector2(linear_velocity.x, linear_velocity.z).length()
+	var eff_spd: float = maxf(spd, horiz_spd)
+	if eff_spd < min_speed:
+		return
+
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
+	if heroes_by_id.is_empty():
+		return
+
+	var now_sec: float = float(Time.get_ticks_msec()) * 0.001
+	var inv_xform: Transform3D = global_transform.affine_inverse() if is_inside_tree() else transform.affine_inverse()
+
+	for hid in heroes_by_id.keys():
+		var h: HeroCharacter = heroes_by_id[hid] as HeroCharacter
+		if h == null or not is_instance_valid(h):
+			continue
+		if h.is_defeated:
+			continue
+		if h.current_vehicle_id >= 0:
+			continue
+		if h.team == driver.team:
+			continue
+
+		if now_sec < float(_roadkill_cooldowns.get(h.entity_id, 0.0)):
+			continue
+
+		var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
+		var lp: Vector3 = inv_xform * h_pos
+
+		var in_x: bool = absf(lp.x) <= half_extents.x + 0.65
+		var in_y: bool = lp.y >= -0.9 and lp.y <= 2.4
+		var sweep_ahead: float = maxf(0.85, eff_spd * 0.035 + 0.3)
+		var in_z: bool = absf(lp.z) <= half_extents.y + sweep_ahead
+
+		if in_x and in_y and in_z:
+			_roadkill_cooldowns[h.entity_id] = now_sec + 0.45
+			var dmg: int = maxi(int(float(h.max_hp) * 1.25), int(eff_spd * 15.0))
+			h.apply_damage_server(dmg, driver.entity_id, true)
+
+			var hit_dir: Vector3 = (h_pos - global_position).normalized()
+			if hit_dir.length_squared() < 0.01:
+				hit_dir = -global_transform.basis.z
+			var fling_dir: Vector3 = (hit_dir + linear_velocity.normalized() * 1.2 + Vector3.UP * 0.85).normalized()
+			var fling_speed: float = maxf(14.0, eff_spd * 1.1)
+			h.apply_knockback(fling_dir * fling_speed)
+
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": h_pos + Vector3(0.0, 0.9, 0.0),
+				"kind": "blood",
+				"attacker_id": driver.entity_id,
+				"victim_id": h.entity_id,
+				"damage": dmg,
+				"headshot": false,
+			})
 
 
 func _enforce_remote_freeze() -> bool:

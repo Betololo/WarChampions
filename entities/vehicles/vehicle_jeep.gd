@@ -2,9 +2,11 @@ class_name VehicleJeep
 extends VehicleBase
 
 ## High-speed Recon Jeep: 1 Driver + 2 rear Passengers who fire weapons & skills freely, plus high-speed roadkill!
-const MAX_SPEED: float = 26.0
-const ACCEL: float = 28.0
-const STEER_TORQUE: float = 4.2
+const MAX_SPEED: float = 28.0
+const ACCEL: float = 42.0
+const STEER_RATE: float = 3.2
+const LATERAL_GRIP: float = 13.0
+const IDLE_DRAG: float = 4.0
 
 
 func _setup_vehicle_stats_and_seats() -> void:
@@ -18,48 +20,30 @@ func _setup_vehicle_stats_and_seats() -> void:
 
 
 func _build_vehicle_mesh() -> void:
-	var col := CollisionShape3D.new()
+	# Main hull box with elevated belly clearance (bottom y = 0.55m, top y = 1.07m <= 1.10m)
+	var col_hull := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(2.3, 1.3, 4.4)
-	col.shape = box
-	col.position = Vector3(0.0, 0.9, 0.0)
-	add_child(col)
+	box.size = Vector3(2.1, 0.52, 4.0)
+	col_hull.shape = box
+	col_hull.position = Vector3(0.0, 0.81, 0.0)
+	add_child(col_hull)
+
+	# 4 rounded wheel skids (y = 0.0..0.85) at corners so curbs & steps roll up curved radius naturally
+	for wx in [-0.95, 0.95]:
+		for wz in [-1.45, 1.45]:
+			var col_w := CollisionShape3D.new()
+			var sph := SphereShape3D.new()
+			sph.radius = 0.425
+			col_w.shape = sph
+			col_w.position = Vector3(wx, 0.425, wz)
+			add_child(col_w)
+
 	_apply_built_visuals(VehicleMeshBuilder.build_jeep_visuals(_visual_root, team))
 
 
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:
-	var forward: Vector3 = -global_transform.basis.z
-	var flat_fwd := Vector3(forward.x, 0.0, forward.z).normalized()
-	if driver != null:
-		var cmd: InputCmd = driver.latest_server_input
-		var throttle: float = -cmd.move_dir.y
-		var steer: float = -cmd.move_dir.x
-		var cur_fwd_speed: float = linear_velocity.dot(flat_fwd)
-		if absf(throttle) > 0.05 and absf(cur_fwd_speed) < MAX_SPEED:
-			apply_central_force(flat_fwd * throttle * ACCEL * mass)
-		if absf(steer) > 0.05:
-			var speed_factor: float = clampf(linear_velocity.length() / 5.0, 0.35, 1.0)
-			var dir_sign: float = 1.0 if cur_fwd_speed >= -0.5 else -1.0
-			angular_velocity.y = lerpf(angular_velocity.y, steer * STEER_TORQUE * speed_factor * dir_sign, 8.0 * delta)
-	else:
-		linear_velocity.x = lerpf(linear_velocity.x, 0.0, 2.5 * delta)
-		linear_velocity.z = lerpf(linear_velocity.z, 0.0, 2.5 * delta)
-
-	# Keep upright arcade stability
-	rotation.x = lerpf(rotation.x, 0.0, 6.0 * delta)
-	rotation.z = lerpf(rotation.z, 0.0, 6.0 * delta)
-
-	# Roadkill check at high speed
-	var spd: float = linear_velocity.length()
-	if spd > 10.0:
-		var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-		for id_key in heroes_by_id.keys():
-			var h: HeroCharacter = heroes_by_id[id_key]
-			if h == null or h.is_defeated or h.current_vehicle_id >= 0:
-				continue
-			if driver != null and h.team == driver.team:
-				continue
-			if h.global_position.distance_to(global_position) <= 2.9:
-				var driver_id: int = driver.entity_id if driver != null else -1
-				h.apply_damage_server(int(spd * 4.5), driver_id, true)
-				h.apply_knockback((h.global_position - global_position + Vector3(0.0, 0.6, 0.0)).normalized() * spd * 0.9)
+	var cmd: InputCmd = driver.latest_server_input if driver != null else null
+	_apply_arcade_drive(delta, cmd, MAX_SPEED, ACCEL, STEER_RATE, LATERAL_GRIP, IDLE_DRAG, 0.65)
+	var throttle: float = -cmd.move_dir.y if cmd != null else 0.0
+	_assist_curb_climb(throttle, 2.2, 0.55)
+	_process_roadkill(driver, context, Vector2(1.15, 2.2), 5.5)

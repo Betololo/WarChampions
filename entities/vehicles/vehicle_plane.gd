@@ -15,19 +15,29 @@ func _setup_vehicle_stats_and_seats() -> void:
 	hp = 340
 	mass = 1400.0
 	gravity_scale = 1.0
-	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.92, -0.15), false, false, true, "sit")
+	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.92, -0.15), false, false, false, "sit")
 	# Wing-Riding slots on Left & Right wings!
 	_add_seat(SeatType.WING_RIDER, Vector3(-3.3, 1.05, 0.15), true, true, false, "stand")
 	_add_seat(SeatType.WING_RIDER, Vector3(3.3, 1.05, 0.15), true, true, false, "stand")
 
 
 func _build_vehicle_mesh() -> void:
-	var col := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = Vector3(8.5, 1.6, 5.8)
-	col.shape = box
-	col.position = Vector3(0.0, 0.9, 0.0)
-	add_child(col)
+	# Slender lower fuselage collider (leaving open cockpit bay y > 0.98m unobstructed)
+	var col_fuse := CollisionShape3D.new()
+	var box_fuse := BoxShape3D.new()
+	box_fuse.size = Vector3(1.05, 0.72, 5.6)
+	col_fuse.shape = box_fuse
+	col_fuse.position = Vector3(0.0, 0.62, 0.0)
+	add_child(col_fuse)
+
+	# Thin wings collider
+	var col_wings := CollisionShape3D.new()
+	var box_wings := BoxShape3D.new()
+	box_wings.size = Vector3(8.5, 0.34, 2.0)
+	col_wings.shape = box_wings
+	col_wings.position = Vector3(0.0, 0.86, 0.0)
+	add_child(col_wings)
+
 	_apply_built_visuals(VehicleMeshBuilder.build_plane_visuals(_visual_root, team))
 
 
@@ -58,6 +68,10 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 		var lift_y: float = 0.0 if cur_speed >= TAKEOFF_SPEED else -4.0
 		linear_velocity = forward * cur_speed + Vector3(0.0, lift_y, 0.0)
 		angular_velocity = Vector3.ZERO
+
+		# Roadkill check when skimming near ground
+		if global_position.y < 4.5:
+			_process_roadkill(driver, context, Vector2(1.4, 2.8), 12.0)
 
 		# Dual front MGs
 		if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:

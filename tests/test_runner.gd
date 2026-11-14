@@ -30,6 +30,7 @@ func _ready() -> void:
 	await _test_sfx_priority_and_bot_anti_wallhack()
 	_test_parachute_delay_death_collapse_and_knockback()
 	_test_smooth_sync_packet_sequencing_and_menus()
+	await _test_step_climb_vehicle_arcade_and_roadkill()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -497,6 +498,79 @@ func _test_vehicle_protection_destruction_and_hud() -> void:
 	smg.fire_server(j_cmd, {"lag_compensator": lc, "heroes_by_id": j_heroes})
 	_assert(j_pass.hp < pass_hp_before, "Open Jeep passenger takes direct gunfire while seated (%d -> %d HP)" % [pass_hp_before, j_pass.hp])
 
+	# Static wall in front of open Jeep MUST block gunfire cleanly
+	var block_wall := StaticBody3D.new()
+	block_wall.collision_layer = 1
+	var bw_col := CollisionShape3D.new()
+	var bw_box := BoxShape3D.new()
+	bw_box.size = Vector3(8.0, 6.0, 0.6)
+	bw_col.shape = bw_box
+	block_wall.add_child(bw_col)
+	var mid_pt: Vector3 = (shooter.global_position + j_pass.global_position) * 0.5
+	add_child(block_wall)
+	block_wall.global_position = Vector3(mid_pt.x, 1.5, mid_pt.z)
+	block_wall.look_at(Vector3(j_pass.global_position.x, 1.5, j_pass.global_position.z), Vector3.UP)
+	await get_tree().physics_frame
+	var aim_wall: Dictionary = smg.get_aim_origin_and_dir(j_cmd, get_viewport().get_world_3d().direct_space_state, lc, j_heroes)
+	var wall_trace: Dictionary = lc.trace_rewound_ray(shooter, aim_wall["origin"], aim_wall["dir"], 80.0, 0, NetworkManager.server_tick, j_heroes, get_viewport().get_world_3d())
+	var pass_hp_walled: int = j_pass.hp
+	smg.fire_server(j_cmd, {"lag_compensator": lc, "heroes_by_id": j_heroes})
+	_assert(
+		bool(wall_trace.get("hit", false)) and int(wall_trace.get("target_hero_id", -1)) == -1 and wall_trace.get("target_object", null) == null and j_pass.hp == pass_hp_walled,
+		"Static wall in front of open Jeep cleanly blocks gunfire (hit=%s, target_hero=%d, hp unchanged %d==%d)" % [str(wall_trace.get("hit", false)), int(wall_trace.get("target_hero_id", -1)), j_pass.hp, pass_hp_walled]
+	)
+	block_wall.free()
+
+	# Seated Fighter Plane pilot CAN take direct gunfire (open cockpit)
+	var test_plane := VehiclePlane.new()
+	test_plane.id = 82
+	test_plane.team = NetworkManager.TEAM_NATIONAL
+	add_child(test_plane)
+	test_plane.global_position = Vector3(18.0, 0.0, -18.0)
+	var p_pilot := HeroCharacter.new()
+	p_pilot.setup_identity(806, "Pilot", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(p_pilot)
+	_assert(test_plane.try_enter_hero(p_pilot) == 0 and not test_plane.seats[0].is_enclosed, "Fighter plane pilot seat is open and occupied")
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 22
+	var p_heroes := {802: shooter, 806: p_pilot}
+	lc.record_frame(22, p_heroes)
+	var aim_to_pilot: Vector3 = (p_pilot.global_position + Vector3(0.0, 1.40, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var p_cmd := InputCmd.new()
+	p_cmd.aim_yaw = atan2(-aim_to_pilot.x, -aim_to_pilot.z)
+	p_cmd.aim_pitch = atan2(aim_to_pilot.y, Vector2(aim_to_pilot.x, aim_to_pilot.z).length())
+	var pilot_hp_before: int = p_pilot.hp
+	smg.fire_server(p_cmd, {"lag_compensator": lc, "heroes_by_id": p_heroes})
+	_assert(p_pilot.hp < pilot_hp_before, "Seated Plane Pilot takes direct gunfire damage in open cockpit (%d -> %d HP)" % [pilot_hp_before, p_pilot.hp])
+	test_plane.exit_hero(p_pilot)
+	test_plane.free()
+	p_pilot.free()
+
+	# Seated Aquatic Boat driver CAN take direct gunfire (open helm)
+	var test_boat := VehicleBoat.new()
+	test_boat.id = 83
+	test_boat.team = NetworkManager.TEAM_NATIONAL
+	add_child(test_boat)
+	test_boat.global_position = Vector3(22.0, 0.0, -18.0)
+	var b_driver := HeroCharacter.new()
+	b_driver.setup_identity(807, "BoatDriver", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(b_driver)
+	_assert(test_boat.try_enter_hero(b_driver) == 0 and not test_boat.seats[0].is_enclosed, "Boat driver seat is open and occupied")
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 23
+	var b_heroes := {802: shooter, 807: b_driver}
+	lc.record_frame(23, b_heroes)
+	var aim_to_boat: Vector3 = (b_driver.global_position + Vector3(0.0, 1.40, 0.0)) - (shooter.global_position + Vector3(0.0, 1.52, 0.0))
+	var b_cmd := InputCmd.new()
+	b_cmd.aim_yaw = atan2(-aim_to_boat.x, -aim_to_boat.z)
+	b_cmd.aim_pitch = atan2(aim_to_boat.y, Vector2(aim_to_boat.x, aim_to_boat.z).length())
+	var boat_driver_hp_before: int = b_driver.hp
+	smg.fire_server(b_cmd, {"lag_compensator": lc, "heroes_by_id": b_heroes})
+	_assert(b_driver.hp < boat_driver_hp_before, "Seated Boat Driver takes direct gunfire damage at open helm (%d -> %d HP)" % [boat_driver_hp_before, b_driver.hp])
+	test_boat.exit_hero(b_driver)
+	test_boat.free()
+	b_driver.free()
+
 	# Client reconciliation toggles vehicle camera & snaps position on enter/exit
 	var client_hero := HeroCharacter.new()
 	client_hero.setup_identity(805, "RemoteClient", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
@@ -634,6 +708,36 @@ func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
 		if CartoonAssets.get_texture(sk) == null:
 			all_ok = false
 	_assert(all_ok, "CartoonAssets procedurally generates all BFH flags, portraits & hotbar sprites")
+
+	# Verify all 8 weapon icon textures are 96x64 with non-zero opaque pixels
+	var all_w_icons_ok: bool = true
+	for w_i in range(8):
+		var tex := CartoonAssets.get_texture("icon_weapon_%d" % w_i)
+		if tex == null or tex.get_width() != 96 or tex.get_height() != 64:
+			all_w_icons_ok = false
+			break
+		var img := tex.get_image()
+		var has_pixels: bool = false
+		for py in range(64):
+			for px in range(96):
+				if img.get_pixel(px, py).a > 0.1:
+					has_pixels = true
+					break
+			if has_pixels:
+				break
+		if not has_pixels:
+			all_w_icons_ok = false
+			break
+	_assert(all_w_icons_ok, "CartoonAssets generates high-crisp 96x64 weapon icons with distinct silhouettes for all 8 weapons")
+
+	# Verify all 8 HeroMeshBuilder.build_weapon_mesh variants generate non-empty meshes
+	var all_w_meshes_ok: bool = true
+	for w_i in range(8):
+		var w_node := HeroMeshBuilder.build_weapon_mesh(w_i)
+		if w_node == null or w_node.get_child_count() == 0:
+			all_w_meshes_ok = false
+		w_node.free()
+	_assert(all_w_meshes_ok, "HeroMeshBuilder builds multi-part sculpted 3D weapon meshes across all 8 weapon archetypes")
 
 
 func _test_hero_visuals_camera_and_audio() -> void:
@@ -953,7 +1057,7 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 		"Bazooka rocket (y=%.2f, vy=%.2f) and Tank shell (y=%.2f, vy=%.2f) drop along parabolic path" % [rocket.global_position.y, rocket.velocity.y, shell.global_position.y, shell.velocity.y]
 	)
 
-	# 3. Verify all firearm classes have ballistic drop stats and HitscanWeapon emits shot_vfx arcs
+	# 3. Verify all firearm classes have zero bullet gravity (pure hitscan) and HitscanWeapon emits straight shot_vfx arcs
 	var firearm_kinds: Array[int] = [
 		WeaponBase.WeaponKind.SMG,
 		WeaponBase.WeaponKind.MG,
@@ -961,20 +1065,34 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 		WeaponBase.WeaponKind.PISTOL,
 		WeaponBase.WeaponKind.SNIPER,
 	]
-	var all_ballistic: bool = true
+	var all_zero_gravity: bool = true
 	for fk in firearm_kinds:
 		var fw := HitscanWeapon.new()
 		fw.configure(shooter, fk, NetworkManager.ARCHETYPE_BALANCED)
-		if fw.bullet_speed_mps <= 0.0 or fw.bullet_gravity_scale <= 0.0:
-			all_ballistic = false
+		if fw.bullet_gravity_scale != 0.0:
+			all_zero_gravity = false
 		if fk == WeaponBase.WeaponKind.SNIPER:
 			fw.spread_rad = 0.0
 			fw.fire_server(InputCmd.new(), {"lag_compensator": lc, "heroes_by_id": {901: shooter}})
 		fw.free()
 	NetworkManager.game_event_received.disconnect(ev_cb)
 
-	_assert(all_ballistic, "All firearm classes (SMG, MG, Shotgun, Pistol, Sniper) configure positive bullet_speed_mps & bullet_gravity_scale")
-	_assert(seen_proj_vfx[0] >= 2 and seen_arcs[0] >= 1, "Projectiles emit proj_vfx (%d) and HitscanWeapon emits curved arcs (%d)" % [seen_proj_vfx[0], seen_arcs[0]])
+	# Test straight pinpoint hitscan hit at long range (150m+) with zero bullet drop
+	var sniper_long := HitscanWeapon.new()
+	sniper_long.configure(shooter, WeaponBase.WeaponKind.SNIPER, NetworkManager.ARCHETYPE_BALANCED)
+	sniper_long.spread_rad = 0.0
+	add_child(sniper_long)
+	var hp_before_high: int = high_target.hp
+	var cmd_long := InputCmd.new()
+	cmd_long.buttons = InputCmd.BTN_AIM
+	cmd_long.aim_pitch = 0.0
+	cmd_long.aim_yaw = 0.0
+	sniper_long.fire_server(cmd_long, {"lag_compensator": lc, "heroes_by_id": {901: shooter, 902: low_target, 903: high_target}})
+	var long_range_hit: bool = high_target.hp < hp_before_high
+	sniper_long.free()
+
+	_assert(all_zero_gravity and long_range_hit, "All firearm classes (SMG, MG, Shotgun, Pistol, Sniper) configure bullet_gravity_scale == 0.0 and hit straight target at 240m (150m+) with zero drop")
+	_assert(seen_proj_vfx[0] >= 2 and seen_arcs[0] >= 1, "Projectiles emit proj_vfx (%d) and HitscanWeapon emits straight shot_vfx arcs (%d)" % [seen_proj_vfx[0], seen_arcs[0]])
 
 	for child in proj_root.get_children():
 		child.free()
@@ -1128,19 +1246,19 @@ func _test_vehicle_sculpted_models_and_animations() -> void:
 	aa.exit_hero(aa_gunner)
 	aa_gunner.free()
 
-	# 6. Verify Plane hollow canopy frame arches, raised crown & tilted wing insignia, plus Boat foredeck/cabin clearance
-	var canopy_front := plane._visual_root.get_node_or_null("CanopyFrameFront") as MeshInstance3D
+	# 6. Verify Plane authentic open cockpit (zero bubble canopy!), coaming & windscreen, tilted wing insignia, and seat enclosure rules
 	var canopy_glass := plane._visual_root.get_node_or_null("CanopyGlass") as MeshInstance3D
+	var cockpit_coaming := plane._visual_root.get_node_or_null("CockpitCoaming") as MeshInstance3D
+	var windscreen := plane._visual_root.get_node_or_null("WindscreenGlass") as MeshInstance3D
 	var royal_roundel := plane._visual_root.get_node_or_null("RoundelOut") as MeshInstance3D
 	var plane_nat := VehiclePlane.new()
 	plane_nat.id = 96
 	plane_nat.team = NetworkManager.TEAM_NATIONAL
 	add_child(plane_nat)
 	var nat_cross := plane_nat._visual_root.get_node_or_null("CrossH") as MeshInstance3D
-	var glass_top_y: float = canopy_glass.position.y + canopy_glass.get_aabb().end.z if canopy_glass != null else 0.0
 	_assert(
-		canopy_front != null and canopy_front.mesh is ArrayMesh and glass_top_y >= 2.48 and royal_roundel != null and absf(royal_roundel.rotation.z) >= 0.039 and royal_roundel.position.y >= 1.095 and nat_cross != null and absf(nat_cross.rotation.z) >= 0.039,
-		"VehiclePlane uses hollow canopy arches, raised bubble crown (%.2fm), and dihedral wing insignia" % glass_top_y
+		canopy_glass == null and cockpit_coaming != null and windscreen != null and royal_roundel != null and absf(royal_roundel.rotation.z) >= 0.039 and royal_roundel.position.y >= 1.095 and nat_cross != null and absf(nat_cross.rotation.z) >= 0.039 and not plane.seats[0].is_enclosed and not boat.seats[0].is_enclosed and tank.seats[0].is_enclosed,
+		"VehiclePlane uses authentic open fighter cockpit (zero CanopyGlass, CockpitCoaming & Windscreen present), and only Tank shields driver"
 	)
 	plane_nat.free()
 
@@ -1276,6 +1394,35 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	# 4. Verify required landmarks, sculpted buildings, watchtowers & 140+ layered trees
 	for lm_name in ["CentralFountain", "Mercadinho", "CoastalLighthouse", "RoyalRunway", "NationalRunway", "ChurchChapel", "Windmill", "RoyalPier", "CentralPier", "NationalPier", "RuinArchPillarL", "RuinArchPillarR", "BuntingPost_-36_N", "BuntingPost_36_S", "MainRiverBridge", "SouthRiverBridge", "RiverTownDock", "RiverNorthDock", "Fazenda", "NorthOrchardBarn"]:
 		_assert(map.get_node_or_null(lm_name) != null, "Landmark '%s' exists on map" % lm_name)
+
+	# Verify CentralFountain genuine animated water + GPUParticles3D streams (zero static water cylinders)
+	var fountain := map.get_node_or_null("CentralFountain")
+	_assert(fountain != null, "CentralFountain landmark exists")
+	if fountain != null:
+		var lower_w := fountain.get_node_or_null("LowerWater") as MeshInstance3D
+		var upper_w := fountain.get_node_or_null("UpperWater") as MeshInstance3D
+		_assert(lower_w != null and lower_w.material_override is ShaderMaterial, "CentralFountain LowerWater uses animated ShaderMaterial")
+		_assert(upper_w != null and upper_w.material_override is ShaderMaterial, "CentralFountain UpperWater uses animated ShaderMaterial")
+
+		var plume := fountain.get_node_or_null("FountainPlume") as GPUParticles3D
+		_assert(plume != null, "CentralFountain FountainPlume exists")
+
+		var all_jets_ok: bool = true
+		for j_idx in range(4):
+			var jet := fountain.get_node_or_null("FountainJet_%d" % j_idx) as GPUParticles3D
+			var splash := fountain.get_node_or_null("FountainSplash_%d" % j_idx) as GPUParticles3D
+			if jet == null or splash == null:
+				all_jets_ok = false
+		_assert(all_jets_ok, "CentralFountain has 4 FountainJet streams and 4 FountainSplash emitters")
+
+		# Confirm zero frozen static water cylinder arc segments exist
+		var static_water_cyl_count: int = 0
+		for c in fountain.get_children():
+			if c is MeshInstance3D and (c as MeshInstance3D).mesh is CylinderMesh:
+				var cm: CylinderMesh = (c as MeshInstance3D).mesh as CylinderMesh
+				if cm.height >= 0.50 and cm.height <= 0.60 and cm.top_radius < 0.20:
+					static_water_cyl_count += 1
+		_assert(static_water_cyl_count == 0, "CentralFountain has ZERO frozen static water cylinder arc segments (got %d)" % static_water_cyl_count)
 
 	# Boat headroom clearance under MainRiverBridge and SouthRiverBridge (>= 4.5m along river channel)
 	for br_name in ["MainRiverBridge", "SouthRiverBridge"]:
@@ -1691,6 +1838,90 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 		close_dot > 0.7 and (aim_scoped["origin"] as Vector3).distance_to(cam_ray_scoped["origin"] as Vector3) < 0.001,
 		"Close-range convergence clamps forward (dot=%.3f) and scoped Sniper fires pinpoint from FPS eye" % close_dot
 	)
+
+	# 5. First-shot & scoped Sniper crosshair alignment at 140m+ with zero drop
+	var target_145 := HeroCharacter.new()
+	target_145.setup_identity(953, "Target145", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(target_145)
+	target_145.set_physics_process(false)
+
+	var cmd_145 := InputCmd.new()
+	cmd_145.aim_yaw = 0.12
+	cmd_145.aim_pitch = -0.01
+	cmd_145.buttons = InputCmd.BTN_AIM
+	var cam_ray_145: Dictionary = HeroCamera.compute_aim_ray(shooter.global_position, cmd_145.aim_yaw, cmd_145.aim_pitch, true, false, false)
+	var pt_145: Vector3 = (cam_ray_145["origin"] as Vector3) + (cam_ray_145["dir"] as Vector3) * 145.0
+	target_145.global_position = pt_145 - Vector3(0.0, 1.35, 0.0)
+
+	heroes[953] = target_145
+	NetworkManager.server_tick = 45
+	lc.record_frame(45, heroes)
+
+	var aim_145: Dictionary = sniper.get_aim_origin_and_dir(cmd_145, space, lc, heroes)
+	var dist_to_ray_145: float = ((pt_145 - (aim_145["origin"] as Vector3)).cross(aim_145["dir"] as Vector3)).length()
+	var hp_before_145: int = target_145.hp
+	sniper.fire_server(cmd_145, {"lag_compensator": lc, "heroes_by_id": heroes})
+	var hit_145: bool = target_145.hp < hp_before_145
+
+	_assert(
+		hit_145 and dist_to_ray_145 < 0.05,
+		"Scoped Sniper crosshair alignment at 145m (140m+) hits target with zero drop (err=%.4fm, hit=%s)" % [dist_to_ray_145, str(hit_145)]
+	)
+
+	# 6. Zero camera recoil pitch kick on firing (screenshake removed)
+	shooter.trigger_weapon_fire_visual(WeaponBase.WeaponKind.SMG, true)
+	_assert(
+		shooter.hero_camera.recoil_pitch_offset == 0.0,
+		"trigger_weapon_fire_visual(..., apply_camera_kick=true) keeps hero_camera.recoil_pitch_offset == 0.0 (zero screenshake)"
+	)
+
+	# 7. Drain magazines + reload -> defeat -> respawn_at restores full magazines and cancels reload
+	for w in shooter.weapons:
+		var wb := w as WeaponBase
+		wb.ammo_in_mag = 1
+		wb.start_reload()
+		_assert(wb.is_reloading, "Weapon %s entered reloading state" % wb.weapon_name)
+
+	shooter.apply_damage_server(9999, 951, false)
+	_assert(shooter.is_defeated and shooter.collision_layer == 0, "Lethal damage defeats hero and clears collision_layer to 0")
+
+	shooter.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	var all_refilled: bool = (shooter.collision_layer == 2)
+	for w in shooter.weapons:
+		var wb := w as WeaponBase
+		if wb.ammo_in_mag != wb.mag_size or wb.is_reloading or wb.reload_timer > 0.0 or wb.cooldown_timer > 0.0 or wb._burst_bloom > 0.0:
+			all_refilled = false
+	_assert(
+		all_refilled,
+		"respawn_at restores all equipped weapons to full ammo_in_mag == mag_size, cancels reload, and restores collision_layer == 2"
+	)
+
+	# 7b. Remote HeroCharacter push_remote_snapshot clears collision_layer on defeat and restores it on alive
+	var remote_hero := HeroCharacter.new()
+	remote_hero.setup_identity(954, "RemoteTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(remote_hero)
+	remote_hero.push_remote_snapshot(50, 1000.0, {"pos": Vector3.ZERO, "yaw": 0.0, "pitch": 0.0, "vel": Vector3.ZERO, "flags": NetSerializer.SNAP_DEFEATED, "hp": 0})
+	_assert(remote_hero.is_defeated and remote_hero.collision_layer == 0, "push_remote_snapshot clears collision_layer=0 on defeated remote hero")
+	remote_hero.push_remote_snapshot(51, 1050.0, {"pos": Vector3.ZERO, "yaw": 0.0, "pitch": 0.0, "vel": Vector3.ZERO, "flags": 0, "hp": 110})
+	_assert(not remote_hero.is_defeated and remote_hero.collision_layer == 2, "push_remote_snapshot restores collision_layer=2 on respawned remote hero")
+	remote_hero.free()
+
+	# 8. First-shot pinpoint accuracy (spread_mult == 0.0 on first shot with non-zero base spread) & burst bloom decay over 0.28s
+	var test_smg := HitscanWeapon.new()
+	test_smg.configure(shooter, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_BALANCED)
+	_assert(test_smg.is_first_shot() and test_smg.spread_rad > 0.02, "SMG starts with non-zero spread_rad (%.3f) and is_first_shot() == true" % test_smg.spread_rad)
+
+	var cmd_fire := InputCmd.new()
+	cmd_fire.buttons = InputCmd.BTN_FIRE
+	var consumed: bool = test_smg.try_consume_fire(cmd_fire)
+	_assert(consumed and test_smg._burst_bloom > 0.15, "try_consume_fire increments _burst_bloom (got %.2f)" % test_smg._burst_bloom)
+
+	var cmd_idle := InputCmd.new()
+	test_smg.step_timers(0.32, cmd_idle)
+	_assert(test_smg._burst_bloom <= 0.001 and test_smg.is_first_shot(), "step_timers over 0.28s decays _burst_bloom to 0.0 (got %.3f) and restores is_first_shot()" % test_smg._burst_bloom)
+	test_smg.free()
+
+	target_145.free()
 
 	close_wall.free()
 	sniper.free()
@@ -2452,3 +2683,300 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 func _test_scene_compile_and_load() -> void:
 	var main_scene: PackedScene = load("res://scenes/main.tscn")
 	_assert(main_scene != null, "Main scene res://scenes/main.tscn loads cleanly")
+
+
+func _test_step_climb_vehicle_arcade_and_roadkill() -> void:
+	# 1. HeroCharacter climbing a 0.38m vertical BoxShape3D step/curb
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var f_shape := CollisionShape3D.new()
+	var f_box := BoxShape3D.new()
+	f_box.size = Vector3(40.0, 1.0, 40.0)
+	f_shape.shape = f_box
+	floor_body.add_child(f_shape)
+	floor_body.position = Vector3(0.0, -0.5, 0.0)
+	add_child(floor_body)
+
+	var curb_body := StaticBody3D.new()
+	curb_body.collision_layer = 1
+	var c_shape := CollisionShape3D.new()
+	var c_box := BoxShape3D.new()
+	c_box.size = Vector3(10.0, 0.38, 4.0)
+	c_shape.shape = c_box
+	curb_body.add_child(c_shape)
+	# Center y = 0.19 -> top at y = 0.38m, center z = -3.0 -> front face at z = -1.0
+	curb_body.position = Vector3(0.0, 0.19, -3.0)
+	add_child(curb_body)
+
+	await get_tree().physics_frame
+
+	var step_hero := HeroCharacter.new()
+	step_hero.setup_identity(710, "StepHero", 0, 0, 0, false, false)
+	add_child(step_hero)
+	step_hero.global_position = Vector3(0.0, 0.0, -0.4)
+	step_hero.velocity = Vector3.ZERO
+
+	await get_tree().physics_frame
+
+	var walk_cmd := InputCmd.new()
+	walk_cmd.move_dir = Vector2(0.0, -1.0) # Forward (-Z)
+	walk_cmd.aim_yaw = 0.0
+
+	for _i in range(35):
+		step_hero.simulate_movement(walk_cmd, 1.0 / 60.0)
+		step_hero._curr_phys_pos = step_hero.global_position
+
+	_assert(
+		step_hero.global_position.y >= 0.36 and step_hero.global_position.z < -1.1,
+		"HeroCharacter walking across 0.38m curb climbs cleanly onto top (y=%.2fm >= 0.36m, z=%.2fm)" % [step_hero.global_position.y, step_hero.global_position.z]
+	)
+
+	# 2. VehicleJeep climbing a 0.30m curb/step
+	var v_curb := StaticBody3D.new()
+	v_curb.collision_layer = 1
+	var vc_shape := CollisionShape3D.new()
+	var vc_box := BoxShape3D.new()
+	vc_box.size = Vector3(10.0, 0.30, 6.0)
+	vc_shape.shape = vc_box
+	v_curb.add_child(vc_shape)
+	v_curb.position = Vector3(10.0, 0.15, -6.0) # front face at z = -3.0
+	add_child(v_curb)
+
+	var v_driver := HeroCharacter.new()
+	v_driver.setup_identity(711, "JeepClimber", 0, 0, 0, false, false)
+	add_child(v_driver)
+
+	var climb_jeep := VehicleJeep.new()
+	climb_jeep.id = 72
+	add_child(climb_jeep)
+	climb_jeep.global_position = Vector3(10.0, 0.0, -0.5)
+	climb_jeep.try_enter_hero(v_driver)
+
+	await get_tree().physics_frame
+
+	var climb_cmd := InputCmd.new()
+	climb_cmd.move_dir = Vector2(0.0, -1.0)
+	v_driver.latest_server_input = climb_cmd
+
+	# Drive into the curb: test _assist_curb_climb triggers bounded lift and rolls onto curb
+	var lift_detected: bool = false
+	for _i in range(30):
+		climb_jeep.step_vehicle_server(1.0 / 60.0, {711: v_driver}, {})
+		if climb_jeep.linear_velocity.y >= 2.0:
+			lift_detected = true
+		if climb_jeep.global_position.y > 0.0:
+			climb_jeep.linear_velocity.y -= 9.8 * (1.0 / 60.0)
+		climb_jeep.global_position += climb_jeep.linear_velocity * (1.0 / 60.0)
+		if climb_jeep.global_position.z <= -3.0:
+			if climb_jeep.global_position.y < 0.30:
+				climb_jeep.global_position.y = 0.30
+				climb_jeep.linear_velocity.y = maxf(0.0, climb_jeep.linear_velocity.y)
+		elif climb_jeep.global_position.y < 0.0:
+			climb_jeep.global_position.y = 0.0
+			climb_jeep.linear_velocity.y = maxf(0.0, climb_jeep.linear_velocity.y)
+
+	_assert(
+		lift_detected and climb_jeep.global_position.y >= 0.28 and climb_jeep.global_position.y <= 0.72,
+		"VehicleJeep driving into 0.30m curb climbs smoothly onto it (lift=%s, y=%.2fm in [0.28, 0.72])" % [str(lift_detected), climb_jeep.global_position.y]
+	)
+
+	# Verify that driving into a 10-degree ramp does NOT trigger trampoline hopping
+	var ramp_body := StaticBody3D.new()
+	ramp_body.collision_layer = 1
+	var ramp_shape := CollisionShape3D.new()
+	var ramp_box := BoxShape3D.new()
+	ramp_box.size = Vector3(10.0, 0.40, 10.0)
+	ramp_shape.shape = ramp_box
+	ramp_body.add_child(ramp_shape)
+	ramp_body.rotation.x = deg_to_rad(-10.0)
+	ramp_body.position = Vector3(20.0, 0.20, -6.0)
+	add_child(ramp_body)
+
+	var r_driver := HeroCharacter.new()
+	r_driver.setup_identity(719, "RampDriver", 0, 0, 0, false, false)
+	add_child(r_driver)
+
+	var ramp_jeep := VehicleJeep.new()
+	ramp_jeep.id = 78
+	add_child(ramp_jeep)
+	ramp_jeep.global_position = Vector3(20.0, 0.0, -1.0)
+	ramp_jeep.try_enter_hero(r_driver)
+	r_driver.latest_server_input = climb_cmd
+
+	await get_tree().physics_frame
+
+	var ramp_max_vy: float = 0.0
+	for _i in range(25):
+		ramp_jeep.step_vehicle_server(1.0 / 60.0, {719: r_driver}, {})
+		ramp_max_vy = maxf(ramp_max_vy, ramp_jeep.linear_velocity.y)
+		ramp_jeep.global_position += ramp_jeep.linear_velocity * (1.0 / 60.0)
+
+	_assert(
+		ramp_max_vy < 1.0,
+		"VehicleJeep driving up 10-degree ramp does NOT trigger trampoline hopping (max_vy=%.2fm/s < 1.0m/s)" % ramp_max_vy
+	)
+
+	# 3. VehicleJeep & VehicleBoat crisp arcade turning: lateral speed < 25% within 0.35s
+	var test_jeep := VehicleJeep.new()
+	test_jeep.id = 73
+	add_child(test_jeep)
+	test_jeep.global_position = Vector3(-15.0, 0.0, 0.0)
+	# Accelerating forward along -Z, then turn heading by 45 degrees
+	test_jeep.linear_velocity = Vector3(0.0, 0.0, -20.0)
+	test_jeep.rotation.y = PI * 0.25 # Heading rotated by 45 deg
+
+	var fwd_cmd := InputCmd.new()
+	fwd_cmd.move_dir = Vector2(0.0, -1.0) # Holding forward
+
+	for _i in range(21): # 21 ticks = 0.35s at 60Hz
+		test_jeep._apply_arcade_drive(1.0 / 60.0, fwd_cmd, VehicleJeep.MAX_SPEED, VehicleJeep.ACCEL, VehicleJeep.STEER_RATE, VehicleJeep.LATERAL_GRIP, VehicleJeep.IDLE_DRAG, 0.65)
+
+	var jeep_fwd: float = absf(test_jeep.linear_velocity.dot(-test_jeep.global_transform.basis.z.normalized()))
+	var jeep_side: float = absf(test_jeep.linear_velocity.dot(test_jeep.global_transform.basis.x.normalized()))
+	var jeep_slip_ratio: float = jeep_side / maxf(0.1, jeep_fwd)
+	_assert(
+		jeep_slip_ratio < 0.25,
+		"VehicleJeep crisp arcade turning cancels lateral slip (lateral/fwd ratio=%.3f < 0.25 within 0.35s)" % jeep_slip_ratio
+	)
+
+	var test_boat := VehicleBoat.new()
+	test_boat.id = 74
+	add_child(test_boat)
+	test_boat.global_position = Vector3(-25.0, 0.0, 0.0)
+	test_boat.linear_velocity = Vector3(0.0, 0.0, -18.0)
+	test_boat.rotation.y = PI * 0.25
+
+	for _i in range(21):
+		test_boat._apply_arcade_drive(1.0 / 60.0, fwd_cmd, VehicleBoat.MAX_WATER_SPEED, VehicleBoat.ACCEL, VehicleBoat.TURN_RATE, VehicleBoat.LATERAL_GRIP, VehicleBoat.IDLE_DRAG, 0.65)
+
+	var boat_fwd: float = absf(test_boat.linear_velocity.dot(-test_boat.global_transform.basis.z.normalized()))
+	var boat_side: float = absf(test_boat.linear_velocity.dot(test_boat.global_transform.basis.x.normalized()))
+	var boat_slip_ratio: float = boat_side / maxf(0.1, boat_fwd)
+	_assert(
+		boat_slip_ratio < 0.25,
+		"VehicleBoat crisp arcade turning cancels lateral slip (lateral/fwd ratio=%.3f < 0.25 within 0.35s)" % boat_slip_ratio
+	)
+
+	# 4. Seated Jeep Driver visual_root rotates smoothly with turning Jeep
+	var turn_jeep := VehicleJeep.new()
+	turn_jeep.id = 75
+	add_child(turn_jeep)
+	turn_jeep.global_position = Vector3(25.0, 0.0, 0.0)
+	turn_jeep.rotation.y = 1.15 # Turn Jeep body to 1.15 rad
+
+	var seated_driver := HeroCharacter.new()
+	seated_driver.setup_identity(712, "SeatedRotDriver", 0, 0, 0, false, false)
+	add_child(seated_driver)
+	turn_jeep.try_enter_hero(seated_driver)
+
+	seated_driver.aim_yaw = 1.45 # Camera aiming slightly offset
+	seated_driver._process(0.016)
+
+	var yaw_diff: float = absf(angle_difference(seated_driver.visual_root.global_rotation.y, turn_jeep.global_rotation.y))
+	_assert(
+		yaw_diff < 0.05,
+		"Seated Jeep Driver visual_root rotates smoothly with turning Jeep (diff=%.4f rad < 0.05)" % yaw_diff
+	)
+
+	# 5. Moving VehicleJeep & VehicleTank roadkill: defeats enemy at >= 8 m/s, zero friendly fire
+	var rk_driver := HeroCharacter.new()
+	rk_driver.setup_identity(713, "Roadkiller", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_driver)
+
+	var rk_enemy := HeroCharacter.new()
+	rk_enemy.setup_identity(714, "VictimEnemy", NetworkManager.TEAM_NATIONAL, 0, 0, false, false)
+	add_child(rk_enemy)
+	rk_enemy.global_position = Vector3(0.0, 0.0, -14.0)
+
+	var rk_friend := HeroCharacter.new()
+	rk_friend.setup_identity(715, "FriendlyPed", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_friend)
+	rk_friend.global_position = Vector3(0.8, 0.0, -14.0)
+
+	var rk_jeep := VehicleJeep.new()
+	rk_jeep.id = 76
+	rk_jeep.team = NetworkManager.TEAM_ROYAL
+	add_child(rk_jeep)
+	rk_jeep.global_position = Vector3(0.4, 0.0, -12.5) # ~1.5m away from pedestrian
+	rk_jeep.try_enter_hero(rk_driver)
+	rk_jeep.linear_velocity = Vector3(0.0, 0.0, -14.0) # 14 m/s >= 8 m/s
+
+	var heroes_map: Dictionary = {
+		713: rk_driver,
+		714: rk_enemy,
+		715: rk_friend,
+	}
+
+	rk_jeep.step_vehicle_server(1.0 / 60.0, {713: rk_driver}, {"heroes_by_id": heroes_map})
+
+	_assert(
+		rk_enemy.is_defeated and rk_enemy.hp <= 0,
+		"Moving VehicleJeep at >= 8 m/s reliably roadkills enemy pedestrian (enemy hp=%d, defeated=%s)" % [rk_enemy.hp, str(rk_enemy.is_defeated)]
+	)
+	_assert(
+		not rk_friend.is_defeated and rk_friend.hp == rk_friend.max_hp,
+		"Moving VehicleJeep deals 0 roadkill damage to friendly pedestrian (friend hp=%d/%d, defeated=%s)" % [rk_friend.hp, rk_friend.max_hp, str(rk_friend.is_defeated)]
+	)
+
+	# Also verify VehicleTank roadkill
+	var rk_enemy2 := HeroCharacter.new()
+	rk_enemy2.setup_identity(716, "TankVictim", NetworkManager.TEAM_NATIONAL, 0, 0, false, false)
+	add_child(rk_enemy2)
+	rk_enemy2.global_position = Vector3(40.0, 0.0, -14.0)
+
+	var rk_friend2 := HeroCharacter.new()
+	rk_friend2.setup_identity(717, "TankFriend", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_friend2)
+	rk_friend2.global_position = Vector3(40.8, 0.0, -14.0)
+
+	var rk_tank_driver := HeroCharacter.new()
+	rk_tank_driver.setup_identity(718, "TankRoadkiller", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(rk_tank_driver)
+
+	var rk_tank := VehicleTank.new()
+	rk_tank.id = 77
+	rk_tank.team = NetworkManager.TEAM_ROYAL
+	add_child(rk_tank)
+	rk_tank.global_position = Vector3(40.4, 0.0, -12.5)
+	rk_tank.try_enter_hero(rk_tank_driver)
+	rk_tank.linear_velocity = Vector3(0.0, 0.0, -10.0) # 10 m/s >= 8 m/s
+
+	var tank_heroes_map: Dictionary = {
+		718: rk_tank_driver,
+		716: rk_enemy2,
+		717: rk_friend2,
+	}
+
+	rk_tank.step_vehicle_server(1.0 / 60.0, {718: rk_tank_driver}, {"heroes_by_id": tank_heroes_map})
+
+	_assert(
+		rk_enemy2.is_defeated and rk_enemy2.hp <= 0,
+		"Moving VehicleTank at >= 8 m/s reliably roadkills enemy pedestrian (enemy hp=%d, defeated=%s)" % [rk_enemy2.hp, str(rk_enemy2.is_defeated)]
+	)
+	_assert(
+		not rk_friend2.is_defeated and rk_friend2.hp == rk_friend2.max_hp,
+		"Moving VehicleTank deals 0 roadkill damage to friendly pedestrian (friend hp=%d/%d, defeated=%s)" % [rk_friend2.hp, rk_friend2.max_hp, str(rk_friend2.is_defeated)]
+	)
+
+	# Cleanup test nodes
+	floor_body.queue_free()
+	curb_body.queue_free()
+	step_hero.queue_free()
+	v_curb.queue_free()
+	v_driver.queue_free()
+	climb_jeep.queue_free()
+	test_jeep.queue_free()
+	test_boat.queue_free()
+	turn_jeep.queue_free()
+	seated_driver.queue_free()
+	rk_driver.queue_free()
+	rk_enemy.queue_free()
+	rk_friend.queue_free()
+	rk_jeep.queue_free()
+	rk_enemy2.queue_free()
+	rk_friend2.queue_free()
+	rk_tank_driver.queue_free()
+	rk_tank.queue_free()
+	ramp_body.queue_free()
+	r_driver.queue_free()
+	ramp_jeep.queue_free()
