@@ -15,6 +15,9 @@ func _ready() -> void:
 	_test_weapon_archetypes_and_infinite_reserve()
 	_test_classes_skills_status_effects_and_rpg()
 	_test_stealth_visibility_and_shader()
+	_test_conquest_12v12_and_flag_multipliers()
+	_test_vehicles_rear_armor_wing_riding_and_boat()
+	_test_seaside_map_and_12v12_bots_integration()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -282,6 +285,124 @@ func _test_stealth_visibility_and_shader() -> void:
 
 	viewer.free()
 	commando.free()
+
+
+func _test_conquest_12v12_and_flag_multipliers() -> void:
+	var cm := ConquestManager.new()
+	add_child(cm)
+	for i in range(4):
+		var cp := CapturePoint.new()
+		cp.setup(i, "Flag_%d" % i, Vector3(float(i) * 40.0, 0.0, 0.0), -1)
+		add_child(cp)
+		cm.register_capture_point(cp)
+
+	cm.reset_match()
+	_assert(cm.royal_tickets == 50 and cm.national_tickets == 50, "Conquest starts at 50 vs 50 tickets")
+
+	# 1 Royal vs 2 National -> Royal kill deducts 0 National tickets
+	cm.capture_points[0].owner_team = NetworkManager.TEAM_ROYAL
+	cm.capture_points[1].owner_team = NetworkManager.TEAM_NATIONAL
+	cm.capture_points[2].owner_team = NetworkManager.TEAM_NATIONAL
+	var lost_underdog: int = cm.on_player_killed(NetworkManager.TEAM_NATIONAL, NetworkManager.TEAM_ROYAL)
+	_assert(lost_underdog == 0 and cm.national_tickets == 50, "Conquest golden rule: killer with fewer flags deducts 0 tickets")
+
+	# Equal 2 vs 2 -> deducts 1 ticket
+	cm.capture_points[3].owner_team = NetworkManager.TEAM_ROYAL
+	var lost_equal: int = cm.on_player_killed(NetworkManager.TEAM_NATIONAL, NetworkManager.TEAM_ROYAL)
+	_assert(lost_equal == 1 and cm.national_tickets == 49, "Conquest equal flags deducts 1 ticket")
+
+	# 3 Royal vs 1 National -> 2x multiplier
+	cm.capture_points[2].owner_team = NetworkManager.TEAM_ROYAL
+	var lost_3: int = cm.on_player_killed(NetworkManager.TEAM_NATIONAL, NetworkManager.TEAM_ROYAL)
+	_assert(lost_3 == 2 and cm.national_tickets == 47, "Conquest 3-flag advantage triggers 2x ticket drain")
+
+	# 4 Royal vs 0 National -> 3x multiplier
+	cm.capture_points[1].owner_team = NetworkManager.TEAM_ROYAL
+	var lost_4: int = cm.on_player_killed(NetworkManager.TEAM_NATIONAL, NetworkManager.TEAM_ROYAL)
+	_assert(lost_4 == 3 and cm.national_tickets == 44, "Conquest 4-flag domination triggers 3x ticket drain")
+
+	for cp in cm.capture_points:
+		cp.free()
+	cm.free()
+
+
+func _test_vehicles_rear_armor_wing_riding_and_boat() -> void:
+	var tank := VehicleTank.new()
+	tank.id = 10
+	tank.team = NetworkManager.TEAM_NATIONAL
+	add_child(tank)
+	var start_hp: int = tank.hp
+	# Front hit (front is -Z, hit_pos at -Z)
+	tank.apply_damage_server(50, 1, Vector3(0.0, 0.0, 1.0), tank.global_position + Vector3(0.0, 0.0, -3.0), true)
+	var front_dmg: int = start_hp - tank.hp
+	# Rear hit (rear is +Z, hit_pos at +Z) -> 2.0x damage!
+	var hp_mid: int = tank.hp
+	tank.apply_damage_server(50, 1, Vector3(0.0, 0.0, -1.0), tank.global_position + Vector3(0.0, 0.0, 3.0), true)
+	var rear_dmg: int = hp_mid - tank.hp
+	_assert(rear_dmg == front_dmg * 2, "Tank rear armor takes exactly 2.0x directional damage (%d vs %d)" % [rear_dmg, front_dmg])
+
+	var plane := VehiclePlane.new()
+	plane.id = 11
+	plane.team = NetworkManager.TEAM_ROYAL
+	add_child(plane)
+	_assert(plane.seats.size() == 3 and plane.seats[1].seat_type == VehicleBase.SeatType.WING_RIDER and plane.seats[2].seat_type == VehicleBase.SeatType.WING_RIDER, "Fighter plane has Pilot + 2 Wing-Riding seats")
+
+	var pilot := HeroCharacter.new()
+	pilot.setup_identity(31, "Pilot", 0, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var wingman := HeroCharacter.new()
+	wingman.setup_identity(32, "Wingman", 0, NetworkManager.CLASS_GUNNER, 0, false, false)
+	add_child(pilot)
+	add_child(wingman)
+	_assert(plane.try_enter_hero(pilot) == 0 and plane.try_enter_hero(wingman) == 1, "Wingman boards Wing-Rider seat")
+
+	# Wingman uses Wrench widget mid-flight to repair damaged plane!
+	plane.hp = 200
+	var wsm: SkillManager = wingman.skill_manager as SkillManager
+	_assert(wsm.try_activate_widget(1, {"vehicles": [plane]}) and plane.hp > 200, "Wing-Rider repairs plane with Wrench widget")
+
+	var boat := VehicleBoat.new()
+	boat.id = 12
+	boat.team = NetworkManager.TEAM_ROYAL
+	add_child(boat)
+	_assert(boat.seats.size() == 3 and boat.vehicle_type == VehicleBase.VehicleType.BOAT, "Aquatic Boat has Driver + 2 open-deck Passenger seats")
+
+	plane.exit_hero(pilot)
+	plane.exit_hero(wingman)
+	pilot.free()
+	wingman.free()
+	tank.free()
+	plane.free()
+	boat.free()
+
+
+func _test_seaside_map_and_12v12_bots_integration() -> void:
+	var game: MainGame = load("res://scenes/main.tscn").instantiate() as MainGame
+	add_child(game)
+	_assert(game.map_instance != null, "Seaside Frontline map instantiates inside MainGame")
+	_assert(game.map_instance.capture_points.size() == 4, "Map creates all 4 diamond Capture Points")
+	_assert(game.map_instance.royal_spawns.size() == 12 and game.map_instance.national_spawns.size() == 12, "Map defines 12 Royal + 12 National spawn slots (12v12)")
+
+	var has_jeep: bool = false
+	var has_tank: bool = false
+	var has_plane: bool = false
+	var has_boat: bool = false
+	var has_aa: bool = false
+	for v in game.map_instance.spawned_vehicles:
+		match v.vehicle_type:
+			VehicleBase.VehicleType.JEEP: has_jeep = true
+			VehicleBase.VehicleType.TANK: has_tank = true
+			VehicleBase.VehicleType.PLANE: has_plane = true
+			VehicleBase.VehicleType.BOAT: has_boat = true
+			VehicleBase.VehicleType.AA_GUN: has_aa = true
+	_assert(has_jeep and has_tank and has_plane and has_boat and has_aa, "Map spawns Land (Jeep/Tank/AA), Air (Plane), and Water (Boat) vehicles")
+
+	# Launch Solo 12v12 Bots Match and verify 24 combatants (12 Royal vs 12 National)
+	game._on_play_solo_12v12(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, NetworkManager.ARCHETYPE_BALANCED)
+	var counts: Vector2i = NetworkManager.get_team_counts()
+	_assert(counts.x == 12 and counts.y == 12 and game.heroes_by_id.size() == 24, "12v12 match spawns exactly 12 Royal + 12 National (24 heroes)")
+
+	NetworkManager.shutdown_network()
+	game.free()
 
 
 func _test_scene_compile_and_load() -> void:
