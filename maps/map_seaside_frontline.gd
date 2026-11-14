@@ -145,7 +145,6 @@ func _build_sky_and_lighting() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.78
-	env.ambient_light_energy = 0.78
 	# Subtle distant aerial haze past 950m so the entire 1600m island remains vivid and crisp
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_DEPTH

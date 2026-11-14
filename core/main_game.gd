@@ -78,15 +78,21 @@ func _ready() -> void:
 
 func _check_cli_autostart() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
+	var port: int = NetworkManager.DEFAULT_PORT
+	for arg in args:
+		if arg.begins_with("--port="):
+			var parsed_port: int = int(arg.trim_prefix("--port="))
+			if parsed_port > 0:
+				port = parsed_port
 	for arg in args:
 		if arg == "--host":
 			class_menu.hide_menu()
-			_on_host_online(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, NetworkManager.DEFAULT_PORT)
+			_on_host_online(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, port)
 			return
 		elif arg.begins_with("--join="):
 			var ip: String = arg.trim_prefix("--join=")
 			class_menu.hide_menu()
-			_on_join_online(NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, ip, NetworkManager.DEFAULT_PORT)
+			_on_join_online(NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, ip, port)
 			return
 
 
@@ -163,10 +169,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ESCAPE and class_menu != null:
+			var in_active_match: bool = heroes_by_id.has(NetworkManager.local_peer_id)
 			if class_menu.visible:
-				class_menu.hide_menu()
+				if in_active_match:
+					class_menu.hide_menu()
+				elif class_menu.current_screen != "hub":
+					class_menu.show_screen("hub")
 			else:
-				var in_active_match: bool = heroes_by_id.has(NetworkManager.local_peer_id)
 				class_menu.set_in_match_mode(in_active_match)
 				if in_active_match:
 					class_menu.show_screen("settings")
@@ -241,6 +250,7 @@ func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
 	if hud != null:
+		hud.set_local_hero(null)
 		hud.clear_killfeed()
 	for b in bots_root.get_children():
 		b.queue_free()
@@ -616,18 +626,18 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				projectiles_root.add_child(vp)
 		"hit_vfx":
 			var hit_pos: Vector3 = payload.get("pos", Vector3.ZERO)
-			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, hit_pos, str(payload.get("kind", "dust")), 0.4)
-			if int(payload.get("attacker_id", -1)) == NetworkManager.local_peer_id:
+			var hit_kind: String = str(payload.get("kind", "dust"))
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, hit_pos, hit_kind, 0.4)
+			var dmg_amt: int = int(payload.get("damage", 0))
+			if int(payload.get("attacker_id", -1)) == NetworkManager.local_peer_id and hit_kind != "dust" and dmg_amt > 0:
 				var is_crit: bool = bool(payload.get("headshot", false))
 				SoundSynthesizer.play_sfx("crit" if is_crit else "hit", 0.0, true)
 				if hud != null:
 					hud.show_hitmarker(is_crit)
-					var dmg_amt: int = int(payload.get("damage", 0))
-					if dmg_amt > 0:
-						var s_tag: String = str(payload.get("dot", ""))
-						if s_tag.is_empty() and bool(payload.get("is_vehicle", false)):
-							s_tag = "vehicle"
-						hud.spawn_damage_number(hit_pos, dmg_amt, is_crit, s_tag)
+					var s_tag: String = str(payload.get("dot", ""))
+					if s_tag.is_empty() and bool(payload.get("is_vehicle", false)):
+						s_tag = "vehicle"
+					hud.spawn_damage_number(hit_pos, dmg_amt, is_crit, s_tag)
 		"explosion_vfx":
 			var exp_pos: Vector3 = payload.get("pos", Vector3.ZERO)
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, exp_pos, "explosion", float(payload.get("radius", 5.0)))

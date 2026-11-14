@@ -2267,9 +2267,24 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 		"get_input_for_peer_tick recovers fallback command on dropped packet with BTN_JUMP cleared"
 	)
 
+	# Normal monotonic tick resets future spike streak; sustained 3-packet stall window resyncs cleanly
+	var cmd_14 := InputCmd.new()
+	cmd_14.tick = 14
+	var ok_14: bool = NetworkManager.validate_and_enqueue_peer_input(peer_id, cmd_14)
+	var stall_ticks: Array[int] = [500, 501, 502, 503]
+	var stall_res: Array[bool] = []
+	for st in stall_ticks:
+		var sc := InputCmd.new()
+		sc.tick = st
+		stall_res.append(NetworkManager.validate_and_enqueue_peer_input(peer_id, sc))
+	_assert(
+		ok_14 and stall_res == [false, false, true, true] and int(NetworkManager._peer_last_input_tick.get(peer_id, 0)) == 503,
+		"Single future spike keeps streak isolated after monotonic reset, while 3-packet stall resyncs cleanly (res=%s, last_tick=%d)" % [str(stall_res), int(NetworkManager._peer_last_input_tick.get(peer_id, 0))]
+	)
+
 	NetworkManager.shutdown_network()
 	_assert(
-		NetworkManager._peer_last_input_tick.is_empty() and NetworkManager._peer_seq_stats.is_empty(),
+		NetworkManager._peer_last_input_tick.is_empty() and NetworkManager._peer_future_streak.is_empty() and NetworkManager._peer_seq_stats.is_empty(),
 		"shutdown_network() clears packet sequencing trackers cleanly"
 	)
 
@@ -2380,6 +2395,58 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 
 	test_cam.free()
 	menu.free()
+
+	# --- 4. Dust vs Flesh hit_vfx, Null-Hero Crosshair, & ESC Outside Active Match ---
+	var game := MainGame.new()
+	add_child(game)
+	NetworkManager.local_peer_id = 1
+
+	game.hud._crosshair.visible = true
+	game.hud._process(0.016)
+	_assert(
+		game.hud._crosshair.visible == false,
+		"HUDController hides _crosshair when _local_hero == null"
+	)
+
+	game.hud._hitmarker_lbl.visible = false
+	game.hud._hitmarker_timer = 0.0
+	game._on_game_event("hit_vfx", {
+		"pos": Vector3(1.0, 1.0, 1.0),
+		"kind": "dust",
+		"attacker_id": 1,
+	})
+	_assert(
+		not game.hud._hitmarker_lbl.visible and game.hud._hitmarker_timer <= 0.0 and game.hud._floating_dmgs.is_empty(),
+		"Dust impact hit_vfx (kind='dust') does NOT show HUDController hitmarker or damage number"
+	)
+
+	game._on_game_event("hit_vfx", {
+		"pos": Vector3(2.0, 1.5, 2.0),
+		"kind": "blood",
+		"attacker_id": 1,
+		"damage": 18,
+		"headshot": false,
+	})
+	_assert(
+		game.hud._hitmarker_lbl.visible and game.hud._hitmarker_timer > 0.0 and game.hud._floating_dmgs.size() == 1,
+		"Flesh damage hit_vfx (kind='blood', damage=18) shows HUDController hitmarker and damage number"
+	)
+
+	game.class_menu.visible = true
+	game.class_menu.show_screen("armory")
+	var esc_ev := InputEventKey.new()
+	esc_ev.keycode = KEY_ESCAPE
+	esc_ev.pressed = true
+	game._unhandled_input(esc_ev)
+	var back_to_hub: bool = game.class_menu.visible and game.class_menu.current_screen == "hub"
+	game._unhandled_input(esc_ev)
+	var stays_on_hub: bool = game.class_menu.visible and game.class_menu.current_screen == "hub"
+	_assert(
+		back_to_hub and stays_on_hub,
+		"ESC outside active match returns armory/settings to 'hub' and never hides hub into blank world"
+	)
+
+	game.free()
 
 
 func _test_scene_compile_and_load() -> void:

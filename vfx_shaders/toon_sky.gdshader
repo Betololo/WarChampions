@@ -7,7 +7,6 @@ uniform vec3 ground_horizon_color : source_color = vec3(0.62, 0.87, 1.0);
 
 uniform vec3 sun_color : source_color = vec3(1.0, 0.96, 0.86);
 uniform float sun_disk_size : hint_range(0.005, 0.1) = 0.038;
-uniform float sun_halo_size : hint_range(0.05, 0.8) = 0.28;
 
 uniform vec3 cloud_color_lit : source_color = vec3(1.0, 0.99, 0.95);
 uniform vec3 cloud_color_shadow : source_color = vec3(0.70, 0.76, 0.90);

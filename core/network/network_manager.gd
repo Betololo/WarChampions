@@ -50,6 +50,7 @@ var _delayed_queue: Array[Dictionary] = []
 var players_info: Dictionary = {}
 var peer_input_buffers: Dictionary = {} # peer_id: int -> InputRingBuffer
 var _peer_last_input_tick: Dictionary = {} # peer_id: int -> int
+var _peer_future_streak: Dictionary = {} # peer_id: int -> int
 var _peer_seq_stats: Dictionary = {} # peer_id: int -> Dictionary
 var local_profile: Dictionary = {
 	"name": "Hero",
@@ -172,6 +173,7 @@ func shutdown_network() -> void:
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	players_info.clear()
 	_peer_last_input_tick.clear()
+	_peer_future_streak.clear()
 	_peer_seq_stats.clear()
 	peer_input_buffers.clear()
 	server_tick = 0
@@ -200,8 +202,14 @@ func validate_and_enqueue_peer_input(sender_id: int, cmd: InputCmd) -> bool:
 		return false
 
 	if last_tick > 0 and cmd.tick > last_tick + 180:
-		_peer_seq_stats[sender_id]["dropped_future"] += 1
-		return false
+		var streak: int = int(_peer_future_streak.get(sender_id, 0)) + 1
+		if streak < 3:
+			_peer_future_streak[sender_id] = streak
+			_peer_seq_stats[sender_id]["dropped_future"] += 1
+			return false
+		_peer_future_streak[sender_id] = 0
+	else:
+		_peer_future_streak[sender_id] = 0
 
 	_peer_last_input_tick[sender_id] = cmd.tick
 	_peer_seq_stats[sender_id]["accepted"] += 1
@@ -491,6 +499,7 @@ func _on_peer_connected(peer_id: int) -> void:
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	_peer_last_input_tick.erase(peer_id)
+	_peer_future_streak.erase(peer_id)
 	_peer_seq_stats.erase(peer_id)
 	peer_input_buffers.erase(peer_id)
 	if multiplayer.is_server():

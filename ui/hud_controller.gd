@@ -786,6 +786,7 @@ func _build_hud() -> void:
 	_crosshair.anchor_top = 0.5
 	_crosshair.anchor_bottom = 0.5
 	_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_crosshair.visible = false
 	add_child(_crosshair)
 
 	_crosshair_dot = _make_crosshair_bar("CenterDot", Vector2(4, 4), Vector2(2, 2))
@@ -923,10 +924,19 @@ func _build_hud() -> void:
 	_veh_hp_bar_bg.add_child(_veh_hp_bar_fill)
 
 
+func _hide_local_hud_overlays() -> void:
+	if _crosshair != null:
+		_crosshair.visible = false
+	if _scope_overlay != null:
+		_scope_overlay.visible = false
+	if _veh_hp_panel != null:
+		_veh_hp_panel.visible = false
+
+
 func _refresh_hotbar_icons() -> void:
-	if _local_hero == null:
-		if _veh_hp_panel != null:
-			_veh_hp_panel.visible = false
+	if _local_hero == null or not is_instance_valid(_local_hero):
+		_local_hero = null
+		_hide_local_hud_overlays()
 		return
 	for i in range(4):
 		if i < _local_hero.weapons.size():
@@ -976,9 +986,9 @@ func _process(delta: float) -> void:
 			else:
 				_flag_pips[i].color = Color(0.85, 0.85, 0.85)
 
-	if _local_hero == null:
-		if _veh_hp_panel != null:
-			_veh_hp_panel.visible = false
+	if _local_hero == null or not is_instance_valid(_local_hero):
+		_local_hero = null
+		_hide_local_hud_overlays()
 		return
 
 	if _prev_hp_observed > _local_hero.hp:

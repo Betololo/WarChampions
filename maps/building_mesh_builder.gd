@@ -967,7 +967,6 @@ static func build_river_bridge(
 	# 2. Side stone parapets / railings along bridge edges (local Z = +/- (half_w - 0.35))
 	var parapet_h: float = 1.15
 	var parapet_w: float = 0.70
-	var parapet_total_len: float = span_len + 56.0
 	for sz in [-1.0, 1.0]:
 		var pz: float = sz * (half_w - parapet_w * 0.5)
 		_add_box(body, Vector3(span_len, parapet_h, parapet_w), Vector3(0.0, deck_top + parapet_h * 0.5, pz), Vector3.ZERO, mats["stone_trim"], "Parapet_%s" % ("L" if sz < 0.0 else "R"))
