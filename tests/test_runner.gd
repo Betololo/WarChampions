@@ -39,6 +39,7 @@ func _ready() -> void:
 	await _test_phase7_task3_perf_cache_vfx()
 	await _test_phase8_task1_skill_icons_and_guide()
 	await _test_phase8_task2_aoe_vfx_and_overhead_buffs()
+	await _test_phase8_task3_plane_accel_and_crash()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -4457,4 +4458,246 @@ func _test_phase8_task2_aoe_vfx_and_overhead_buffs() -> void:
 	ally_near.queue_free()
 	ally_far.queue_free()
 	enemy_com.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase8_task3_plane_accel_and_crash() -> void:
+	var arena := Node3D.new()
+	arena.name = "Phase8Task3PlaneArena"
+	add_child(arena)
+
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(260.0, 1.0, 260.0)
+	floor_col.shape = floor_box
+	floor_body.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var plane := VehiclePlane.new()
+	plane.id = 8301
+	plane.team = NetworkManager.TEAM_ROYAL
+	plane.position = Vector3(0.0, 0.5, 40.0)
+	arena.add_child(plane)
+	plane.spawn_transform = plane.global_transform
+
+	var pilot := HeroCharacter.new()
+	pilot.setup_identity(8302, "T3Pilot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(pilot)
+	plane.try_enter_hero(pilot)
+
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var heroes_map: Dictionary = {8302: pilot}
+	var ctx: Dictionary = {"heroes_by_id": heroes_map}
+
+	# 1. Idle standstill & no Space teleport below TAKEOFF_SPEED
+	var idle_start_pos: Vector3 = plane.global_position
+	for t in range(30):
+		var idle_cmd := InputCmd.new()
+		idle_cmd.move_dir = Vector2.ZERO
+		idle_cmd.aim_yaw = 0.0
+		idle_cmd.aim_pitch = 0.0
+		if t >= 15:
+			idle_cmd.set_button(InputCmd.BTN_JUMP, true)
+		pilot.latest_server_input = idle_cmd
+		plane.step_vehicle_server(1.0 / 60.0, heroes_map, ctx)
+		await get_tree().physics_frame
+
+	var idle_horiz_disp: float = Vector2(plane.global_position.x - idle_start_pos.x, plane.global_position.z - idle_start_pos.z).length()
+	_assert(
+		plane._airspeed < 0.1 and idle_horiz_disp < 0.25 and plane.global_position.y <= idle_start_pos.y + 0.15,
+		"VehiclePlane remains stationary when idle without W and blocks Space climb before TAKEOFF_SPEED (airspeed=%.2f, disp=%.2fm, dy=%.2fm)" % [plane._airspeed, idle_horiz_disp, plane.global_position.y - idle_start_pos.y]
+	)
+
+	# 2. Progressive runway acceleration (10 ticks -> 35 ticks -> 75 ticks -> 125 ticks) + S brake
+	var accel_start_y: float = plane.global_position.y
+	var spd_10: float = 0.0
+	var dy_10: float = 0.0
+	var spd_35: float = 0.0
+	var dy_35: float = 0.0
+	var spd_75: float = 0.0
+	for tick in range(1, 126):
+		var w_cmd := InputCmd.new()
+		w_cmd.move_dir = Vector2(0.0, -1.0)
+		w_cmd.aim_yaw = 0.0
+		w_cmd.aim_pitch = 0.0
+		pilot.latest_server_input = w_cmd
+		plane.step_vehicle_server(1.0 / 60.0, heroes_map, ctx)
+		await get_tree().physics_frame
+		if tick == 10:
+			spd_10 = plane._airspeed
+			dy_10 = plane.global_position.y - accel_start_y
+		elif tick == 35:
+			spd_35 = plane._airspeed
+			dy_35 = plane.global_position.y - accel_start_y
+		elif tick == 75:
+			spd_75 = plane._airspeed
+
+	var spd_125: float = plane._airspeed
+	for _b in range(45):
+		var s_cmd := InputCmd.new()
+		s_cmd.move_dir = Vector2(0.0, 1.0)
+		s_cmd.aim_yaw = 0.0
+		s_cmd.aim_pitch = 0.0
+		pilot.latest_server_input = s_cmd
+		plane.step_vehicle_server(1.0 / 60.0, heroes_map, ctx)
+		await get_tree().physics_frame
+	var spd_braked: float = plane._airspeed
+
+	_assert(
+		spd_10 >= 3.0 and spd_10 <= 12.0 and dy_10 < 0.25
+		and spd_35 > VehiclePlane.TAKEOFF_SPEED and dy_35 > 0.05
+		and spd_75 > 30.0 and spd_125 > 36.0 and spd_braked < spd_125 - 10.0,
+		"VehiclePlane accelerates progressively on runway (t10=%.1f, t35=%.1f/dy=%.2f, t75=%.1f, t125=%.1f) and brakes cleanly with S (%.1f)" % [spd_10, spd_35, dy_35, spd_75, spd_125, spd_braked]
+	)
+
+	# 3. Wall crash explosion + enemy bot splash + zero friendly fire + _respawn_vehicle reset
+	var wall_body := StaticBody3D.new()
+	wall_body.collision_layer = 1
+	var wall_col := CollisionShape3D.new()
+	var wall_box := BoxShape3D.new()
+	wall_box.size = Vector3(24.0, 16.0, 3.0)
+	wall_col.shape = wall_box
+	wall_body.position = Vector3(0.0, 6.0, -35.0)
+	wall_body.add_child(wall_col)
+	arena.add_child(wall_body)
+
+	var enemy_wall := HeroCharacter.new()
+	enemy_wall.setup_identity(8303, "T3EnemyWall", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	arena.add_child(enemy_wall)
+	enemy_wall.global_position = Vector3(3.0, 0.5, -31.0)
+
+	var ally_wall := HeroCharacter.new()
+	ally_wall.setup_identity(8304, "T3AllyWall", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	arena.add_child(ally_wall)
+	ally_wall.global_position = Vector3(-3.0, 0.5, -31.0)
+
+	var wall_heroes: Dictionary = {8302: pilot, 8303: enemy_wall, 8304: ally_wall}
+	var wall_ctx: Dictionary = {"heroes_by_id": wall_heroes}
+
+	var exp_events: Array[Dictionary] = []
+	var hit_events: Array[Dictionary] = []
+	var on_crash_evt := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "explosion_vfx":
+			exp_events.append(payload)
+		elif ev_type == "hit_vfx":
+			hit_events.append(payload)
+	NetworkManager.game_event_received.connect(on_crash_evt)
+
+	plane.global_position = Vector3(0.0, 3.0, 0.0)
+	plane.rotation = Vector3.ZERO
+	plane._airspeed = 34.0
+	plane._was_airborne = true
+	plane._crash_armed_time = 0.5
+	plane.linear_velocity = Vector3(0.0, 0.0, -34.0)
+	plane._prev_vel = plane.linear_velocity
+
+	for _w in range(90):
+		if plane.is_destroyed:
+			break
+		var fly_cmd := InputCmd.new()
+		fly_cmd.move_dir = Vector2(0.0, -1.0)
+		fly_cmd.aim_yaw = 0.0
+		fly_cmd.aim_pitch = 0.0
+		pilot.latest_server_input = fly_cmd
+		plane.step_vehicle_server(1.0 / 60.0, wall_heroes, wall_ctx)
+		await get_tree().physics_frame
+
+	var has_crash_exp: bool = false
+	for ev in exp_events:
+		if is_equal_approx(float(ev.get("radius", 0.0)), VehiclePlane.CRASH_RADIUS) and int(ev.get("attacker_id", -1)) == 8302:
+			has_crash_exp = true
+			break
+
+	_assert(
+		plane.is_destroyed and enemy_wall.hp < enemy_wall.max_hp and ally_wall.hp == ally_wall.max_hp and has_crash_exp,
+		"VehiclePlane wall crash detonates with radial enemy splash (enemy_hp=%d/%d), zero friendly fire (ally_hp=%d/%d), and explosion_vfx" % [enemy_wall.hp, enemy_wall.max_hp, ally_wall.hp, ally_wall.max_hp]
+	)
+
+	plane._respawn_vehicle()
+	_assert(
+		not plane.is_destroyed and plane.hp == plane.max_hp and plane._airspeed == 0.0 and not plane._was_airborne and is_equal_approx(plane.gravity_scale, 1.0),
+		"VehiclePlane._respawn_vehicle cleanly resets airspeed, airborne state, gravity_scale, and hp"
+	)
+
+	# 4. Pilot bail-out + unmanned nose-down ballistic dive explosion killing enemy bot
+	exp_events.clear()
+	hit_events.clear()
+
+	var dive_plane := VehiclePlane.new()
+	dive_plane.id = 8305
+	dive_plane.team = NetworkManager.TEAM_ROYAL
+	dive_plane.position = Vector3(50.0, 6.5, 30.0)
+	arena.add_child(dive_plane)
+
+	var dive_pilot := HeroCharacter.new()
+	dive_pilot.setup_identity(8311, "T3DivePilot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(dive_pilot)
+	dive_plane.try_enter_hero(dive_pilot)
+
+	var dive_enemy := HeroCharacter.new()
+	dive_enemy.setup_identity(8312, "T3DiveTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, true)
+	arena.add_child(dive_enemy)
+	dive_enemy.global_position = Vector3(50.0, 0.5, -14.0)
+
+	var dive_heroes: Dictionary = {8311: dive_pilot, 8312: dive_enemy}
+	var dive_ctx: Dictionary = {"heroes_by_id": dive_heroes}
+
+	await get_tree().physics_frame
+	dive_plane.global_position = Vector3(50.0, 6.5, 30.0)
+	dive_plane.rotation = Vector3.ZERO
+	dive_plane._airspeed = 34.0
+	dive_plane._was_airborne = true
+	dive_plane._crash_armed_time = 0.5
+	dive_plane.linear_velocity = Vector3(0.0, 0.0, -34.0)
+	dive_plane._prev_vel = dive_plane.linear_velocity
+
+	for _p in range(5):
+		var dcmd := InputCmd.new()
+		dcmd.move_dir = Vector2(0.0, -1.0)
+		dcmd.aim_yaw = 0.0
+		dcmd.aim_pitch = 0.0
+		dive_pilot.latest_server_input = dcmd
+		dive_plane.step_vehicle_server(1.0 / 60.0, dive_heroes, dive_ctx)
+		await get_tree().physics_frame
+
+	var bail_z: float = dive_plane.global_position.z
+	dive_plane.exit_hero(dive_pilot)
+	dive_pilot.global_position = Vector3(50.0, 20.0, 60.0) # Far clear of blast
+
+	var max_dive_pitch: float = 0.0
+	for _u in range(150):
+		if dive_plane.is_destroyed:
+			break
+		dive_plane.step_vehicle_server(1.0 / 60.0, dive_heroes, dive_ctx)
+		max_dive_pitch = minf(max_dive_pitch, dive_plane.rotation.x)
+		await get_tree().physics_frame
+
+	NetworkManager.game_event_received.disconnect(on_crash_evt)
+
+	var dive_exp_ok: bool = false
+	for ev in exp_events:
+		if is_equal_approx(float(ev.get("radius", 0.0)), VehiclePlane.CRASH_RADIUS) and int(ev.get("attacker_id", -1)) == 8311:
+			dive_exp_ok = true
+			break
+	var dive_hit_ok: bool = false
+	for hev in hit_events:
+		if int(hev.get("attacker_id", -1)) == 8311 and int(hev.get("victim_id", -1)) == 8312 and int(hev.get("damage", 0)) > 0:
+			dive_hit_ok = true
+			break
+
+	_assert(
+		dive_plane.is_destroyed
+		and dive_plane.global_position.z < bail_z - 15.0
+		and max_dive_pitch < -0.15
+		and dive_enemy.is_defeated and dive_enemy.last_killer_id == 8311
+		and dive_exp_ok and dive_hit_ok,
+		"Unmanned bailed-out plane maintains forward momentum (dz=%.1fm), pitches nose-down (min_pitch=%.2f), detonates on ground impact, kills enemy bot (defeated=%s, killer=%d), and broadcasts explosion_vfx + hit_vfx" % [dive_plane.global_position.z - bail_z, max_dive_pitch, str(dive_enemy.is_defeated), dive_enemy.last_killer_id]
+	)
+
+	arena.queue_free()
 	await _flush_deferred()
