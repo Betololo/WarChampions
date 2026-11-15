@@ -934,22 +934,260 @@ static func _sprite_weapon(kind_str: String) -> ImageTexture:
 	return ImageTexture.create_from_image(outlined_img)
 
 
+static func _draw_triangle(img: Image, p0: Vector2, p1: Vector2, p2: Vector2, col: Color) -> void:
+	var min_x: int = maxi(0, int(floor(minf(p0.x, minf(p1.x, p2.x)))))
+	var max_x: int = mini(img.get_width() - 1, int(ceil(maxf(p0.x, maxf(p1.x, p2.x)))))
+	var min_y: int = maxi(0, int(floor(minf(p0.y, minf(p1.y, p2.y)))))
+	var max_y: int = mini(img.get_height() - 1, int(ceil(maxf(p0.y, maxf(p1.y, p2.y)))))
+	var denom: float = (p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y)
+	if absf(denom) < 0.0001:
+		return
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var px: float = float(x) + 0.5
+			var py: float = float(y) + 0.5
+			var a: float = ((p1.y - p2.y) * (px - p2.x) + (p2.x - p1.x) * (py - p2.y)) / denom
+			var b: float = ((p2.y - p0.y) * (px - p2.x) + (p0.x - p2.x) * (py - p2.y)) / denom
+			var c: float = 1.0 - a - b
+			if a >= 0.0 and b >= 0.0 and c >= 0.0:
+				img.set_pixel(x, y, col)
+
+
+static func _draw_rounded_badge(img: Image, bg_top: Color, bg_bot: Color, rim_col: Color) -> void:
+	var x0: int = 3
+	var y0: int = 3
+	var x1: int = 36
+	var y1: int = 36
+	var r: float = 6.0
+	var inner_r: float = r - 1.5
+	for y in range(y0, y1 + 1):
+		var t: float = float(y - y0) / float(y1 - y0)
+		var fill_col: Color = bg_top.lerp(bg_bot, t)
+		for x in range(x0, x1 + 1):
+			var cx: float = clampf(float(x), float(x0) + r, float(x1) - r)
+			var cy: float = clampf(float(y), float(y0) + r, float(y1) - r)
+			var dist: float = Vector2(float(x) - cx, float(y) - cy).length()
+			if dist <= r + 0.25:
+				var on_edge: bool = (
+					x <= x0 + 1 or x >= x1 - 1 or y <= y0 + 1 or y >= y1 - 1
+					or dist >= inner_r
+				)
+				img.set_pixel(x, y, rim_col if on_edge else fill_col)
+
+
+static func _draw_mini_grenade(img: Image, cx: int, cy: int, body_col: Color, hi_col: Color, spark_col: Color) -> void:
+	var ink := Color(0.10, 0.11, 0.14)
+	_draw_circle(img, float(cx), float(cy), 6.5, ink)
+	_draw_circle(img, float(cx), float(cy), 5.3, body_col)
+	_draw_circle(img, float(cx - 2), float(cy - 2), 2.0, hi_col)
+	_draw_rect(img, cx - 2, cy - 3, 4, 1, ink)
+	_draw_rect(img, cx - 2, cy + 1, 4, 1, ink)
+	_draw_rect(img, cx - 1, cy - 8, 3, 3, Color(0.55, 0.58, 0.62))
+	_draw_line(img, Vector2(float(cx), float(cy - 8)), Vector2(float(cx + 4), float(cy - 10)), 1.6, spark_col)
+	_draw_circle(img, float(cx + 4), float(cy - 10), 2.0, Color(1.0, 0.96, 0.45))
+
+
 static func _sprite_skill(slot_str: String) -> ImageTexture:
+	var norm_key: String = slot_str.strip_edges()
+	if not norm_key.contains("_"):
+		norm_key = "0_%d" % clampi(int(norm_key), 0, 5)
+
 	var img := _new_img(40, 40, Color(0, 0, 0, 0))
-	var idx: int = int(slot_str)
-	var colors: Array[Color] = [
-		Color(0.28, 0.90, 0.45),
-		Color(1.0, 0.48, 0.16),
-		Color(0.95, 0.80, 0.20),
-		Color(0.35, 0.72, 1.0),
-		Color(0.85, 0.35, 0.95),
-		Color(0.96, 0.22, 0.22),
-	]
-	var c: Color = colors[posmod(idx, colors.size())]
-	_draw_circle(img, 20, 20, 16.0, Color(0.12, 0.15, 0.20, 0.85))
-	_draw_circle(img, 20, 20, 12.0, c)
-	_draw_ring(img, 20, 20, 17.0, 15.0, Color.WHITE)
-	return ImageTexture.create_from_image(img)
+	var ink := Color(0.08, 0.09, 0.12)
+	var white := Color(0.97, 0.98, 1.0)
+
+	match norm_key:
+		"0_0": # Combat Medicine: Emerald badge + bold white/red cross + glowing vial droplets
+			_draw_rounded_badge(img, Color(0.14, 0.64, 0.40), Color(0.06, 0.34, 0.22), Color(0.45, 0.96, 0.68))
+			_draw_rect(img, 15, 8, 10, 24, ink)
+			_draw_rect(img, 8, 15, 24, 10, ink)
+			_draw_rect(img, 16, 9, 8, 22, white)
+			_draw_rect(img, 9, 16, 22, 8, white)
+			_draw_rect(img, 18, 11, 4, 18, Color(0.92, 0.20, 0.24))
+			_draw_rect(img, 11, 18, 18, 4, Color(0.92, 0.20, 0.24))
+			_draw_circle(img, 11.0, 10.0, 2.3, Color(0.55, 1.0, 0.85))
+			_draw_circle(img, 29.0, 29.0, 2.5, Color(0.55, 1.0, 0.85))
+
+		"0_1": # Burning Bullets: Amber-orange badge + brass bullet silhouette + bright red/yellow flame licks
+			_draw_rounded_badge(img, Color(0.86, 0.42, 0.10), Color(0.48, 0.14, 0.05), Color(1.0, 0.78, 0.28))
+			# Flames behind bullet
+			_draw_triangle(img, Vector2(9, 24), Vector2(18, 8), Vector2(24, 24), Color(0.96, 0.22, 0.12))
+			_draw_triangle(img, Vector2(16, 26), Vector2(26, 7), Vector2(31, 24), Color(1.0, 0.48, 0.10))
+			_draw_triangle(img, Vector2(13, 25), Vector2(22, 12), Vector2(27, 25), Color(1.0, 0.92, 0.25))
+			# Angled brass bullet foreground
+			_draw_line(img, Vector2(11, 29), Vector2(24, 16), 7.5, ink)
+			_draw_line(img, Vector2(11, 29), Vector2(22, 18), 5.2, Color(0.88, 0.68, 0.22))
+			_draw_line(img, Vector2(18, 22), Vector2(26, 14), 4.8, Color(1.0, 0.86, 0.36))
+			_draw_circle(img, 27.0, 13.0, 2.2, Color(1.0, 0.96, 0.65))
+
+		"0_2": # Grenade Spam: Olive/gold badge + 2 overlapping pineapple grenades with yellow fuse sparks
+			_draw_rounded_badge(img, Color(0.44, 0.50, 0.18), Color(0.22, 0.26, 0.08), Color(0.96, 0.84, 0.28))
+			_draw_mini_grenade(img, 14, 22, Color(0.32, 0.48, 0.20), Color(0.56, 0.75, 0.34), Color(1.0, 0.75, 0.15))
+			_draw_mini_grenade(img, 25, 24, Color(0.38, 0.56, 0.22), Color(0.66, 0.86, 0.40), Color(1.0, 0.82, 0.20))
+
+		"0_3": # Blasting Strike: Cyan/gold badge + outward radiating concentric shockwave arcs + central burst star
+			_draw_rounded_badge(img, Color(0.14, 0.56, 0.78), Color(0.08, 0.26, 0.48), Color(1.0, 0.86, 0.30))
+			_draw_ring(img, 20.0, 20.0, 13.5, 11.2, Color(0.55, 0.95, 1.0))
+			_draw_ring(img, 20.0, 20.0, 9.5, 7.6, Color(1.0, 0.88, 0.30))
+			_draw_circle(img, 20.0, 20.0, 5.2, ink)
+			_draw_star(img, 20.0, 20.0, 6.2, Color(1.0, 0.94, 0.42))
+			_draw_circle(img, 20.0, 20.0, 2.4, white)
+
+		"0_4": # Sixth Sense: Purple/gold badge + stylized eye/radar sweep rings + glowing pupil
+			_draw_rounded_badge(img, Color(0.46, 0.20, 0.68), Color(0.22, 0.09, 0.36), Color(0.96, 0.80, 0.26))
+			_draw_ring(img, 20.0, 20.0, 13.0, 11.5, Color(0.84, 0.60, 1.0))
+			# Eye almond shape via two opposing triangles + center ellipse
+			_draw_triangle(img, Vector2(7, 20), Vector2(20, 12), Vector2(33, 20), ink)
+			_draw_triangle(img, Vector2(7, 20), Vector2(20, 28), Vector2(33, 20), ink)
+			_draw_triangle(img, Vector2(9, 20), Vector2(20, 13.5), Vector2(31, 20), white)
+			_draw_triangle(img, Vector2(9, 20), Vector2(20, 26.5), Vector2(31, 20), white)
+			_draw_circle(img, 20.0, 20.0, 4.8, Color(0.95, 0.72, 0.16))
+			_draw_circle(img, 20.0, 20.0, 2.4, ink)
+			_draw_circle(img, 18.8, 18.8, 1.1, white)
+
+		"1_0": # Hero Shield: Deep-blue badge + bright cyan kite shield silhouette + metallic inner rim
+			_draw_rounded_badge(img, Color(0.10, 0.26, 0.64), Color(0.06, 0.12, 0.34), Color(0.42, 0.88, 1.0))
+			_draw_rect(img, 10, 9, 20, 13, ink)
+			_draw_triangle(img, Vector2(10, 22), Vector2(30, 22), Vector2(20, 32), ink)
+			_draw_rect(img, 11, 10, 18, 12, Color(0.24, 0.82, 1.0))
+			_draw_triangle(img, Vector2(11, 22), Vector2(29, 22), Vector2(20, 30), Color(0.24, 0.82, 1.0))
+			_draw_rect(img, 13, 12, 14, 9, Color(0.65, 0.96, 1.0))
+			_draw_triangle(img, Vector2(13, 21), Vector2(27, 21), Vector2(20, 27), Color(0.45, 0.90, 1.0))
+			_draw_rect(img, 19, 13, 2, 12, white)
+
+		"1_1": # Leg It: Sky/lime badge + winged sprinting boot silhouette + 3 horizontal speed lines behind heel
+			_draw_rounded_badge(img, Color(0.18, 0.60, 0.74), Color(0.18, 0.56, 0.24), Color(0.72, 1.0, 0.42))
+			# 3 speed lines behind heel
+			_draw_line(img, Vector2(6, 14), Vector2(14, 14), 2.2, white)
+			_draw_line(img, Vector2(5, 20), Vector2(13, 20), 2.2, Color(0.82, 1.0, 0.55))
+			_draw_line(img, Vector2(7, 26), Vector2(14, 26), 2.2, white)
+			# Sprinting boot
+			_draw_rect(img, 16, 11, 8, 14, ink)
+			_draw_rect(img, 16, 22, 15, 7, ink)
+			_draw_rect(img, 17, 12, 6, 12, Color(0.95, 0.76, 0.22))
+			_draw_rect(img, 17, 23, 13, 5, Color(0.95, 0.76, 0.22))
+			# Wing on boot
+			_draw_triangle(img, Vector2(14, 18), Vector2(25, 11), Vector2(23, 20), white)
+
+		"1_2": # Explosive Keg: Dark-crimson/orange badge + red wooden/steel barrel with hazard yellow stripes & spark fuse
+			_draw_rounded_badge(img, Color(0.68, 0.16, 0.14), Color(0.32, 0.08, 0.06), Color(1.0, 0.62, 0.20))
+			_draw_rect(img, 11, 12, 18, 20, ink)
+			_draw_rect(img, 12, 13, 16, 18, Color(0.86, 0.18, 0.16))
+			_draw_rect(img, 12, 16, 16, 3, Color(0.98, 0.84, 0.18))
+			_draw_rect(img, 12, 24, 16, 3, Color(0.98, 0.84, 0.18))
+			_draw_rect(img, 12, 13, 16, 2, Color(0.62, 0.66, 0.72))
+			_draw_rect(img, 12, 29, 16, 2, Color(0.62, 0.66, 0.72))
+			_draw_line(img, Vector2(20, 12), Vector2(25, 7), 2.0, Color(0.95, 0.78, 0.32))
+			_draw_circle(img, 26.0, 7.0, 2.4, Color(1.0, 0.94, 0.35))
+
+		"1_3": # Frenzy Fire: Gold/red badge + triple ascending vertical brass cartridge streaks + red heart pulse
+			_draw_rounded_badge(img, Color(0.78, 0.50, 0.10), Color(0.52, 0.14, 0.12), Color(1.0, 0.88, 0.32))
+			for bx in [11, 19, 27]:
+				var top_y: int = 10 if bx == 19 else 13
+				_draw_rect(img, bx - 2, top_y, 5, 16, ink)
+				_draw_rect(img, bx - 1, top_y + 2, 3, 13, Color(0.96, 0.80, 0.24))
+				_draw_triangle(img, Vector2(bx - 2, top_y + 2), Vector2(bx + 0.5, top_y - 3), Vector2(bx + 3, top_y + 2), Color(1.0, 0.52, 0.18))
+			# Red heart pulse at bottom center
+			_draw_circle(img, 17.5, 27.0, 3.3, Color(0.95, 0.18, 0.24))
+			_draw_circle(img, 22.5, 27.0, 3.3, Color(0.95, 0.18, 0.24))
+			_draw_triangle(img, Vector2(14, 28), Vector2(26, 28), Vector2(20, 34), Color(0.95, 0.18, 0.24))
+
+		"1_4": # I Eat Grenades: Lime/emerald badge + chomping jagged jaws biting a dark round grenade bomb
+			_draw_rounded_badge(img, Color(0.32, 0.72, 0.16), Color(0.10, 0.38, 0.14), Color(0.76, 1.0, 0.35))
+			# Dark round grenade bomb in center
+			_draw_circle(img, 21.0, 20.0, 7.2, Color(0.16, 0.20, 0.18))
+			_draw_circle(img, 19.0, 18.0, 2.2, Color(0.45, 0.52, 0.48))
+			_draw_rect(img, 19, 11, 4, 3, Color(0.70, 0.74, 0.78))
+			# Upper & lower jagged white chomping jaws
+			_draw_rect(img, 9, 8, 22, 4, ink)
+			_draw_rect(img, 9, 28, 22, 4, ink)
+			for tx in [10, 16, 22, 27]:
+				_draw_triangle(img, Vector2(tx, 10), Vector2(tx + 4, 10), Vector2(tx + 2, 16), white)
+				_draw_triangle(img, Vector2(tx, 30), Vector2(tx + 4, 30), Vector2(tx + 2, 24), white)
+
+		"2_0": # Stealth: Midnight-indigo badge + translucent ghost/hooded spy silhouette + stealth fade slashes
+			_draw_rounded_badge(img, Color(0.14, 0.18, 0.44), Color(0.06, 0.08, 0.22), Color(0.56, 0.72, 1.0))
+			_draw_circle(img, 20.0, 15.0, 6.2, Color(0.70, 0.82, 1.0, 0.85))
+			_draw_triangle(img, Vector2(11, 31), Vector2(20, 15), Vector2(29, 31), Color(0.58, 0.72, 0.96, 0.75))
+			_draw_circle(img, 18.0, 15.0, 1.3, Color(0.10, 0.14, 0.30))
+			_draw_circle(img, 22.0, 15.0, 1.3, Color(0.10, 0.14, 0.30))
+			# Diagonal stealth fade slashes
+			_draw_line(img, Vector2(8, 28), Vector2(16, 11), 2.0, Color(0.35, 0.92, 1.0, 0.85))
+			_draw_line(img, Vector2(24, 29), Vector2(32, 12), 2.0, Color(0.35, 0.92, 1.0, 0.85))
+
+		"2_1": # Piercing Shot: Crimson/steel badge + sharp sniper bullet punching through 2 vertical armor plates + laser streak
+			_draw_rounded_badge(img, Color(0.62, 0.12, 0.22), Color(0.22, 0.14, 0.22), Color(0.86, 0.90, 0.98))
+			# Two vertical steel armor plates with pierced gap
+			_draw_rect(img, 14, 9, 4, 9, Color(0.68, 0.74, 0.84))
+			_draw_rect(img, 14, 22, 4, 9, Color(0.68, 0.74, 0.84))
+			_draw_rect(img, 23, 9, 4, 9, Color(0.55, 0.62, 0.72))
+			_draw_rect(img, 23, 22, 4, 9, Color(0.55, 0.62, 0.72))
+			# Laser streak + piercing sniper round
+			_draw_line(img, Vector2(6, 20), Vector2(34, 20), 2.6, Color(1.0, 0.32, 0.28))
+			_draw_rect(img, 9, 17, 17, 6, ink)
+			_draw_rect(img, 10, 18, 15, 4, Color(0.98, 0.84, 0.28))
+			_draw_triangle(img, Vector2(25, 17), Vector2(34, 20), Vector2(25, 23), white)
+
+		"2_2": # Poisoned Blade: Toxic-green badge + gleaming steel dagger diagonally angled with dripping neon-green venom drops
+			_draw_rounded_badge(img, Color(0.14, 0.44, 0.16), Color(0.06, 0.22, 0.08), Color(0.42, 1.0, 0.35))
+			# Dagger blade & hilt diagonally
+			_draw_line(img, Vector2(9, 30), Vector2(14, 25), 4.5, Color(0.36, 0.22, 0.12))
+			_draw_line(img, Vector2(12, 22), Vector2(18, 28), 3.2, Color(0.88, 0.76, 0.28))
+			_draw_line(img, Vector2(15, 24), Vector2(30, 9), 5.6, ink)
+			_draw_line(img, Vector2(16, 23), Vector2(29, 10), 3.6, Color(0.86, 0.92, 0.98))
+			_draw_line(img, Vector2(20, 19), Vector2(29, 10), 2.2, Color(0.42, 1.0, 0.32))
+			# Dripping neon venom drops
+			_draw_circle(img, 22.0, 26.0, 2.3, Color(0.38, 1.0, 0.28))
+			_draw_circle(img, 28.0, 21.0, 2.5, Color(0.38, 1.0, 0.28))
+			_draw_circle(img, 28.0, 30.0, 2.0, Color(0.65, 1.0, 0.45))
+
+		"2_3": # Troop Trap: Slate/amber badge + spiked round landmine base with glowing red-orange trip prongs & warning glow
+			_draw_rounded_badge(img, Color(0.28, 0.32, 0.38), Color(0.26, 0.18, 0.08), Color(1.0, 0.74, 0.22))
+			# Warning glow
+			_draw_circle(img, 20.0, 22.0, 11.5, Color(1.0, 0.42, 0.10, 0.45))
+			# Prongs
+			_draw_line(img, Vector2(20, 18), Vector2(12, 11), 2.4, ink)
+			_draw_line(img, Vector2(20, 18), Vector2(20, 9), 2.4, ink)
+			_draw_line(img, Vector2(20, 18), Vector2(28, 11), 2.4, ink)
+			_draw_circle(img, 12.0, 11.0, 2.0, Color(1.0, 0.30, 0.15))
+			_draw_circle(img, 20.0, 9.0, 2.2, Color(1.0, 0.42, 0.15))
+			_draw_circle(img, 28.0, 11.0, 2.0, Color(1.0, 0.30, 0.15))
+			# Landmine body
+			_draw_circle(img, 20.0, 24.0, 8.5, ink)
+			_draw_circle(img, 20.0, 24.0, 7.0, Color(0.42, 0.46, 0.38))
+			_draw_circle(img, 20.0, 24.0, 3.2, Color(1.0, 0.22, 0.16))
+
+		"2_4": # Elixir: Teal/gold badge + rounded potion flask with glowing yellow-lime lightning liquid & cork
+			_draw_rounded_badge(img, Color(0.10, 0.52, 0.56), Color(0.08, 0.26, 0.34), Color(1.0, 0.84, 0.28))
+			# Cork + neck
+			_draw_rect(img, 17, 7, 6, 4, Color(0.76, 0.52, 0.26))
+			_draw_rect(img, 16, 11, 8, 5, ink)
+			_draw_rect(img, 17, 11, 6, 5, Color(0.78, 0.94, 0.98))
+			# Flask bulb
+			_draw_circle(img, 20.0, 24.0, 9.2, ink)
+			_draw_circle(img, 20.0, 24.0, 7.6, Color(0.68, 0.98, 0.24))
+			_draw_circle(img, 17.5, 21.5, 2.4, Color(1.0, 1.0, 0.72))
+			# Lightning zig-zag inside flask
+			_draw_line(img, Vector2(21, 18), Vector2(17, 24), 2.2, Color(1.0, 0.92, 0.22))
+			_draw_line(img, Vector2(17, 24), Vector2(23, 24), 2.2, Color(1.0, 0.92, 0.22))
+			_draw_line(img, Vector2(23, 24), Vector2(19, 30), 2.2, Color(1.0, 0.92, 0.22))
+
+		"2_5": # Mark Target: Crimson-black badge + sharp sniper crosshair reticle centered on a bright red target dot
+			_draw_rounded_badge(img, Color(0.48, 0.08, 0.12), Color(0.14, 0.06, 0.08), Color(1.0, 0.34, 0.30))
+			_draw_ring(img, 20.0, 20.0, 12.2, 10.2, white)
+			_draw_line(img, Vector2(20, 6), Vector2(20, 14), 2.2, white)
+			_draw_line(img, Vector2(20, 26), Vector2(20, 34), 2.2, white)
+			_draw_line(img, Vector2(6, 20), Vector2(14, 20), 2.2, white)
+			_draw_line(img, Vector2(26, 20), Vector2(34, 20), 2.2, white)
+			_draw_triangle(img, Vector2(15, 16), Vector2(25, 16), Vector2(20, 25), Color(1.0, 0.18, 0.18))
+			_draw_circle(img, 20.0, 20.0, 2.5, Color(1.0, 0.88, 0.30))
+
+		_: # Fallback outlined badge
+			_draw_rounded_badge(img, Color(0.24, 0.36, 0.56), Color(0.12, 0.18, 0.30), Color(0.75, 0.85, 0.98))
+			_draw_star(img, 20.0, 20.0, 8.0, white)
+
+	var outlined: Image = _apply_cartoon_outline(img, Color(0.06, 0.07, 0.10, 1.0), 2)
+	return ImageTexture.create_from_image(outlined)
 
 
 static func _sprite_widget(slot_str: String) -> ImageTexture:

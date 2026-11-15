@@ -191,6 +191,7 @@ var _damage_flash_timer: float = 0.0
 var _prev_hp_observed: int = -1
 var _killfeed_lines: Array[String] = []
 var _last_portrait_key: String = ""
+var _last_hotbar_class_id: int = -1
 var _slot_style_active: StyleBoxFlat
 var _slot_style_idle: StyleBoxFlat
 var _last_highlighted_slot: int = -1
@@ -271,6 +272,7 @@ func set_local_hero(hero: HeroCharacter) -> void:
 	_local_hero = hero
 	_prev_hp_observed = hero.hp if hero != null else -1
 	_last_portrait_key = ""
+	_last_hotbar_class_id = -1
 	_last_highlighted_slot = -1
 	_last_gauge_level = -1
 	_last_hp_val = -1
@@ -713,7 +715,7 @@ func _build_hud() -> void:
 		icon.custom_minimum_size = Vector2(30, 30)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.texture = CartoonAssets.get_texture("icon_skill_%d" % s_idx)
+		icon.texture = CartoonAssets.get_texture("icon_skill_0_%d" % mini(s_idx, 4))
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bg.add_child(icon)
 
@@ -1065,8 +1067,12 @@ func _refresh_hotbar_icons() -> void:
 	refresh_hotkey_labels()
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
+		_last_hotbar_class_id = -1
 		_hide_local_hud_overlays()
 		return
+	if _skill_slot_icons.is_empty() or _weapon_slot_boxes.is_empty():
+		return
+	_last_hotbar_class_id = _local_hero.class_id
 	for i in range(4):
 		if i < _local_hero.weapons.size():
 			_weapon_slot_boxes[i].visible = true
@@ -1079,6 +1085,32 @@ func _refresh_hotbar_icons() -> void:
 					_bound_weapon_signals.append(w)
 		else:
 			_weapon_slot_boxes[i].visible = false
+
+	var num_skills: int = (
+		_local_hero.skill_manager.skill_ranks.size()
+		if _local_hero.skill_manager != null
+		else (6 if _local_hero.class_id == NetworkManager.CLASS_COMMANDO else 5)
+	)
+	for i in range(_skill_slot_icons.size()):
+		if i < num_skills:
+			var icon_key: String = "icon_skill_%d_%d" % [_local_hero.class_id, i]
+			_skill_slot_icons[i].texture = CartoonAssets.get_texture(icon_key)
+			if i < _skill_slot_bgs.size():
+				var entry: Dictionary = SkillCatalog.get_entry_by_key(icon_key)
+				if not entry.is_empty():
+					_skill_slot_bgs[i].tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [
+						str(entry.get("name", "")),
+						str(entry.get("category", "")),
+						str(entry.get("effect_stats", "")),
+						str(entry.get("cooldown", "")),
+						str(entry.get("duration", "")),
+						str(entry.get("area", "")),
+						str(entry.get("description", "")),
+					]
+				else:
+					_skill_slot_bgs[i].tooltip_text = ""
+		elif i < _skill_slot_bgs.size():
+			_skill_slot_bgs[i].tooltip_text = ""
 
 
 func _process(delta: float) -> void:
@@ -1162,6 +1194,8 @@ func _process(delta: float) -> void:
 	if p_key != _last_portrait_key:
 		_last_portrait_key = p_key
 		_portrait_tex.texture = CartoonAssets.get_texture(p_key)
+		_refresh_hotbar_icons()
+	elif _local_hero.class_id != _last_hotbar_class_id:
 		_refresh_hotbar_icons()
 
 	if _local_hero.hp != _last_hp_val:

@@ -37,6 +37,7 @@ func _ready() -> void:
 	await _test_phase7_task1_skills_hud_pooling()
 	await _test_phase7_task2_hotkeys_menu()
 	await _test_phase7_task3_perf_cache_vfx()
+	await _test_phase8_task1_skill_icons_and_guide()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -4091,3 +4092,175 @@ func _test_phase7_task3_perf_cache_vfx() -> void:
 	vfx_jeep.queue_free()
 	local_v.queue_free()
 	enemy_v.queue_free()
+
+
+func _test_phase8_task1_skill_icons_and_guide() -> void:
+	# 1. All 16 skill icons generate 40x40 textures with 16 pairwise distinct pixel payloads + legacy fallback
+	var skill_keys: Array[String] = []
+	for cls_id in range(3):
+		var count: int = 6 if cls_id == NetworkManager.CLASS_COMMANDO else 5
+		for slot_i in range(count):
+			skill_keys.append("icon_skill_%d_%d" % [cls_id, slot_i])
+
+	var unique_payloads: Dictionary = {}
+	var all_icons_valid: bool = true
+	for sk in skill_keys:
+		var tex: ImageTexture = CartoonAssets.get_texture(sk)
+		if tex == null or tex.get_width() != 40 or tex.get_height() != 40:
+			all_icons_valid = false
+			break
+		var img: Image = tex.get_image()
+		if img == null:
+			all_icons_valid = false
+			break
+		var payload_b64: String = Marshalls.raw_to_base64(img.get_data())
+		unique_payloads[payload_b64] = sk
+
+	var legacy_ok: bool = true
+	for leg_i in range(5):
+		var leg_tex: ImageTexture = CartoonAssets.get_texture("icon_skill_%d" % leg_i)
+		var norm_tex: ImageTexture = CartoonAssets.get_texture("icon_skill_0_%d" % leg_i)
+		if leg_tex == null or norm_tex == null or leg_tex.get_width() != 40 or leg_tex.get_height() != 40:
+			legacy_ok = false
+			break
+		if leg_tex.get_image().get_data() != norm_tex.get_image().get_data():
+			legacy_ok = false
+			break
+
+	_assert(
+		all_icons_valid and unique_payloads.size() == 16 and legacy_ok,
+		"CartoonAssets generates 16 distinct 40x40 skill icons (%d/16 unique) with legacy fallback" % unique_payloads.size()
+	)
+
+	# 2. SkillCatalog canonical counts, non-empty fields & AoE radii
+	var s_list: Array[Dictionary] = SkillCatalog.get_class_skills(NetworkManager.CLASS_SOLDIER)
+	var g_list: Array[Dictionary] = SkillCatalog.get_class_skills(NetworkManager.CLASS_GUNNER)
+	var c_list: Array[Dictionary] = SkillCatalog.get_class_skills(NetworkManager.CLASS_COMMANDO)
+	var w_list: Array[Dictionary] = SkillCatalog.get_widgets()
+	var catalog_fields_ok: bool = true
+	for lst in [s_list, g_list, c_list, w_list]:
+		for entry in lst:
+			for req_k in ["icon", "name", "category", "cooldown", "duration", "area", "effect_stats", "description"]:
+				if str(entry.get(req_k, "")).strip_edges().is_empty():
+					catalog_fields_ok = false
+					break
+	var mark_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_2_5")
+	var med_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_0_0")
+	_assert(
+		s_list.size() == 5 and g_list.size() == 5 and c_list.size() == 6 and w_list.size() == 4
+		and catalog_fields_ok and str(mark_entry.get("name", "")) == "Mark Target"
+		and is_equal_approx(float(med_entry.get("aoe_radius", 0.0)), 12.0),
+		"SkillCatalog provides 5/5/6 class skills + 4 widgets with complete Rank-5 stats"
+	)
+
+	# 3. HUDController syncs _skill_slot_icons & tooltips per hero class
+	var hud := HUDController.new()
+	add_child(hud)
+	await _flush_deferred()
+
+	var h_sol := HeroCharacter.new()
+	h_sol.setup_identity(8101, "HudSol", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var h_gun := HeroCharacter.new()
+	h_gun.setup_identity(8102, "HudGun", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, true, false)
+	var h_com := HeroCharacter.new()
+	h_com.setup_identity(8103, "HudCom", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	add_child(h_sol)
+	add_child(h_gun)
+	add_child(h_com)
+
+	hud.set_local_hero(h_sol)
+	var sol_t0: Texture2D = hud._skill_slot_icons[0].texture
+	var sol_t1: Texture2D = hud._skill_slot_icons[1].texture
+	var sol_tip0: String = hud._skill_slot_bgs[0].tooltip_text
+
+	hud.set_local_hero(h_gun)
+	var gun_t0: Texture2D = hud._skill_slot_icons[0].texture
+	var gun_t1: Texture2D = hud._skill_slot_icons[1].texture
+	var gun_tip0: String = hud._skill_slot_bgs[0].tooltip_text
+
+	hud.set_local_hero(h_com)
+	var com_t0: Texture2D = hud._skill_slot_icons[0].texture
+	var com_t1: Texture2D = hud._skill_slot_icons[1].texture
+	var com_tip0: String = hud._skill_slot_bgs[0].tooltip_text
+
+	var hud_textures_match: bool = (
+		sol_t0 == CartoonAssets.get_texture("icon_skill_0_0")
+		and sol_t1 == CartoonAssets.get_texture("icon_skill_0_1")
+		and gun_t0 == CartoonAssets.get_texture("icon_skill_1_0")
+		and gun_t1 == CartoonAssets.get_texture("icon_skill_1_1")
+		and com_t0 == CartoonAssets.get_texture("icon_skill_2_0")
+		and com_t1 == CartoonAssets.get_texture("icon_skill_2_1")
+		and sol_t0 != gun_t0 and gun_t0 != com_t0 and sol_t0 != com_t0
+		and sol_t1 != gun_t1 and gun_t1 != com_t1 and sol_t1 != com_t1
+	)
+	var hud_tips_ok: bool = (
+		sol_tip0.contains("Combat Medicine")
+		and gun_tip0.contains("Hero Shield")
+		and com_tip0.contains("Stealth")
+	)
+	_assert(
+		hud_textures_match and hud_tips_ok,
+		"HUDController syncs distinct class skill icons and tooltips when switching Soldier/Gunner/Commando"
+	)
+
+	# 4. ClassSelectMenu "skills" guide navigation from Hub & Armory + card rendering
+	var menu := ClassSelectMenu.new()
+	add_child(menu)
+	await _flush_deferred()
+
+	var hub_sk_btn_ok: bool = menu._hub_skills_btn != null and menu._hub_skills_btn.visible
+	menu._hub_skills_btn.pressed.emit()
+	var hub_to_skills_ok: bool = menu.current_screen == "skills" and menu._skills_screen.visible and menu._skills_back_btn.text == "<- Voltar ao Hub"
+	menu._skills_back_btn.pressed.emit()
+	var back_hub_ok: bool = menu.current_screen == "hub" and menu._hub_screen.visible
+
+	menu.show_screen("armory")
+	menu.select_class(NetworkManager.CLASS_COMMANDO)
+	var arm_sk_btn_ok: bool = menu._armory_skills_btn != null and menu._armory_skills_btn.visible
+	menu._armory_skills_btn.pressed.emit()
+	var arm_to_skills_ok: bool = (
+		menu.current_screen == "skills"
+		and menu._skills_tab_class == NetworkManager.CLASS_COMMANDO
+		and menu._skills_back_btn.text == "<- Voltar ao Arsenal"
+		and menu._skills_grid.get_child_count() == 6
+	)
+
+	var found_mark_target: bool = false
+	var found_icon_tex: bool = false
+	for lbl_node in menu._skills_grid.find_children("*", "Label", true, false):
+		if (lbl_node as Label).text.contains("Mark Target"):
+			found_mark_target = true
+			break
+	for tex_node in menu._skills_grid.find_children("*", "TextureRect", true, false):
+		if (tex_node as TextureRect).texture != null:
+			found_icon_tex = true
+			break
+
+	menu.select_skills_tab(0)
+	var soldier_tab_count: int = menu._skills_grid.get_child_count()
+	var found_combat_med: bool = false
+	for lbl_node in menu._skills_grid.find_children("*", "Label", true, false):
+		if (lbl_node as Label).text.contains("Combat Medicine"):
+			found_combat_med = true
+			break
+
+	menu.select_skills_tab(3)
+	var widget_tab_count: int = menu._skills_grid.get_child_count()
+
+	menu._skills_back_btn.pressed.emit()
+	var back_armory_ok: bool = menu.current_screen == "armory" and menu._armory_screen.visible
+
+	_assert(
+		hub_sk_btn_ok and hub_to_skills_ok and back_hub_ok
+		and arm_sk_btn_ok and arm_to_skills_ok
+		and found_mark_target and found_icon_tex
+		and soldier_tab_count == 5 and found_combat_med and widget_tab_count == 4
+		and back_armory_ok,
+		"ClassSelectMenu opens Habilidades guide from Hub/Armory, renders cards/icons/stats, and returns cleanly"
+	)
+
+	menu.queue_free()
+	hud.queue_free()
+	h_sol.queue_free()
+	h_gun.queue_free()
+	h_com.queue_free()
