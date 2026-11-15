@@ -11,6 +11,11 @@ static func get_texture(key: String) -> ImageTexture:
 	if _cache.has(key):
 		return _cache[key]
 	var tex: ImageTexture = _generate_texture(key)
+	if tex != null and not (key.begins_with("icon_") or key.begins_with("flag_") or key.begins_with("portrait_")):
+		var img: Image = tex.get_image()
+		if img != null and not img.has_mipmaps():
+			img.generate_mipmaps()
+			tex = ImageTexture.create_from_image(img)
 	_cache[key] = tex
 	return tex
 
@@ -20,7 +25,7 @@ static func make_standard_material(tex_key: String, tint: Color = Color.WHITE, u
 	mat.albedo_color = tint
 	mat.albedo_texture = get_texture(tex_key)
 	mat.uv1_scale = Vector3(uv_scale.x, uv_scale.y, 1.0)
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	mat.roughness = roughness
 	return mat
 
@@ -189,14 +194,53 @@ static func _draw_line(img: Image, p0: Vector2, p1: Vector2, thickness: float, c
 
 
 static func _tex_grass() -> ImageTexture:
-	var img := _new_img(128, 128, Color(0.26, 0.66, 0.24))
+	var size: int = 256
+	var img := _new_img(size, size, Color(0.27, 0.65, 0.24))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 101
-	for _i in range(280):
-		var x: int = rng.randi_range(0, 120)
-		var y: int = rng.randi_range(0, 120)
-		var col := Color(0.32, 0.74, 0.26) if rng.randf() > 0.5 else Color(0.20, 0.56, 0.20)
-		_draw_rect(img, x, y, rng.randi_range(4, 10), rng.randi_range(2, 5), col)
+	# Soft painterly seamless meadow washes (low contrast + radial wrap prevents micro-blocks & distance moire)
+	for _i in range(42):
+		var cx: float = rng.randf_range(0.0, float(size))
+		var cy: float = rng.randf_range(0.0, float(size))
+		var rx: float = rng.randf_range(26.0, 56.0)
+		var ry: float = rng.randf_range(22.0, 48.0)
+		var col: Color = Color(0.31, 0.70, 0.26) if rng.randf() > 0.45 else Color(0.22, 0.57, 0.21)
+		var max_r: float = maxf(rx, ry)
+		var y0: int = int(floor(cy - ry))
+		var y1: int = int(ceil(cy + ry))
+		var x0: int = int(floor(cx - rx))
+		var x1: int = int(ceil(cx + rx))
+		for py in range(y0, y1 + 1):
+			var wy: int = posmod(py, size)
+			var dy: float = (float(py) - cy) / maxf(1.0, ry)
+			var dy2: float = dy * dy
+			if dy2 >= 1.0:
+				continue
+			for px in range(x0, x1 + 1):
+				var wx: int = posmod(px, size)
+				var dx: float = (float(px) - cx) / maxf(1.0, rx)
+				var d2: float = dx * dx + dy2
+				if d2 >= 1.0:
+					continue
+				var w: float = (1.0 - d2)
+				var alpha: float = w * w * 0.22
+				var cur: Color = img.get_pixel(wx, wy)
+				img.set_pixel(wx, wy, cur.lerp(col, alpha))
+	# Delicate painted blade wisps so close grass looks organic without high-frequency grid aliasing
+	for _b in range(96):
+		var bx: float = rng.randf_range(0.0, float(size))
+		var by: float = rng.randf_range(0.0, float(size))
+		var b_len: float = rng.randf_range(6.0, 12.0)
+		var tilt: float = rng.randf_range(-0.35, 0.35)
+		var b_col: Color = Color(0.33, 0.73, 0.27) if rng.randf() > 0.5 else Color(0.21, 0.54, 0.19)
+		var steps: int = int(b_len)
+		for s in range(steps):
+			var t: float = float(s) / float(maxi(1, steps))
+			var sx: int = posmod(int(round(bx + tilt * float(s))), size)
+			var sy: int = posmod(int(round(by - float(s))), size)
+			var cur_p: Color = img.get_pixel(sx, sy)
+			img.set_pixel(sx, sy, cur_p.lerp(b_col, 0.16 * (1.0 - t * 0.6)))
+	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
 
 

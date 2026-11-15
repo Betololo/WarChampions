@@ -367,7 +367,7 @@ func _build_ocean_and_terrain() -> void:
 	terrain_mi.name = "TerrainMesh"
 	terrain_mi.mesh = terrain_mesh
 	terrain_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var terrain_mat: StandardMaterial3D = CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(120, 90))
+	var terrain_mat: StandardMaterial3D = CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(1.0, 1.0))
 	terrain_mat.vertex_color_use_as_albedo = true
 	terrain_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	terrain_mi.material_override = terrain_mat
@@ -897,11 +897,11 @@ func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), -1, Vector3(0.0, 3.2, -165.0), PI)
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), -1, Vector3(0.0, 3.0, 260.0), 0.0)
 
-	# Air Vehicles (2 Fighter Planes parked ready on each 220m Spawn Runway!)
-	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_ROYAL, Vector3(-562.0, 2.65, -90.0), -PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_ROYAL, Vector3(-528.0, 2.65, -90.0), -PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_NATIONAL, Vector3(562.0, 2.65, 105.0), PI * 0.5)
-	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_NATIONAL, Vector3(528.0, 2.65, 105.0), PI * 0.5)
+	# Air Vehicles (2 Fighter Planes staggered cleanly across lanes on each 220m Spawn Runway!)
+	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_ROYAL, Vector3(-566.0, 2.65, -95.2), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_ROYAL, Vector3(-536.0, 2.65, -84.8), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_NATIONAL, Vector3(566.0, 2.65, 110.2), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehiclePlane.new(), NetworkManager.TEAM_NATIONAL, Vector3(536.0, 2.65, 99.8), PI * 0.5)
 
 	# Water Vehicles (6 Patrol Boats moored closely beside all 3 Harbor Piers over deep sea Z > 542!)
 	_spawn_vehicle(vehicles_parent, VehicleBoat.new(), NetworkManager.TEAM_ROYAL, Vector3(-376.0, -0.15, 562.0), PI)

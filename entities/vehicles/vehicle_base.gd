@@ -80,6 +80,11 @@ func _ready() -> void:
 	can_sleep = false
 	contact_monitor = true
 	max_contacts_reported = 4
+	if physics_material_override == null:
+		var phys_mat := PhysicsMaterial.new()
+		phys_mat.friction = 0.02
+		phys_mat.bounce = 0.0
+		physics_material_override = phys_mat
 	spawn_transform = global_transform
 
 	_visual_root = Node3D.new()
@@ -196,6 +201,11 @@ func try_enter_hero(hero: HeroCharacter) -> int:
 			hero.current_seat_index = s.seat_index
 			hero.is_parachuting = false
 			hero.active_flags &= ~NetSerializer.SNAP_PARACHUTING
+			if is_aircraft() and s.seat_index == 0:
+				hero.aim_yaw = rotation.y
+				if hero.hero_camera != null:
+					hero.hero_camera.yaw = rotation.y
+					hero.hero_camera.pitch = maxf(hero.hero_camera.pitch, 0.06)
 			if hero._body_collision != null:
 				hero._body_collision.disabled = true
 			if hero.hero_camera != null:
@@ -411,17 +421,20 @@ func _apply_arcade_drive(
 	var steer_factor: float = 1.0
 	var dir_sign: float = 1.0
 	if not is_tank:
-		if throttle < -0.1 and fwd_speed < -0.5:
+		if throttle < -0.1 and fwd_speed <= 0.1:
 			dir_sign = -1.0
-		steer_factor = clampf(maxf(absf(throttle), absf(fwd_speed) / 3.5), 0.45, 1.0)
+		if absf(throttle) > 0.05 or absf(fwd_speed) > 0.4:
+			steer_factor = clampf(maxf(absf(throttle) * 0.75, absf(fwd_speed) / 4.5), 0.35, 1.0)
+		else:
+			steer_factor = 0.0
 
 	var target_yaw_rate: float = steer * turn_rate * steer_factor * dir_sign
 	angular_velocity.y = lerpf(angular_velocity.y, target_yaw_rate, minf(1.0, 10.0 * delta))
-	angular_velocity.x = lerpf(angular_velocity.x, 0.0, minf(1.0, 10.0 * delta))
-	angular_velocity.z = lerpf(angular_velocity.z, 0.0, minf(1.0, 10.0 * delta))
+	angular_velocity.x = lerpf(angular_velocity.x, 0.0, minf(1.0, 14.0 * delta))
+	angular_velocity.z = lerpf(angular_velocity.z, 0.0, minf(1.0, 14.0 * delta))
 
-	rotation.x = lerpf(rotation.x, 0.0, minf(1.0, 6.0 * delta))
-	rotation.z = lerpf(rotation.z, 0.0, minf(1.0, 6.0 * delta))
+	rotation.x = lerpf(rotation.x, 0.0, minf(1.0, 10.0 * delta))
+	rotation.z = lerpf(rotation.z, 0.0, minf(1.0, 10.0 * delta))
 
 	if absf(throttle) > 0.05:
 		if throttle > 0.0:
@@ -499,12 +512,12 @@ func _assist_curb_climb(throttle: float, lookahead_z: float, max_step: float = 0
 	var step_top_y: float = float(top_hit.get("position", Vector3.ZERO).y)
 	var step_h: float = step_top_y - global_position.y
 
-	# Require valid curb height and ensure vehicle is still below the step top (+0.04 margin)
-	if step_h < 0.06 or step_h > max_step or global_position.y >= step_top_y + 0.04:
+	# Ignore gentle sidewalks (< 0.16m) where wheel spheres already roll up cleanly; boost only taller curbs
+	if step_h < 0.16 or step_h > max_step or global_position.y >= step_top_y + 0.04:
 		return
 
 	# Bounded step lift proportional to step height
-	var target_vy: float = minf(2.8, sqrt(2.0 * 9.8 * step_h) + 0.65)
+	var target_vy: float = minf(2.2, sqrt(2.0 * 9.8 * step_h) + 0.35)
 	linear_velocity.y = maxf(linear_velocity.y, target_vy)
 	linear_velocity += drive_dir * 0.8
 
