@@ -163,7 +163,9 @@ func _build_sky_and_lighting() -> void:
 	sun.light_energy = 1.52
 	sun.light_color = Color(1.0, 0.96, 0.86)
 	sun.rotation_degrees = Vector3(-46.0, 36.0, 0.0)
-	sun.directional_shadow_max_distance = 260.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 190.0
+	sun.directional_shadow_blend_splits = false
 	sun.shadow_enabled = not DisplayServer.get_name().contains("headless")
 	add_child(sun)
 
@@ -178,16 +180,17 @@ func _build_ocean_and_terrain() -> void:
 	plane.subdivide_depth = 48
 	ocean_mesh.mesh = plane
 	ocean_mesh.position = Vector3(0.0, -0.35, 0.0)
+	ocean_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var water_mat := ShaderMaterial.new()
 	water_mat.shader = WATER_SHADER
 	ocean_mesh.material_override = water_mat
 	add_child(ocean_mesh)
 
 	# Deep Seafloor under ocean (top Y = -7.0)
-	_create_solid_box("Seafloor", Vector3(2400.0, 2.0, 2400.0), Vector3(0.0, -8.0, 0.0), CartoonAssets.make_standard_material("sand", Color(0.46, 0.56, 0.52), Vector2(48, 48)))
+	_create_solid_box("Seafloor", Vector3(2400.0, 2.0, 2400.0), Vector3(0.0, -8.0, 0.0), CartoonAssets.make_standard_material("sand", Color(0.46, 0.56, 0.52), Vector2(48, 48)), GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 
 	# Underwater foundation slab (1600m x 1080m) tucked beneath island base
-	_create_solid_box("BeachBase", Vector3(1600.0, 1.0, 1080.0), Vector3(0.0, -4.5, 0.0), CartoonAssets.make_standard_material("sand", Color.WHITE, Vector2(64, 44)))
+	_create_solid_box("BeachBase", Vector3(1600.0, 1.0, 1080.0), Vector3(0.0, -4.5, 0.0), CartoonAssets.make_standard_material("sand", Color.WHITE, Vector2(64, 44)), GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 
 	# Continuous Sculpted Heightfield Terrain (1600m x 1080m grid with rolling hills, valleys & carved river)
 	var nx: int = 134
@@ -363,6 +366,7 @@ func _build_ocean_and_terrain() -> void:
 	var terrain_mi := MeshInstance3D.new()
 	terrain_mi.name = "TerrainMesh"
 	terrain_mi.mesh = terrain_mesh
+	terrain_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var terrain_mat: StandardMaterial3D = CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(120, 90))
 	terrain_mat.vertex_color_use_as_albedo = true
 	terrain_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
@@ -407,29 +411,30 @@ func _build_roads_and_sidewalks() -> void:
 
 	# Main East-West Cobblestone Boulevard split around central river channel
 	# West section: X in [-640, 122], East section: X in [208, 640]
-	_create_solid_box("MainRoadEW", Vector3(762.0, 0.24, 16.0), Vector3(-259.0, 2.155, 40.0), cobble_ew)
-	_create_solid_box("MainRoadEW_E", Vector3(432.0, 0.24, 16.0), Vector3(424.0, 2.155, 40.0), cobble_ew)
-	_create_solid_box("SidewalkNorthW", Vector3(587.0, 0.34, 2.8), Vector3(-346.5, 2.19, 30.6), sw_ew)
-	_create_solid_box("SidewalkNorthE_Mid", Vector3(69.0, 0.34, 2.8), Vector3(87.5, 2.19, 30.6), sw_ew)
-	_create_solid_box("SidewalkNorthE", Vector3(432.0, 0.34, 2.8), Vector3(424.0, 2.19, 30.6), sw_ew)
-	_create_solid_box("SidewalkSouthW", Vector3(587.0, 0.34, 2.8), Vector3(-346.5, 2.19, 49.4), sw_ew)
-	_create_solid_box("SidewalkSouthE_Mid", Vector3(69.0, 0.34, 2.8), Vector3(87.5, 2.19, 49.4), sw_ew)
-	_create_solid_box("SidewalkSouthE", Vector3(432.0, 0.34, 2.8), Vector3(424.0, 2.19, 49.4), sw_ew)
+	var no_sh := GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_create_solid_box("MainRoadEW", Vector3(762.0, 0.24, 16.0), Vector3(-259.0, 2.155, 40.0), cobble_ew, no_sh)
+	_create_solid_box("MainRoadEW_E", Vector3(432.0, 0.24, 16.0), Vector3(424.0, 2.155, 40.0), cobble_ew, no_sh)
+	_create_solid_box("SidewalkNorthW", Vector3(587.0, 0.34, 2.8), Vector3(-346.5, 2.19, 30.6), sw_ew, no_sh)
+	_create_solid_box("SidewalkNorthE_Mid", Vector3(69.0, 0.34, 2.8), Vector3(87.5, 2.19, 30.6), sw_ew, no_sh)
+	_create_solid_box("SidewalkNorthE", Vector3(432.0, 0.34, 2.8), Vector3(424.0, 2.19, 30.6), sw_ew, no_sh)
+	_create_solid_box("SidewalkSouthW", Vector3(587.0, 0.34, 2.8), Vector3(-346.5, 2.19, 49.4), sw_ew, no_sh)
+	_create_solid_box("SidewalkSouthE_Mid", Vector3(69.0, 0.34, 2.8), Vector3(87.5, 2.19, 49.4), sw_ew, no_sh)
+	_create_solid_box("SidewalkSouthE", Vector3(432.0, 0.34, 2.8), Vector3(424.0, 2.19, 49.4), sw_ew, no_sh)
 
 	# Cross Town North-South Avenue (reaches South Harbor Coastal Loop at Z = 460)
-	_create_solid_box("CrossRoadNS", Vector3(15.0, 0.24, 820.0), Vector3(0.0, 2.14, 50.0), cobble_ns)
-	_create_solid_box("CrossWalkW", Vector3(2.8, 0.32, 353.0), Vector3(-8.9, 2.17, -183.5), sw_ns)
-	_create_solid_box("CrossWalkE", Vector3(2.8, 0.32, 353.0), Vector3(8.9, 2.17, -183.5), sw_ns)
+	_create_solid_box("CrossRoadNS", Vector3(15.0, 0.24, 820.0), Vector3(0.0, 2.14, 50.0), cobble_ns, no_sh)
+	_create_solid_box("CrossWalkW", Vector3(2.8, 0.32, 353.0), Vector3(-8.9, 2.17, -183.5), sw_ns, no_sh)
+	_create_solid_box("CrossWalkE", Vector3(2.8, 0.32, 353.0), Vector3(8.9, 2.17, -183.5), sw_ns, no_sh)
 
 	# Central Town Square Cobblestone Plaza Apron (top Y = 2.295m cleanly above roads)
-	_create_solid_box("TownSquarePlaza", Vector3(106.0, 0.26, 94.0), Vector3(0.0, 2.165, 40.0), cobble_plaza)
+	_create_solid_box("TownSquarePlaza", Vector3(106.0, 0.26, 94.0), Vector3(0.0, 2.165, 40.0), cobble_plaza, no_sh)
 
 	# South Harbor Coastal Link Road split around central river channel
 	# West section: X in [-420, 122], East section: X in [202, 420]
 	var cobble_sc := CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(36, 2))
-	_create_solid_box("SouthCoastalRoad", Vector3(542.0, 0.22, 13.0), Vector3(-149.0, 2.14, 444.0), cobble_sc)
-	_create_solid_box("SouthCoastalRoad_E", Vector3(218.0, 0.22, 13.0), Vector3(311.0, 2.14, 444.0), cobble_sc)
-	_create_solid_box("WestCoveRoad", Vector3(13.0, 0.22, 412.0), Vector3(-345.0, 2.14, 246.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(2, 22)))
+	_create_solid_box("SouthCoastalRoad", Vector3(542.0, 0.22, 13.0), Vector3(-149.0, 2.14, 444.0), cobble_sc, no_sh)
+	_create_solid_box("SouthCoastalRoad_E", Vector3(218.0, 0.22, 13.0), Vector3(311.0, 2.14, 444.0), cobble_sc, no_sh)
+	_create_solid_box("WestCoveRoad", Vector3(13.0, 0.22, 412.0), Vector3(-345.0, 2.14, 246.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(2, 22)), no_sh)
 
 	# Main & South Arched River Bridges spanning central river with >=4.6m headroom clearance
 	var rx_main: float = get_river_center_x(40.0)
@@ -444,10 +449,17 @@ func _build_roads_and_sidewalks() -> void:
 func _build_streetlamps_and_bunting() -> void:
 	var pole_mat := BuildingMeshBuilder.make_mat(Color(0.20, 0.22, 0.25), "", 0.50, 0.45)
 	var wood_mat := CartoonAssets.make_standard_material("bark")
-	var bulb_mat := BuildingMeshBuilder.make_mat(Color(1.0, 0.92, 0.58), "", 0.18, 0.0)
+	var bulb_mat := StandardMaterial3D.new()
+	bulb_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	bulb_mat.albedo_color = Color(1.0, 0.92, 0.58, 1.0)
+	bulb_mat.roughness = 0.18
 	bulb_mat.emission_enabled = true
 	bulb_mat.emission = Color(1.0, 0.86, 0.40)
 	bulb_mat.emission_energy_multiplier = 2.0
+
+	var dec_node := Node3D.new()
+	dec_node.name = "TownBunting"
+	add_child(dec_node)
 
 	# Boulevard Utility Poles & Town Square Streetlamps (skip central open plaza [-54, +54] and river channel)
 	for x in range(-360, 380, 65):
@@ -468,14 +480,14 @@ func _build_streetlamps_and_bunting() -> void:
 			lamp.mesh = lm
 			lamp.position = Vector3(px_n, 8.2, 30.8)
 			lamp.material_override = bulb_mat
-			add_child(lamp)
+			dec_node.add_child(lamp)
 			var arm := MeshInstance3D.new()
 			var am := BoxMesh.new()
 			am.size = Vector3(0.18, 0.18, 1.8)
 			arm.mesh = am
 			arm.position = Vector3(px_n, 8.5, 30.0)
 			arm.material_override = pole_mat
-			add_child(arm)
+			dec_node.add_child(arm)
 
 	# Festive Battlefield Heroes Triangle Pennant Bunting across Town Square Plaza (grounded posts at both ends)
 	var pennant_mats: Array[Material] = [
@@ -489,22 +501,24 @@ func _build_streetlamps_and_bunting() -> void:
 		for end_tag in [{"z": 29.0, "suffix": "N"}, {"z": 51.0, "suffix": "S"}]:
 			var pz_post: float = float(end_tag["z"])
 			_create_solid_box("BuntingPost_%d_%s" % [int(bx), str(end_tag["suffix"])], Vector3(0.28, 7.1, 0.28), Vector3(bx, 2.295 + 3.55, pz_post), pole_mat)
-			_create_solid_box("BuntingBase_%d_%s" % [int(bx), str(end_tag["suffix"])], Vector3(0.56, 0.36, 0.56), Vector3(bx, 2.295 + 0.18, pz_post), pole_mat)
+			_create_solid_box("BuntingBase_%d_%s" % [int(bx), str(end_tag["suffix"])], Vector3(0.56, 0.36, 0.56), Vector3(bx, 2.295 + 0.18, pz_post), pole_mat, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 			var finial := MeshInstance3D.new()
 			var fm := SphereMesh.new()
 			fm.radius = 0.20
 			fm.height = 0.40
+			fm.radial_segments = 8
+			fm.rings = 5
 			finial.mesh = fm
 			finial.position = Vector3(bx, 9.48, pz_post)
 			finial.material_override = finial_mat
-			add_child(finial)
+			dec_node.add_child(finial)
 		var cord := MeshInstance3D.new()
 		var cm := BoxMesh.new()
 		cm.size = Vector3(0.08, 0.08, 22.0)
 		cord.mesh = cm
 		cord.position = Vector3(bx, 9.2, 40.0)
 		cord.material_override = pole_mat
-		add_child(cord)
+		dec_node.add_child(cord)
 		for idx in range(9):
 			var pz: float = lerpf(30.5, 49.5, float(idx) / 8.0)
 			var sag: float = sin((float(idx) / 8.0) * PI) * 0.75
@@ -516,7 +530,9 @@ func _build_streetlamps_and_bunting() -> void:
 			flag.position = Vector3(bx, 8.85 - sag, pz)
 			flag.rotation.z = PI
 			flag.material_override = pennant_mats[idx % pennant_mats.size()]
-			add_child(flag)
+			dec_node.add_child(flag)
+
+	BuildingMeshBuilder.bake_static_hierarchy(dec_node, [], 999.0)
 
 
 func _build_runways_and_harbors() -> void:
@@ -535,7 +551,7 @@ func _build_landmarks_and_village() -> void:
 	# 1. Town Square Centerpiece: Sculpted Multi-Tier Fountain + Bustling Mercadinho + Church Chapel on flush plaza/parvis
 	BuildingMeshBuilder.build_central_fountain(self, Vector3(0.0, 2.295, 40.0))
 	BuildingMeshBuilder.build_mercadinho_complex(self, Vector3(28.0, 2.295, 66.0))
-	_create_solid_box("ChurchParvis", Vector3(18.0, 0.18, 23.0), Vector3(28.0, 2.205, -18.5), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(4, 5)))
+	_create_solid_box("ChurchParvis", Vector3(18.0, 0.18, 23.0), Vector3(28.0, 2.205, -18.5), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(4, 5)), GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 	BuildingMeshBuilder.build_church_chapel(self, Vector3(28.0, 2.295, -16.0), 0.0)
 
 	# 2. Windmill Landmark atop Windmill Hill (Flag B)
@@ -931,7 +947,13 @@ func get_spawn_position(team: int, slot_index: int) -> Vector3:
 	return Vector3(0.0, 4.0, 0.0)
 
 
-func _create_solid_box(node_name: String, size: Vector3, pos: Vector3, material: Material) -> StaticBody3D:
+func _create_solid_box(
+	node_name: String,
+	size: Vector3,
+	pos: Vector3,
+	material: Material,
+	shadow_mode: GeometryInstance3D.ShadowCastingSetting = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = node_name
 	body.collision_layer = 1
@@ -949,6 +971,7 @@ func _create_solid_box(node_name: String, size: Vector3, pos: Vector3, material:
 	mesh.size = size
 	mi.mesh = mesh
 	mi.material_override = material
+	mi.cast_shadow = shadow_mode
 	body.add_child(mi)
 
 	add_child(body)

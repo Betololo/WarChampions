@@ -6,6 +6,17 @@ extends RefCounted
 ## opaque Z-buffered armor/hulls, translucent tinted cockpit glass, and animated sub-pivots.
 
 
+static var _mat_cache: Dictionary = {}
+static var _palette_cache: Dictionary = {}
+static var _prim_cache: Dictionary = {}
+
+
+static func clear_caches() -> void:
+	_mat_cache.clear()
+	_palette_cache.clear()
+	_prim_cache.clear()
+
+
 static func make_mat(
 	col: Color,
 	tex_key: String = "",
@@ -14,9 +25,15 @@ static func make_mat(
 	alpha: float = 1.0,
 	uv_scale: Vector2 = Vector2.ONE
 ) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
 	var final_col: Color = col
-	final_col.a = alpha
+	var is_opaque: bool = alpha >= 0.99
+	final_col.a = 1.0 if is_opaque else alpha
+	var cache_key := "%s|%s|%.3f|%.3f|%.3f|%.2f,%.2f" % [
+		final_col.to_html(true), tex_key, roughness, metallic, final_col.a, uv_scale.x, uv_scale.y
+	]
+	if _mat_cache.has(cache_key):
+		return _mat_cache[cache_key] as StandardMaterial3D
+	var mat := StandardMaterial3D.new()
 	mat.albedo_color = final_col
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = roughness
@@ -26,10 +43,8 @@ static func make_mat(
 		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		mat.uv1_scale = Vector3(uv_scale.x, uv_scale.y, 1.0)
 	# Keep opaque parts strictly in Godot's opaque Z-buffer; allow alpha only for cockpit/windshield glass.
-	if alpha < 0.99:
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	else:
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED if is_opaque else BaseMaterial3D.TRANSPARENCY_ALPHA
+	_mat_cache[cache_key] = mat
 	return mat
 
 
@@ -41,13 +56,26 @@ static func add_part(parent: Node3D, mesh: Mesh, pos: Vector3, rot: Vector3, mat
 	mi.position = pos
 	mi.rotation = rot
 	mi.material_override = mat
+	var no_shadow: bool = (mat is StandardMaterial3D and (mat as StandardMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED)
+	if not no_shadow and not p_name.is_empty():
+		no_shadow = (
+			p_name in ["Rim", "Hubcap", "SpokeA", "SpokeB", "ExhaustRow", "WindscreenFrameTop", "RoundelOut", "RoundelMid", "RoundelCore", "CrossH", "CrossV", "Headlight", "HeadlightL", "HeadlightR"]
+			or p_name.begins_with("Gauge") or p_name.begins_with("Dial") or p_name.begins_with("Steering")
+		)
+	if no_shadow:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 260.0
 	parent.add_child(mi, true)
 	return mi
 
 
 static func _add_box(parent: Node3D, size: Vector3, pos: Vector3, rot: Vector3, mat: Material, p_name: String = "") -> MeshInstance3D:
-	var box := BoxMesh.new()
-	box.size = size
+	var key := "box|%.4f,%.4f,%.4f" % [size.x, size.y, size.z]
+	var box: BoxMesh = _prim_cache.get(key)
+	if box == null:
+		box = BoxMesh.new()
+		box.size = size
+		_prim_cache[key] = box
 	return add_part(parent, box, pos, rot, mat, p_name)
 
 
@@ -62,23 +90,33 @@ static func _add_cyl(
 	radial_seg: int = 16,
 	p_name: String = ""
 ) -> MeshInstance3D:
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = r_top
-	cyl.bottom_radius = r_bot
-	cyl.height = height
-	cyl.radial_segments = radial_seg
+	var key := "cyl|%.4f,%.4f,%.4f|%d" % [r_top, r_bot, height, radial_seg]
+	var cyl: CylinderMesh = _prim_cache.get(key)
+	if cyl == null:
+		cyl = CylinderMesh.new()
+		cyl.top_radius = r_top
+		cyl.bottom_radius = r_bot
+		cyl.height = height
+		cyl.radial_segments = radial_seg
+		_prim_cache[key] = cyl
 	return add_part(parent, cyl, pos, rot, mat, p_name)
 
 
 static func _make_palette(team: int) -> Dictionary:
-	var is_royal: bool = (team != 1)
+	var t_key: int = 1 if team == 1 else 0
+	if _palette_cache.has(t_key):
+		return _palette_cache[t_key] as Dictionary
+	var is_royal: bool = (t_key == 0)
 	var accent_col: Color = Color(0.95, 0.78, 0.22) if is_royal else Color(0.84, 0.16, 0.18)
 	var armor_tex: String = "veh_olive" if is_royal else "veh_panzer"
-	var head_mat := make_mat(Color(1.0, 0.95, 0.72), "", 0.18, 0.0)
+	var head_mat := StandardMaterial3D.new()
+	head_mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	head_mat.albedo_color = Color(1.0, 0.95, 0.72, 1.0)
+	head_mat.roughness = 0.18
 	head_mat.emission_enabled = true
 	head_mat.emission = Color(1.0, 0.90, 0.55)
 	head_mat.emission_energy_multiplier = 1.35
-	return {
+	var pal := {
 		"is_royal": is_royal,
 		"armor_mat": make_mat(Color.WHITE, armor_tex, 0.70, 0.18),
 		"armor_hi": make_mat(Color(1.0, 1.0, 0.98), armor_tex, 0.64, 0.22),
@@ -93,6 +131,8 @@ static func _make_palette(team: int) -> Dictionary:
 		"glass_mat": make_mat(Color(0.56, 0.82, 0.98), "", 0.10, 0.12, 0.40),
 		"headlight_mat": head_mat,
 	}
+	_palette_cache[t_key] = pal
+	return pal
 
 
 static func add_wheel(parent: Node3D, radius: float, width: float, pos: Vector3, tire_mat: Material, hub_mat: Material) -> Node3D:

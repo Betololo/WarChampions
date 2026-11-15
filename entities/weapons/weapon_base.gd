@@ -242,7 +242,9 @@ func step_timers(delta: float, cmd: InputCmd) -> void:
 	if cooldown_timer > 0.0:
 		cooldown_timer = maxf(0.0, cooldown_timer - delta)
 
-	_burst_bloom = maxf(0.0, _burst_bloom - delta / 0.28)
+	# Decay over 0.85s so automatic SMG/MG fire builds continuous bloom (~0.10-0.11 decay vs +0.24/shot)
+	# while slow-cadence Pistol (>=0.24s) and Sniper (1.1s) naturally reset cleanly between shots.
+	_burst_bloom = maxf(0.0, _burst_bloom - delta / 0.85)
 	if _burst_bloom <= 0.05:
 		_was_first_shot = true
 
@@ -279,7 +281,8 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 		return false
 
 	_was_first_shot = (_burst_bloom <= 0.05)
-	_burst_bloom = minf(1.0, _burst_bloom + 0.20)
+	var bloom_step: float = 0.24 if is_automatic else 0.25
+	_burst_bloom = minf(1.0, _burst_bloom + bloom_step)
 
 	cooldown_timer = fire_interval
 	if not is_melee:
@@ -292,6 +295,23 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 
 func is_first_shot() -> bool:
 	return _was_first_shot or _burst_bloom <= 0.05
+
+
+func get_current_spread_mult(is_aiming: bool = false, has_frenzy_fire: bool = false) -> float:
+	if pellet_count > 1:
+		return 1.0
+	if is_sniper and is_aiming:
+		return 0.0
+	# Automatic weapons (SMG / MG) ALWAYS carry real bullet spread and ramp up during sustained fire
+	if is_automatic:
+		var auto_mult: float = lerpf(0.70, 1.85, _burst_bloom)
+		if weapon_kind == WeaponKind.MG and has_frenzy_fire:
+			auto_mult *= 0.45
+		return auto_mult
+	# Semi-auto / bolt precision weapons (Pistol, Sniper) are 100% pinpoint once spread resets
+	if is_first_shot():
+		return 0.0
+	return lerpf(0.25, 1.0, _burst_bloom)
 
 
 func reset_weapon() -> void:
@@ -397,8 +417,10 @@ func apply_spread(dir: Vector3, spread_mult: float = 1.0) -> Vector3:
 	var s: float = spread_rad * spread_mult
 	if s <= 0.0001:
 		return dir
-	var rx: float = randf_range(-s, s)
-	var ry: float = randf_range(-s, s)
+	var ang: float = randf_range(0.0, TAU)
+	var rad: float = sqrt(randf()) * s
+	var rx: float = cos(ang) * rad
+	var ry: float = sin(ang) * rad
 	var right: Vector3 = dir.cross(Vector3.UP)
 	if right.length_squared() < 0.001:
 		right = Vector3.RIGHT

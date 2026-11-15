@@ -22,14 +22,9 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var origin: Vector3 = aim["origin"]
 	var base_dir: Vector3 = aim["dir"]
 
-	var spread_mult: float = 1.0
-	if is_sniper and cmd.has_button(InputCmd.BTN_AIM):
-		spread_mult = 0.0
-	elif pellet_count == 1 and is_first_shot():
-		spread_mult = 0.0
-	elif owner_hero.status_effects != null and owner_hero.status_effects.has_method("has_frenzy_fire"):
-		if weapon_kind == WeaponKind.MG and owner_hero.status_effects.has_frenzy_fire():
-			spread_mult = 0.35
+	var is_aiming: bool = cmd.has_button(InputCmd.BTN_AIM)
+	var has_frenzy: bool = owner_hero.status_effects != null and owner_hero.status_effects.has_method("has_frenzy_fire") and owner_hero.status_effects.has_frenzy_fire()
+	var spread_mult: float = get_current_spread_mult(is_aiming, has_frenzy)
 
 	var dmg_mult: float = 1.0
 	if is_sniper and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_piercing_shot_mult"):

@@ -79,8 +79,22 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 	if bot_hero.is_inside_tree() and bot_hero.get_world_3d() != null:
 		space_state = bot_hero.get_world_3d().direct_space_state
 
-	# 1. Look for nearest visible enemy hero (strict Layer-1 LOS + Stealth check!)
-	var target_enemy: HeroCharacter = _find_nearest_visible_enemy(heroes_by_id, space_state)
+	# 1. Look for nearest visible enemy hero (stagger full scan every 3rd tick per bot; validate engaged target in between)
+	var target_enemy: HeroCharacter = null
+	var do_full_scan: bool = (_ai_tick == 1) or (((_ai_tick + bot_hero.entity_id) % 3) == 0)
+	if not do_full_scan and _engaged_target_id >= 0:
+		var cand: HeroCharacter = heroes_by_id.get(_engaged_target_id) as HeroCharacter
+		if cand != null and is_instance_valid(cand) and not cand.is_defeated and cand.team != bot_hero.team:
+			var b_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
+			var c_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
+			var dist_sq: float = b_pos.distance_squared_to(c_pos)
+			var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 8.0
+			var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r)
+			if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth:
+				if has_line_of_sight(space_state, cand):
+					target_enemy = cand
+	elif do_full_scan:
+		target_enemy = _find_nearest_visible_enemy(heroes_by_id, space_state)
 	var desired_pos: Vector3 = _target_flag.global_position if _target_flag != null else Vector3.ZERO
 
 	# Heal if injured

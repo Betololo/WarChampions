@@ -344,10 +344,19 @@ func _create_arm_rig(
 	arm_pivot.add_child(forearm_pivot)
 	HeroMeshBuilder.add_part(forearm_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, forearm_mat, _mesh_parts)
 	if cuff_mesh != null:
-		HeroMeshBuilder.add_part(forearm_pivot, cuff_mesh, Vector3(0.0, -_forearm_len * 0.88, 0.0), Vector3.ZERO, cuff_mat, _mesh_parts)
+		var cuff_mi := HeroMeshBuilder.add_part(forearm_pivot, cuff_mesh, Vector3(0.0, -_forearm_len * 0.88, 0.0), Vector3.ZERO, cuff_mat, _mesh_parts)
+		cuff_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		cuff_mi.visibility_range_end = 220.0
 	var hand_rot := Vector3(0.0, PI if side_sign < 0.0 else 0.0, 0.0)
 	HeroMeshBuilder.add_part(forearm_pivot, hand_mesh, Vector3(0.0, -_forearm_len, 0.0), hand_rot, hand_mat, _mesh_parts)
 	return [arm_pivot, forearm_pivot]
+
+
+func _mark_tiny_detail(mi: MeshInstance3D) -> MeshInstance3D:
+	if mi != null:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 220.0
+	return mi
 
 
 func _attach_torso_gear(style: Dictionary, mats: Dictionary) -> void:
@@ -361,19 +370,19 @@ func _attach_torso_gear(style: Dictionary, mats: Dictionary) -> void:
 	var waist_rz: float = float(prof["waist_rz"])
 
 	HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_torso_mesh(class_id), Vector3.ZERO, Vector3.ZERO, torso_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_collar_lapels_mesh(class_id), Vector3.ZERO, Vector3.ZERO, cloth_mat, _mesh_parts)
+	_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_collar_lapels_mesh(class_id), Vector3.ZERO, Vector3.ZERO, cloth_mat, _mesh_parts))
 	HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_waist_belt_mesh(class_id), Vector3.ZERO, Vector3.ZERO, leather_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_buckle_mesh(), Vector3(0.0, 0.075, -(waist_rz + 0.022)), Vector3.ZERO, buckle_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_bandolier_mesh(class_id), Vector3.ZERO, Vector3.ZERO, leather_mat, _mesh_parts)
+	_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_buckle_mesh(), Vector3(0.0, 0.075, -(waist_rz + 0.022)), Vector3.ZERO, buckle_mat, _mesh_parts))
+	_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_bandolier_mesh(class_id), Vector3.ZERO, Vector3.ZERO, leather_mat, _mesh_parts))
 
 	var pack_mat: Material = leather_mat if class_id == NetworkManager.CLASS_COMMANDO else ruck_mat
 	HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_backpack_mesh(class_id), Vector3.ZERO, Vector3.ZERO, pack_mat, _mesh_parts)
 	if class_id == NetworkManager.CLASS_COMMANDO:
-		HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_coat_tail_flap_mesh(), Vector3.ZERO, Vector3.ZERO, cloth_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_coat_tail_flap_mesh(), Vector3.ZERO, Vector3.ZERO, cloth_mat, _mesh_parts))
 
 	var pouch_mesh := HeroMeshBuilder.build_belt_pouch_mesh()
 	for side_sign in [-1.0, 1.0]:
-		HeroMeshBuilder.add_part(_torso_pivot, pouch_mesh, Vector3(side_sign * (waist_rx + 0.025), 0.08, 0.02), Vector3(0.0, side_sign * -PI * 0.5, 0.0), ruck_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, pouch_mesh, Vector3(side_sign * (waist_rx + 0.025), 0.08, 0.02), Vector3(0.0, side_sign * -PI * 0.5, 0.0), ruck_mat, _mesh_parts))
 
 	if not bool(style["rolled_vest_cap"]):
 		var is_pauldron: bool = bool(style["pauldron"])
@@ -381,12 +390,12 @@ func _attach_torso_gear(style: Dictionary, mats: Dictionary) -> void:
 		var ep_x: float = 0.255 if is_pauldron else 0.210
 		var ep_y: float = 0.565 if is_pauldron else 0.578
 		for side_sign in [-1.0, 1.0]:
-			HeroMeshBuilder.add_part(_torso_pivot, ep_mesh, Vector3(side_sign * ep_x, ep_y, 0.0), Vector3(0.0, 0.0, side_sign * -0.20), cloth_mat, _mesh_parts)
+			_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, ep_mesh, Vector3(side_sign * ep_x, ep_y, 0.0), Vector3(0.0, 0.0, side_sign * -0.20), cloth_mat, _mesh_parts))
 
 	var scarf_col: Color = style["scarf_col"]
 	if scarf_col.a > 0.01:
 		var scarf_mat := HeroMeshBuilder.make_sculpted_mat(scarf_col, "", 0.78)
-		HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_scarf_mesh(), Vector3.ZERO, Vector3.ZERO, scarf_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_torso_pivot, HeroMeshBuilder.build_scarf_mesh(), Vector3.ZERO, Vector3.ZERO, scarf_mat, _mesh_parts))
 
 
 func _attach_head_and_gear(style: Dictionary, mats: Dictionary) -> void:
@@ -395,25 +404,25 @@ func _attach_head_and_gear(style: Dictionary, mats: Dictionary) -> void:
 	var badge_mat: Material = mats["badge"]
 
 	HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_head_mesh(), Vector3.ZERO, Vector3.ZERO, skin_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_hair_cap_mesh(), Vector3.ZERO, Vector3.ZERO, hair_mat, _mesh_parts)
+	_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_hair_cap_mesh(), Vector3.ZERO, Vector3.ZERO, hair_mat, _mesh_parts))
 
 	var ear_mesh := HeroMeshBuilder.build_ear_mesh()
 	for side_sign in [-1.0, 1.0]:
-		HeroMeshBuilder.add_part(_head_pivot, ear_mesh, Vector3(side_sign * 0.128, 0.215, 0.01), Vector3(0.0, 0.0, side_sign * -0.18), skin_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, ear_mesh, Vector3(side_sign * 0.128, 0.215, 0.01), Vector3(0.0, 0.0, side_sign * -0.18), skin_mat, _mesh_parts))
 
 	var nose_mat := HeroMeshBuilder.make_sculpted_mat(Color(0.92, 0.72, 0.58), "", 0.72)
-	HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_nose_mesh(), Vector3(0.0, 0.205, -0.132), Vector3(-0.22, 0.0, 0.0), nose_mat, _mesh_parts)
+	_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_nose_mesh(), Vector3(0.0, 0.205, -0.132), Vector3(-0.22, 0.0, 0.0), nose_mat, _mesh_parts))
 
 	if bool(style["use_shades"]):
 		var shade_mat := HeroMeshBuilder.make_sculpted_mat(style["shade_col"], "", 0.18)
-		HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_sunglasses_mesh(), Vector3(0.0, 0.248, -0.142), Vector3.ZERO, shade_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_sunglasses_mesh(), Vector3(0.0, 0.248, -0.142), Vector3.ZERO, shade_mat, _mesh_parts))
 	else:
 		var eyes_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.35)
-		HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_eyes_mesh(), Vector3(0.0, 0.248, -0.138), Vector3.ZERO, eyes_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_eyes_mesh(), Vector3(0.0, 0.248, -0.138), Vector3.ZERO, eyes_mat, _mesh_parts))
 
 	var beard_style: int = int(style["beard_style"])
 	if beard_style >= 0:
-		HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_beard_mesh(beard_style), Vector3(0.0, 0.152, -0.128), Vector3.ZERO, hair_mat, _mesh_parts)
+		_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_beard_mesh(beard_style), Vector3(0.0, 0.152, -0.128), Vector3.ZERO, hair_mat, _mesh_parts))
 
 	match str(style["headgear"]):
 		"helmet":
@@ -425,7 +434,7 @@ func _attach_head_and_gear(style: Dictionary, mats: Dictionary) -> void:
 		"beret":
 			var beret_mat := HeroMeshBuilder.make_sculpted_mat(style["beret_col"], "", 0.80)
 			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_beret_mesh(), Vector3(-0.012, 0.302, 0.0), Vector3(0.04, 0.0, 0.18), beret_mat, _mesh_parts)
-			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_badge_mesh(), Vector3(0.046, 0.343, -0.118), Vector3(-0.10, 0.0, 0.12), badge_mat, _mesh_parts)
+			_mark_tiny_detail(HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_badge_mesh(), Vector3(0.046, 0.343, -0.118), Vector3(-0.10, 0.0, 0.12), badge_mat, _mesh_parts))
 		"fedora":
 			var fedora_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.76)
 			var fedora_mesh := HeroMeshBuilder.build_fedora_mesh(style["fedora_band"], style["fedora_col"])

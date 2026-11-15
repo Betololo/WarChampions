@@ -27,6 +27,12 @@ var _last_local_level: int = 1
 var _royal_spawn_idx: int = 0
 var _national_spawn_idx: int = 0
 var _switching_mode: bool = false
+var _loading_in_progress: bool = false
+var _skip_loading_screen: bool = false
+
+var _loading_layer: CanvasLayer
+var _loading_stage_lbl: Label
+var _loading_bar: ProgressBar
 
 
 func _ready() -> void:
@@ -129,6 +135,8 @@ func _sync_vehicle_authority_freeze() -> void:
 
 
 func _load_map() -> void:
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
 	for c in map_root.get_children():
 		c.queue_free()
 	for v in vehicles_root.get_children():
@@ -163,6 +171,127 @@ func _setup_ui() -> void:
 	if DisplayServer.get_name().contains("headless"):
 		hud.visible = false
 		class_menu.visible = false
+	_build_loading_overlay()
+
+
+func _build_loading_overlay() -> void:
+	_loading_layer = CanvasLayer.new()
+	_loading_layer.name = "LoadingOverlay"
+	_loading_layer.layer = 25
+	_loading_layer.visible = false
+	add_child(_loading_layer)
+
+	var bg := ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0.06, 0.09, 0.14, 0.96)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
+	_loading_layer.add_child(bg)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_loading_layer.add_child(center)
+
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(540.0, 220.0)
+	var card_sb := StyleBoxFlat.new()
+	card_sb.bg_color = Color(0.11, 0.15, 0.22, 0.98)
+	card_sb.border_color = Color(0.95, 0.78, 0.24, 0.92)
+	card_sb.set_border_width_all(2)
+	card_sb.set_corner_radius_all(10)
+	card.add_theme_stylebox_override("panel", card_sb)
+	center.add_child(card)
+
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 14)
+	var pad := MarginContainer.new()
+	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		pad.add_theme_constant_override(side, 28)
+	pad.add_child(vb)
+	card.add_child(pad)
+
+	var title_lbl := Label.new()
+	title_lbl.text = "WAR CHAMPIONS"
+	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_lbl.add_theme_font_size_override("font_size", 30)
+	title_lbl.add_theme_color_override("font_color", Color(1.0, 0.86, 0.26))
+	vb.add_child(title_lbl)
+
+	var map_lbl := Label.new()
+	map_lbl.text = "SEASIDE FRONTLINE  •  12 vs 12"
+	map_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	map_lbl.add_theme_font_size_override("font_size", 15)
+	map_lbl.add_theme_color_override("font_color", Color(0.76, 0.84, 0.94))
+	vb.add_child(map_lbl)
+
+	_loading_bar = ProgressBar.new()
+	_loading_bar.custom_minimum_size = Vector2(460.0, 26.0)
+	_loading_bar.min_value = 0.0
+	_loading_bar.max_value = 100.0
+	_loading_bar.value = 0.0
+	_loading_bar.show_percentage = true
+	vb.add_child(_loading_bar)
+
+	_loading_stage_lbl = Label.new()
+	_loading_stage_lbl.text = "Inicializando cache da partida..."
+	_loading_stage_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_loading_stage_lbl.add_theme_font_size_override("font_size", 14)
+	_loading_stage_lbl.add_theme_color_override("font_color", Color(0.92, 0.94, 0.96))
+	vb.add_child(_loading_stage_lbl)
+
+
+func set_loading_state(is_visible: bool, progress_pct: float = 0.0, stage_text: String = "") -> void:
+	if _loading_layer != null:
+		_loading_layer.visible = is_visible
+	if _loading_bar != null:
+		_loading_bar.value = clampf(progress_pct, 0.0, 100.0)
+	if _loading_stage_lbl != null and not stage_text.is_empty():
+		_loading_stage_lbl.text = stage_text
+
+
+func is_loading_visible() -> bool:
+	return _loading_layer != null and _loading_layer.visible
+
+
+func _should_use_loading_screen() -> bool:
+	if _skip_loading_screen:
+		return false
+	if DisplayServer.get_name().contains("headless"):
+		return false
+	if not OS.get_cmdline_user_args().is_empty():
+		return false
+	return is_inside_tree() and _loading_layer != null
+
+
+func _run_with_loading_screen(deploy_text: String, on_ready_call: Callable) -> void:
+	if _loading_in_progress:
+		return
+	_loading_in_progress = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	set_loading_state(true, 15.0, "Carregando mapa e cache de texturas...")
+	await get_tree().process_frame
+
+	GameCache.warm_textures()
+	set_loading_state(true, 45.0, "Pré-carregando malhas 3D, armas e veículos...")
+	await get_tree().process_frame
+
+	GameCache.warm_meshes()
+	set_loading_state(true, 75.0, "Compilando shaders e cachê da GPU...")
+	var prewarm_node: Node3D = GameCache.prewarm_gpu_pipelines(self)
+	await get_tree().process_frame
+	if prewarm_node != null:
+		await get_tree().process_frame
+		GameCache.cleanup_prewarm(prewarm_node)
+
+	set_loading_state(true, 92.0, deploy_text)
+	on_ready_call.call()
+	await get_tree().process_frame
+
+	set_loading_state(true, 100.0, "Partida pronta!")
+	set_loading_state(false, 100.0, "")
+	_loading_in_progress = false
+	if class_menu != null and not class_menu.visible:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -214,6 +343,15 @@ func _on_leave_match() -> void:
 
 
 func _on_host_online(team: int, class_id: int, port: int) -> void:
+	if _should_use_loading_screen():
+		_run_with_loading_screen("Abrindo sala online e preparando spawn...", func() -> void:
+			_start_host_sync(team, class_id, port)
+		)
+		return
+	_start_host_sync(team, class_id, port)
+
+
+func _start_host_sync(team: int, class_id: int, port: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
 	conquest_manager.reset_match()
@@ -225,6 +363,15 @@ func _on_host_online(team: int, class_id: int, port: int) -> void:
 
 
 func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
+	if _should_use_loading_screen():
+		_run_with_loading_screen("Conectando à sala online %s:%d..." % [ip, port], func() -> void:
+			_start_join_sync(team, class_id, ip, port)
+		)
+		return
+	_start_join_sync(team, class_id, ip, port)
+
+
+func _start_join_sync(team: int, class_id: int, ip: String, port: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
 	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
@@ -235,6 +382,15 @@ func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
 
 
 func _on_play_offline_bots(team: int, class_id: int) -> void:
+	if _should_use_loading_screen():
+		_run_with_loading_screen("Posicionando pelotões 12 vs 12 e iniciando partida...", func() -> void:
+			_start_bots_sync(team, class_id)
+		)
+		return
+	_start_bots_sync(team, class_id)
+
+
+func _start_bots_sync(team: int, class_id: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
 	conquest_manager.reset_match()

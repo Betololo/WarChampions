@@ -13,6 +13,16 @@ extends RefCounted
 
 const FOUNTAIN_WATER_SHADER: Shader = preload("res://vfx_shaders/fountain_water.gdshader")
 
+static var _cached_mats: Dictionary = {}
+static var _cached_palette: Dictionary = {}
+static var _cached_tree_meshes: Dictionary = {}
+
+
+static func clear_caches() -> void:
+	_cached_mats.clear()
+	_cached_palette.clear()
+	_cached_tree_meshes.clear()
+
 
 static func make_mat(
 	col: Color,
@@ -22,14 +32,19 @@ static func make_mat(
 	alpha: float = 1.0,
 	uv_scale: Vector2 = Vector2.ONE
 ) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
 	var final_col: Color = col
-	if alpha >= 0.99:
+	var is_opaque: bool = alpha >= 0.99
+	if is_opaque:
 		final_col.a = 1.0
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	else:
 		final_col.a = alpha
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var cache_key := "%s|%s|%.3f|%.3f|%.3f|%.2f,%.2f" % [
+		final_col.to_html(true), tex_key, roughness, metallic, 1.0 if is_opaque else alpha, uv_scale.x, uv_scale.y
+	]
+	if _cached_mats.has(cache_key):
+		return _cached_mats[cache_key] as StandardMaterial3D
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED if is_opaque else BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.albedo_color = final_col
 	mat.vertex_color_use_as_albedo = true
 	mat.roughness = roughness
@@ -38,18 +53,26 @@ static func make_mat(
 		mat.albedo_texture = CartoonAssets.get_texture(tex_key)
 		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		mat.uv1_scale = Vector3(uv_scale.x, uv_scale.y, 1.0)
+	_cached_mats[cache_key] = mat
 	return mat
 
 
 static func _make_palette() -> Dictionary:
+	if not _cached_palette.is_empty():
+		return _cached_palette
 	var glass_mat := make_mat(Color(0.54, 0.80, 0.96), "", 0.12, 0.10, 0.56)
 	var beacon_glass := make_mat(Color(1.0, 0.92, 0.58), "", 0.08, 0.10, 0.48)
-	var glow_gold := make_mat(Color(1.0, 0.90, 0.42), "", 0.20, 0.0)
+	var glow_gold := StandardMaterial3D.new()
+	glow_gold.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	glow_gold.albedo_color = Color(1.0, 0.90, 0.42, 1.0)
+	glow_gold.vertex_color_use_as_albedo = true
+	glow_gold.roughness = 0.20
+	glow_gold.metallic = 0.0
 	glow_gold.emission_enabled = true
 	glow_gold.emission = Color(1.0, 0.84, 0.32)
 	glow_gold.emission_energy_multiplier = 2.4
 	var fountain_water := make_mat(Color(0.84, 0.98, 1.0), "water_fountain", 0.14, 0.06, 0.84, Vector2(2.0, 2.0))
-	return {
+	_cached_palette = {
 		"stone": make_mat(Color.WHITE, "stone_masonry", 0.86, 0.02, 1.0, Vector2(2.5, 1.5)),
 		"stone_trim": make_mat(Color(0.84, 0.81, 0.76), "stone_masonry", 0.84, 0.02, 1.0, Vector2(1.2, 1.0)),
 		"ochre": make_mat(Color.WHITE, "stucco_ochre", 0.84, 0.02, 1.0, Vector2(2.0, 1.5)),
@@ -81,6 +104,210 @@ static func _make_palette() -> Dictionary:
 		"glow_gold": glow_gold,
 		"water": fountain_water,
 	}
+	return _cached_palette
+
+
+static func _collect_bake_candidates(
+	node: Node,
+	root: Node3D,
+	keep_names: Array[String],
+	out_meshes: Array[MeshInstance3D],
+	out_wrappers: Array[Node3D]
+) -> void:
+	for child in node.get_children():
+		if keep_names.has(child.name):
+			continue
+		if child is MeshInstance3D:
+			out_meshes.append(child as MeshInstance3D)
+		else:
+			if child is Node3D and not (child is CollisionShape3D) and not (child is CollisionObject3D) and not (child is GPUParticles3D) and not (child is Light3D):
+				out_wrappers.append(child as Node3D)
+			_collect_bake_candidates(child, root, keep_names, out_meshes, out_wrappers)
+
+
+static func _append_surface_to_bucket(
+	bucket: Dictionary,
+	mat: Material,
+	mesh: Mesh,
+	surf_idx: int,
+	rel_xform: Transform3D,
+	normal_basis: Basis
+) -> void:
+	var arr: Array
+	if mesh is ArrayMesh:
+		if (mesh as ArrayMesh).surface_get_primitive_type(surf_idx) != Mesh.PRIMITIVE_TRIANGLES:
+			return
+		arr = mesh.surface_get_arrays(surf_idx)
+	elif mesh is PrimitiveMesh:
+		arr = (mesh as PrimitiveMesh).get_mesh_arrays()
+	else:
+		arr = mesh.surface_get_arrays(surf_idx)
+	if arr.is_empty():
+		return
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	if verts.is_empty():
+		return
+	var normals_in = arr[Mesh.ARRAY_NORMAL]
+	var uvs_in = arr[Mesh.ARRAY_TEX_UV]
+	var cols_in = arr[Mesh.ARRAY_COLOR]
+	var idx_in = arr[Mesh.ARRAY_INDEX]
+
+	var entry: Dictionary
+	if bucket.has(mat):
+		entry = bucket[mat]
+	else:
+		entry = {
+			"verts": PackedVector3Array(),
+			"normals": PackedVector3Array(),
+			"uvs": PackedVector2Array(),
+			"colors": PackedColorArray(),
+			"indices": PackedInt32Array(),
+		}
+		bucket[mat] = entry
+
+	var v_out: PackedVector3Array = entry["verts"]
+	var n_out: PackedVector3Array = entry["normals"]
+	var u_out: PackedVector2Array = entry["uvs"]
+	var c_out: PackedColorArray = entry["colors"]
+	var i_out: PackedInt32Array = entry["indices"]
+
+	var base_v: int = v_out.size()
+	var has_n: bool = normals_in != null and (normals_in as PackedVector3Array).size() == verts.size()
+	var has_u: bool = uvs_in != null and (uvs_in as PackedVector2Array).size() == verts.size()
+	var has_c: bool = cols_in != null and (cols_in as PackedColorArray).size() == verts.size()
+	var n_vec_in: PackedVector3Array = normals_in if has_n else PackedVector3Array()
+	var u_vec_in: PackedVector2Array = uvs_in if has_u else PackedVector2Array()
+	var c_vec_in: PackedColorArray = cols_in if has_c else PackedColorArray()
+
+	for vi in range(verts.size()):
+		v_out.append(rel_xform * verts[vi])
+		var nn: Vector3 = (normal_basis * n_vec_in[vi]).normalized() if has_n else Vector3.UP
+		n_out.append(nn if nn.length_squared() > 1e-6 else Vector3.UP)
+		u_out.append(u_vec_in[vi] if has_u else Vector2.ZERO)
+		c_out.append(c_vec_in[vi] if has_c else Color.WHITE)
+
+	if idx_in != null and (idx_in as PackedInt32Array).size() > 0:
+		var idx_arr: PackedInt32Array = idx_in
+		for ii in range(idx_arr.size()):
+			i_out.append(idx_arr[ii] + base_v)
+	else:
+		for vi in range(verts.size()):
+			i_out.append(vi + base_v)
+
+
+static func _finalize_bucket_mesh(
+	root: Node3D,
+	bucket: Dictionary,
+	node_name: String,
+	cast_shadow: GeometryInstance3D.ShadowCastingSetting,
+	vis_end: float = 0.0
+) -> MeshInstance3D:
+	if bucket.is_empty():
+		return null
+	var am := ArrayMesh.new()
+	var surf_i: int = 0
+	for mat in bucket.keys():
+		var e: Dictionary = bucket[mat]
+		var verts: PackedVector3Array = e["verts"]
+		if verts.is_empty():
+			continue
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = e["normals"]
+		arrays[Mesh.ARRAY_TEX_UV] = e["uvs"]
+		arrays[Mesh.ARRAY_COLOR] = e["colors"]
+		arrays[Mesh.ARRAY_INDEX] = e["indices"]
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		if mat != null:
+			am.surface_set_material(surf_i, mat as Material)
+		surf_i += 1
+	if surf_i == 0:
+		return null
+	var mi := MeshInstance3D.new()
+	mi.name = node_name
+	mi.mesh = am
+	mi.cast_shadow = cast_shadow
+	if vis_end > 0.0:
+		mi.visibility_range_end = vis_end
+	root.add_child(mi)
+	return mi
+
+
+## Merges static MeshInstance3Ds under `root` into up to 3 multi-surface ArrayMeshes
+## (BakedOpaque with shadows, BakedTrim without shadows, BakedGlass translucent),
+## preserving CollisionShape3Ds, GPUParticles3Ds, and named subtrees in `keep_names`.
+static func bake_static_hierarchy(
+	root: Node3D,
+	keep_names: Array[String] = [],
+	detail_size_threshold: float = 0.72
+) -> void:
+	if root == null:
+		return
+	var meshes: Array[MeshInstance3D] = []
+	var wrappers: Array[Node3D] = []
+	_collect_bake_candidates(root, root, keep_names, meshes, wrappers)
+	if meshes.is_empty():
+		return
+
+	var opaque_buckets: Dictionary = {}
+	var trim_buckets: Dictionary = {}
+	var glass_buckets: Dictionary = {}
+
+	for mi in meshes:
+		if mi.mesh == null:
+			continue
+		var rel_xform := Transform3D.IDENTITY
+		var cur: Node = mi
+		while cur != null and cur != root:
+			if cur is Node3D:
+				rel_xform = (cur as Node3D).transform * rel_xform
+			cur = cur.get_parent()
+		if absf(rel_xform.basis.determinant()) <= 1e-6:
+			continue
+		var normal_basis: Basis = rel_xform.basis.inverse().transposed()
+		var local_sz: Vector3 = mi.mesh.get_aabb().size
+		var bx: Vector3 = rel_xform.basis.x.abs()
+		var by: Vector3 = rel_xform.basis.y.abs()
+		var bz: Vector3 = rel_xform.basis.z.abs()
+		var world_sz: Vector3 = bx * local_sz.x + by * local_sz.y + bz * local_sz.z
+		var max_dim: float = maxf(world_sz.x, maxf(world_sz.y, world_sz.z))
+
+		var surf_cnt: int = mi.mesh.get_surface_count()
+		for s_idx in range(surf_cnt):
+			var mat: Material = mi.material_override
+			if mat == null:
+				mat = mi.get_surface_override_material(s_idx)
+			if mat == null:
+				mat = mi.mesh.surface_get_material(s_idx)
+			var is_translucent: bool = (mat is ShaderMaterial) or (
+				mat is StandardMaterial3D and (mat as StandardMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED
+			)
+			var target_bucket: Dictionary
+			if is_translucent:
+				target_bucket = glass_buckets
+			elif max_dim < detail_size_threshold:
+				target_bucket = trim_buckets
+			else:
+				target_bucket = opaque_buckets
+			_append_surface_to_bucket(target_bucket, mat, mi.mesh, s_idx, rel_xform, normal_basis)
+
+		var p: Node = mi.get_parent()
+		if p != null:
+			p.remove_child(mi)
+		mi.queue_free()
+
+	for i in range(wrappers.size() - 1, -1, -1):
+		var w: Node3D = wrappers[i]
+		if is_instance_valid(w) and w.get_child_count() == 0 and not keep_names.has(w.name):
+			var wp: Node = w.get_parent()
+			if wp != null:
+				wp.remove_child(w)
+			w.queue_free()
+
+	_finalize_bucket_mesh(root, opaque_buckets, "BakedOpaque", GeometryInstance3D.SHADOW_CASTING_SETTING_ON, 0.0)
+	_finalize_bucket_mesh(root, trim_buckets, "BakedTrim", GeometryInstance3D.SHADOW_CASTING_SETTING_OFF, 260.0)
+	_finalize_bucket_mesh(root, glass_buckets, "BakedGlass", GeometryInstance3D.SHADOW_CASTING_SETTING_OFF, 260.0)
 
 
 static func _make_static_body(parent: Node3D, node_name: String, origin: Vector3, yaw: float = 0.0) -> StaticBody3D:
@@ -419,6 +646,7 @@ static func build_town_house(parent: Node3D, origin: Vector3, yaw: float, style_
 			_add_shuttered_window(body, Vector3(wx, plinth_h + 5.1, -d * 0.5), PI, 1.35, 1.45, mats, shutter_mat, false)
 		_add_cafe_table(body, body, Vector3(2.8, 0.0, d * 0.5 + 2.4), mats)
 
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -483,6 +711,7 @@ static func build_church_chapel(parent: Node3D, origin: Vector3, yaw: float = 0.
 	_add_arched_doorway(body, Vector3(0.0, 0.0, tower_z + (tw + 0.5) * 0.5), 0.0, 2.6, 3.8, mats)
 	_add_cyl(body, 1.15, 1.15, 0.28, Vector3(0.0, lower_h + 4.4, tower_z + tw * 0.5 + 0.06), Vector3(PI * 0.5, 0.0, 0.0), mats["brass"], 16, "RoseWindowRim")
 	_add_cyl(body, 0.92, 0.92, 0.32, Vector3(0.0, lower_h + 4.4, tower_z + tw * 0.5 + 0.08), Vector3(PI * 0.5, 0.0, 0.0), mats["glass"], 16, "RoseWindowGlass")
+	bake_static_hierarchy(body, ["BellTowerLower", "BellTowerUpper"])
 	return body
 
 
@@ -524,6 +753,7 @@ static func build_windmill(parent: Node3D, origin: Vector3, yaw: float = 0.0) ->
 		_add_box(arm, Vector3(1.65, 6.2, 0.10), Vector3(0.95, 5.2, 0.06), Vector3(0.0, 0.14, 0.0), mats["canvas"])
 		for ry in [2.6, 4.2, 5.8, 7.4]:
 			_add_box(arm, Vector3(1.75, 0.14, 0.16), Vector3(0.95, ry, 0.08), Vector3(0.0, 0.14, 0.0), mats["timber_warm"])
+	bake_static_hierarchy(body, ["WindmillBlades"])
 	return body
 
 
@@ -547,7 +777,8 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 	fountain_shader_mat.shader = FOUNTAIN_WATER_SHADER
 
 	# Sparkling translucent lower water pool (ShaderMaterial with concentric ripples & foam crests)
-	_add_cyl(body, 4.35, 4.35, 0.18, Vector3(0.0, 0.74, 0.0), Vector3.ZERO, fountain_shader_mat, 16, "LowerWater")
+	var lower_w := _add_cyl(body, 4.35, 4.35, 0.18, Vector3(0.0, 0.74, 0.0), Vector3.ZERO, fountain_shader_mat, 16, "LowerWater")
+	lower_w.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	# Sculpted central carved pedestal + upper bowl + finial spout
 	var ped_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
@@ -559,7 +790,8 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 	], 16)
 	_add_mesh(body, ped_mesh, Vector3.ZERO, Vector3.ZERO, mats["stone_trim"], "CenterPedestal")
 	_add_cyl_col(body, 1.4, 3.6, Vector3(0.0, 1.8, 0.0))
-	_add_cyl(body, 1.85, 1.85, 0.10, Vector3(0.0, 3.19, 0.0), Vector3.ZERO, fountain_shader_mat, 14, "UpperWater")
+	var upper_w := _add_cyl(body, 1.85, 1.85, 0.10, Vector3(0.0, 3.19, 0.0), Vector3.ZERO, fountain_shader_mat, 14, "UpperWater")
+	upper_w.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	var spout_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
 		{"y": 3.05, "rx": 0.65, "rz": 0.65, "p": 2.0, "col": Color(0.90, 0.88, 0.85)},
@@ -647,8 +879,18 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 		splash_proc.initial_velocity_max = 2.2
 		splash_proc.gravity = Vector3(0.0, -12.0, 0.0)
 		splash.process_material = splash_proc
+		splash.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		body.add_child(splash, true)
 
+	for ch in body.get_children():
+		if ch is GPUParticles3D:
+			(ch as GPUParticles3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+	bake_static_hierarchy(body, [
+		"LowerWater", "UpperWater", "FountainPlume",
+		"FountainJet_0", "FountainJet_1", "FountainJet_2", "FountainJet_3",
+		"FountainSplash_0", "FountainSplash_1", "FountainSplash_2", "FountainSplash_3"
+	])
 	return body
 
 
@@ -706,6 +948,7 @@ static func build_mercadinho_complex(parent: Node3D, origin: Vector3) -> Node3D:
 	_add_box(body, Vector3(7.2, 0.78, 0.28), Vector3(0.0, 3.85, -8.2), Vector3.ZERO, mats["red_paint"])
 	_add_cafe_table(body, body, Vector3(-11.2, 0.14, 0.0), mats)
 	_add_cafe_table(body, body, Vector3(11.2, 0.14, 0.0), mats)
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -780,6 +1023,7 @@ static func build_coastal_lighthouse(parent: Node3D, origin: Vector3) -> Node3D:
 	_add_arched_doorway(cot, Vector3(0.0, 0.25, cd * 0.5), 0.0, 1.5, 2.5, mats)
 	_add_shuttered_window(cot, Vector3(-2.3, 2.6, cd * 0.5), 0.0, 1.25, 1.35, mats, mats["shutter_blue"], true)
 	_add_shuttered_window(cot, Vector3(2.3, 2.6, cd * 0.5), 0.0, 1.25, 1.35, mats, mats["shutter_blue"], true)
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -840,6 +1084,7 @@ static func build_watchtower(parent: Node3D, origin: Vector3, yaw: float = 0.0, 
 	_add_box_col(body, Vector3(2.1, 0.32, 1.85), Vector3(-3.65, deck_y - 0.16, -1.85))
 	for lx in [-4.5, -2.8]:
 		_add_box(body, Vector3(0.22, deck_y, 0.22), Vector3(lx, deck_y * 0.5, -2.55), Vector3.ZERO, mats["timber_dark"])
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -905,6 +1150,7 @@ static func build_airstrip_complex(parent: Node3D, origin: Vector3, yaw: float, 
 	_add_box_col(body, Vector3(8.5, 1.25, 1.15), Vector3(42.0, 0.62, -24.0))
 	for dx in [34.2, 35.4, 36.6]:
 		_add_cyl(body, 0.44, 0.44, 1.2, Vector3(dx, 0.6, -24.0), Vector3.ZERO, mats["red_paint"], 10)
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -935,7 +1181,91 @@ static func build_harbor_pier(parent: Node3D, origin: Vector3, yaw: float, pier_
 	for lz in [44.0, 82.0, 115.0]:
 		_add_box(body, Vector3(0.18, 3.4, 0.18), Vector3(-3.6, 2.7, lz), Vector3.ZERO, mats["iron"])
 		_add_cyl(body, 0.22, 0.22, 0.36, Vector3(-3.6, 4.45, lz), Vector3.ZERO, mats["glow_gold"], 10)
+	bake_static_hierarchy(body)
 	return body
+
+
+static func get_cached_tree_mesh(variant: int) -> ArrayMesh:
+	var v_kind: int = posmod(variant, 3)
+	if _cached_tree_meshes.has(v_kind):
+		return _cached_tree_meshes[v_kind] as ArrayMesh
+
+	var bark_mat := make_mat(Color.WHITE, "bark", 0.90, 0.02, 1.0, Vector2(1.0, 2.5))
+	var leaf_main := make_mat(Color.WHITE, "foliage", 0.84, 0.02, 1.0, Vector2(2.0, 2.0))
+	var leaf_bright := make_mat(Color(1.08, 1.12, 0.94), "foliage", 0.82, 0.02, 1.0, Vector2(2.0, 2.0))
+	var leaf_deep := make_mat(Color(0.68, 0.84, 0.68), "foliage", 0.86, 0.02, 1.0, Vector2(2.0, 2.0))
+
+	var tmp := Node3D.new()
+	if v_kind == 0:
+		# Broadleaf Mediterranean Oak (tapered loft trunk + fork branches + low-poly foliage spheres)
+		var trunk_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+			{"y": 0.0, "rx": 0.66, "rz": 0.64, "p": 2.0, "col": Color(0.84, 0.82, 0.80)},
+			{"y": 2.4, "rx": 0.44, "rz": 0.44, "p": 2.0, "col": Color(0.95, 0.94, 0.92)},
+			{"y": 4.8, "rx": 0.28, "rz": 0.28, "p": 2.0, "col": Color.WHITE},
+		], 10)
+		_add_mesh(tmp, trunk_mesh, Vector3.ZERO, Vector3.ZERO, bark_mat, "Trunk")
+		_add_cyl(tmp, 0.16, 0.26, 2.5, Vector3(-0.75, 4.6, 0.25), Vector3(0.12, 0.0, 0.55), bark_mat, 6)
+		_add_cyl(tmp, 0.16, 0.26, 2.4, Vector3(0.75, 4.7, -0.25), Vector3(-0.12, 0.0, -0.52), bark_mat, 6)
+		var blobs: Array[Dictionary] = [
+			{"pos": Vector3(0.0, 6.8, 0.0), "r": 2.9, "mat": leaf_main},
+			{"pos": Vector3(-1.7, 5.9, 0.8), "r": 2.15, "mat": leaf_deep},
+			{"pos": Vector3(1.8, 6.0, -0.7), "r": 2.20, "mat": leaf_bright},
+			{"pos": Vector3(0.2, 8.2, 0.2), "r": 2.05, "mat": leaf_bright},
+		]
+		for b in blobs:
+			var sm := SphereMesh.new()
+			sm.radius = float(b["r"])
+			sm.height = sm.radius * 1.48
+			sm.radial_segments = 12
+			sm.rings = 7
+			_add_mesh(tmp, sm, b["pos"], Vector3.ZERO, b["mat"])
+	elif v_kind == 1:
+		# Tall Slender Mediterranean Cypress (conical tiered spires)
+		_add_cyl(tmp, 0.26, 0.44, 3.2, Vector3(0.0, 1.6, 0.0), Vector3.ZERO, bark_mat, 8, "CypressTrunk")
+		var tiers: Array[Dictionary] = [
+			{"y0": 2.0, "y1": 6.4, "r0": 1.65, "r1": 0.95, "mat": leaf_deep},
+			{"y0": 4.8, "y1": 9.2, "r0": 1.38, "r1": 0.65, "mat": leaf_main},
+			{"y0": 7.6, "y1": 11.4, "r0": 0.96, "r1": 0.14, "mat": leaf_bright},
+		]
+		for t in tiers:
+			var spire: ArrayMesh = HeroMeshBuilder.make_loft([
+				{"y": float(t["y0"]), "rx": float(t["r0"]), "rz": float(t["r0"]), "p": 2.0, "col": Color(0.84, 0.88, 0.84)},
+				{"y": float(t["y1"]), "rx": float(t["r1"]), "rz": float(t["r1"]), "p": 2.0, "col": Color.WHITE},
+			], 10)
+			_add_mesh(tmp, spire, Vector3.ZERO, Vector3.ZERO, t["mat"])
+	else:
+		# Curved Coastal Palm Tree (arched loft trunk + drooping palm fronds + low-poly coconuts)
+		var palm_trunk: ArrayMesh = HeroMeshBuilder.make_loft([
+			{"y": 0.0, "x": 0.0, "rx": 0.44, "rz": 0.44, "p": 2.0, "col": Color(0.84, 0.80, 0.76)},
+			{"y": 2.2, "x": 0.35, "rx": 0.36, "rz": 0.36, "p": 2.0, "col": Color(0.92, 0.88, 0.84)},
+			{"y": 4.8, "x": 0.82, "rx": 0.29, "rz": 0.29, "p": 2.0, "col": Color(0.96, 0.94, 0.90)},
+			{"y": 7.2, "x": 1.15, "rx": 0.24, "rz": 0.24, "p": 2.0, "col": Color.WHITE},
+		], 8)
+		_add_mesh(tmp, palm_trunk, Vector3.ZERO, Vector3.ZERO, bark_mat, "PalmTrunk")
+		var crown_pos := Vector3(1.15, 7.25, 0.0)
+		for c_idx in range(3):
+			var ca: float = float(c_idx) * (TAU / 3.0)
+			var nut := SphereMesh.new()
+			nut.radius = 0.22
+			nut.height = 0.44
+			nut.radial_segments = 8
+			nut.rings = 4
+			_add_mesh(tmp, nut, crown_pos + Vector3(cos(ca) * 0.28, -0.22, sin(ca) * 0.28), Vector3.ZERO, bark_mat)
+		for f_idx in range(7):
+			var fa: float = float(f_idx) * (TAU / 7.0)
+			var frond := Node3D.new()
+			frond.position = crown_pos
+			frond.rotation.y = fa
+			tmp.add_child(frond)
+			_add_box(frond, Vector3(0.95, 0.10, 2.2), Vector3(0.0, 0.16, 1.05), Vector3(0.20, 0.0, 0.0), leaf_bright)
+			_add_box(frond, Vector3(0.75, 0.09, 2.0), Vector3(0.0, -0.28, 2.85), Vector3(0.42, 0.0, 0.0), leaf_main)
+
+	bake_static_hierarchy(tmp, [], 0.0)
+	var baked_node := tmp.get_node_or_null("BakedOpaque") as MeshInstance3D
+	var result_mesh: ArrayMesh = baked_node.mesh as ArrayMesh if baked_node != null else ArrayMesh.new()
+	tmp.free()
+	_cached_tree_meshes[v_kind] = result_mesh
+	return result_mesh
 
 
 static func build_layered_tree(parent: Node3D, origin: Vector3, variant: int = 0, scale_f: float = 1.0) -> Node3D:
@@ -948,73 +1278,19 @@ static func build_layered_tree(parent: Node3D, origin: Vector3, variant: int = 0
 	var s: float = maxf(0.6, scale_f)
 	tree.scale = Vector3(s, s, s)
 
-	var bark_mat := make_mat(Color.WHITE, "bark", 0.90, 0.02, 1.0, Vector2(1.0, 2.5))
-	var leaf_main := make_mat(Color.WHITE, "foliage", 0.84, 0.02, 1.0, Vector2(2.0, 2.0))
-	var leaf_bright := make_mat(Color(1.08, 1.12, 0.94), "foliage", 0.82, 0.02, 1.0, Vector2(2.0, 2.0))
-	var leaf_deep := make_mat(Color(0.68, 0.84, 0.68), "foliage", 0.86, 0.02, 1.0, Vector2(2.0, 2.0))
-
 	if v_kind == 0:
-		# Broadleaf Mediterranean Oak (tapered loft trunk + fork branches + layered foliage clusters)
 		_add_cyl_col(tree, 0.58, 5.6, Vector3(0.0, 2.8, 0.0))
-		var trunk_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-			{"y": 0.0, "rx": 0.66, "rz": 0.64, "p": 2.0, "col": Color(0.84, 0.82, 0.80)},
-			{"y": 2.4, "rx": 0.44, "rz": 0.44, "p": 2.0, "col": Color(0.95, 0.94, 0.92)},
-			{"y": 4.8, "rx": 0.28, "rz": 0.28, "p": 2.0, "col": Color.WHITE},
-		], 10)
-		_add_mesh(tree, trunk_mesh, Vector3.ZERO, Vector3.ZERO, bark_mat, "Trunk")
-		_add_cyl(tree, 0.16, 0.26, 2.5, Vector3(-0.75, 4.6, 0.25), Vector3(0.12, 0.0, 0.55), bark_mat, 8)
-		_add_cyl(tree, 0.16, 0.26, 2.4, Vector3(0.75, 4.7, -0.25), Vector3(-0.12, 0.0, -0.52), bark_mat, 8)
-		var blobs: Array[Dictionary] = [
-			{"pos": Vector3(0.0, 6.8, 0.0), "r": 2.9, "mat": leaf_main},
-			{"pos": Vector3(-1.7, 5.9, 0.8), "r": 2.15, "mat": leaf_deep},
-			{"pos": Vector3(1.8, 6.0, -0.7), "r": 2.20, "mat": leaf_bright},
-			{"pos": Vector3(0.2, 8.2, 0.2), "r": 2.05, "mat": leaf_bright},
-		]
-		for b in blobs:
-			var sm := SphereMesh.new()
-			sm.radius = float(b["r"])
-			sm.height = sm.radius * 1.48
-			_add_mesh(tree, sm, b["pos"], Vector3.ZERO, b["mat"])
 	elif v_kind == 1:
-		# Tall Slender Mediterranean Cypress (conical tiered spires)
 		_add_cyl_col(tree, 0.42, 7.5, Vector3(0.0, 3.75, 0.0))
-		_add_cyl(tree, 0.26, 0.44, 3.2, Vector3(0.0, 1.6, 0.0), Vector3.ZERO, bark_mat, 8, "CypressTrunk")
-		var tiers: Array[Dictionary] = [
-			{"y0": 2.0, "y1": 6.4, "r0": 1.65, "r1": 0.95, "mat": leaf_deep},
-			{"y0": 4.8, "y1": 9.2, "r0": 1.38, "r1": 0.65, "mat": leaf_main},
-			{"y0": 7.6, "y1": 11.4, "r0": 0.96, "r1": 0.14, "mat": leaf_bright},
-		]
-		for t in tiers:
-			var spire: ArrayMesh = HeroMeshBuilder.make_loft([
-				{"y": float(t["y0"]), "rx": float(t["r0"]), "rz": float(t["r0"]), "p": 2.0, "col": Color(0.84, 0.88, 0.84)},
-				{"y": float(t["y1"]), "rx": float(t["r1"]), "rz": float(t["r1"]), "p": 2.0, "col": Color.WHITE},
-			], 12)
-			_add_mesh(tree, spire, Vector3.ZERO, Vector3.ZERO, t["mat"])
 	else:
-		# Curved Coastal Palm Tree (arched loft trunk + drooping palm fronds + coconuts)
 		_add_cyl_col(tree, 0.42, 6.2, Vector3(0.35, 3.1, 0.0))
-		var palm_trunk: ArrayMesh = HeroMeshBuilder.make_loft([
-			{"y": 0.0, "x": 0.0, "rx": 0.44, "rz": 0.44, "p": 2.0, "col": Color(0.84, 0.80, 0.76)},
-			{"y": 2.2, "x": 0.35, "rx": 0.36, "rz": 0.36, "p": 2.0, "col": Color(0.92, 0.88, 0.84)},
-			{"y": 4.8, "x": 0.82, "rx": 0.29, "rz": 0.29, "p": 2.0, "col": Color(0.96, 0.94, 0.90)},
-			{"y": 7.2, "x": 1.15, "rx": 0.24, "rz": 0.24, "p": 2.0, "col": Color.WHITE},
-		], 10)
-		_add_mesh(tree, palm_trunk, Vector3.ZERO, Vector3.ZERO, bark_mat, "PalmTrunk")
-		var crown_pos := Vector3(1.15, 7.25, 0.0)
-		for c_idx in range(3):
-			var ca: float = float(c_idx) * (TAU / 3.0)
-			var nut := SphereMesh.new()
-			nut.radius = 0.22
-			nut.height = 0.44
-			_add_mesh(tree, nut, crown_pos + Vector3(cos(ca) * 0.28, -0.22, sin(ca) * 0.28), Vector3.ZERO, bark_mat)
-		for f_idx in range(7):
-			var fa: float = float(f_idx) * (TAU / 7.0)
-			var frond := Node3D.new()
-			frond.position = crown_pos
-			frond.rotation.y = fa
-			tree.add_child(frond)
-			_add_box(frond, Vector3(0.95, 0.10, 2.2), Vector3(0.0, 0.16, 1.05), Vector3(0.20, 0.0, 0.0), leaf_bright)
-			_add_box(frond, Vector3(0.75, 0.09, 2.0), Vector3(0.0, -0.28, 2.85), Vector3(0.42, 0.0, 0.0), leaf_main)
+
+	var mi := MeshInstance3D.new()
+	mi.name = "TreeMesh"
+	mi.mesh = get_cached_tree_mesh(v_kind)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	mi.visibility_range_end = 520.0
+	tree.add_child(mi)
 
 	parent.add_child(tree, true)
 	return tree
@@ -1082,6 +1358,7 @@ static func build_river_bridge(
 		# Keystone medallion at center
 		_add_box(body, Vector3(2.2, 1.1, 0.55), Vector3(0.0, deck_bot - 0.35, pz * 1.03), Vector3.ZERO, mats["stone"])
 
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -1125,6 +1402,7 @@ static func build_river_dock(
 	_add_box(body, Vector3(0.20, 3.4, 0.20), Vector3(-4.8, deck_y + 1.7, -0.6), Vector3.ZERO, wood_post)
 	_add_cyl(body, 0.22, 0.22, 0.36, Vector3(-4.8, deck_y + 3.4, -0.6), Vector3.ZERO, mats["glow_gold"], 8)
 
+	bake_static_hierarchy(body)
 	return body
 
 
@@ -1299,4 +1577,5 @@ static func build_farm_complex(
 	for rz in range(5, 12, 2):
 		_add_box(farm, Vector3(9.2, 0.32, 0.65), Vector3(17.0, 0.28, float(rz)), Vector3.ZERO, crop_green, "CropRow_%d" % rz)
 
+	bake_static_hierarchy(farm)
 	return farm

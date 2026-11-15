@@ -31,6 +31,7 @@ func _ready() -> void:
 	_test_parachute_delay_death_collapse_and_knockback()
 	_test_smooth_sync_packet_sequencing_and_menus()
 	await _test_step_climb_vehicle_arcade_and_roadkill()
+	_test_phase4_spread_and_optimization()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -2980,3 +2981,103 @@ func _test_step_climb_vehicle_arcade_and_roadkill() -> void:
 	ramp_body.queue_free()
 	r_driver.queue_free()
 	ramp_jeep.queue_free()
+
+
+func _test_phase4_spread_and_optimization() -> void:
+	# 1. Verify automatic weapons (SMG, MG) keep real bullet spread instead of 100% laser precision,
+	# while settled Pistol & scoped Sniper stay 100% precise.
+	var smg := WeaponBase.new()
+	smg.configure(null, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_BALANCED)
+	var mg := WeaponBase.new()
+	mg.configure(null, WeaponBase.WeaponKind.MG, NetworkManager.ARCHETYPE_BALANCED)
+	var sniper := WeaponBase.new()
+	sniper.configure(null, WeaponBase.WeaponKind.SNIPER, NetworkManager.ARCHETYPE_BALANCED)
+	var pistol := WeaponBase.new()
+	pistol.configure(null, WeaponBase.WeaponKind.PISTOL, NetworkManager.ARCHETYPE_BALANCED)
+
+	var fire_cmd := InputCmd.new()
+	fire_cmd.set_button(InputCmd.BTN_FIRE, true)
+	var idle_cmd := InputCmd.new()
+
+	for _shot in range(6):
+		smg.try_consume_fire(fire_cmd)
+		smg.step_timers(smg.fire_interval, idle_cmd)
+		mg.try_consume_fire(fire_cmd)
+		mg.step_timers(mg.fire_interval, idle_cmd)
+	smg.try_consume_fire(fire_cmd)
+	mg.try_consume_fire(fire_cmd)
+
+	var smg_mult: float = smg.get_current_spread_mult(false, false)
+	var mg_mult: float = mg.get_current_spread_mult(false, false)
+	_assert(smg._burst_bloom > 0.30 and smg_mult > 0.50, "Automatic SMG retains burst bloom (%.2f) and genuine spread_mult (%.2f)" % [smg._burst_bloom, smg_mult])
+	_assert(mg._burst_bloom > 0.30 and mg_mult > 0.50, "Automatic MG retains burst bloom (%.2f) and genuine spread_mult (%.2f)" % [mg._burst_bloom, mg_mult])
+
+	var base_aim := Vector3(0.0, 0.0, -1.0)
+	var sum_dir := Vector3.ZERO
+	var max_dev_rad: float = 0.0
+	for _s in range(16):
+		var sd: Vector3 = smg.apply_spread(base_aim, smg_mult)
+		sum_dir += sd
+		max_dev_rad = maxf(max_dev_rad, base_aim.angle_to(sd))
+	var avg_dir: Vector3 = sum_dir.normalized()
+	_assert(max_dev_rad > 0.005 and avg_dir.dot(base_aim) > 0.99, "SMG spread creates real cone dispersion (max_dev=%.4f rad) centered on aim" % max_dev_rad)
+
+	var scoped_sniper_mult: float = sniper.get_current_spread_mult(true, false)
+	pistol.try_consume_fire(fire_cmd)
+	pistol.step_timers(0.30, idle_cmd)
+	_assert(absf(scoped_sniper_mult) < 0.0001, "Scoped Sniper keeps 100%% first/scoped accuracy (mult=%.4f)" % scoped_sniper_mult)
+	_assert(pistol.is_first_shot() and absf(pistol.get_current_spread_mult(false, false)) < 0.0001, "Slow Pistol resets cleanly between shots to 100%% accuracy")
+	smg.free()
+	mg.free()
+	sniper.free()
+	pistol.free()
+
+	# 2. Verify GameCache & shared mesh/material instances
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
+	_assert(GameCache.is_textures_warmed() and GameCache.is_meshes_warmed(), "GameCache warms textures and shared meshes")
+	_assert(BuildingMeshBuilder.get_cached_tree_mesh(0) == BuildingMeshBuilder.get_cached_tree_mesh(0), "Tree meshes reuse cached ArrayMesh instances")
+	_assert(HeroMeshBuilder.build_torso_mesh(0) == HeroMeshBuilder.build_torso_mesh(0), "Hero meshes reuse cached ArrayMesh instances")
+
+	# 3. Verify Seaside Frontline static batching & material caching budget
+	var opt_map := MapSeasideFrontline.new()
+	var opt_conq := ConquestManager.new()
+	var opt_vehs := Node3D.new()
+	add_child(opt_vehs)
+	add_child(opt_map)
+	add_child(opt_conq)
+	opt_map.build_map(opt_conq, opt_vehs, {})
+
+	var map_meshes: Array[MeshInstance3D] = []
+	_collect_mesh_instances(opt_map, map_meshes)
+	var u_meshes: Dictionary = {}
+	var u_mats: Dictionary = {}
+	for mi in map_meshes:
+		if mi.mesh != null:
+			u_meshes[mi.mesh] = true
+		var m_ovr: Material = mi.material_override
+		if m_ovr != null:
+			u_mats[m_ovr] = true
+		elif mi.mesh != null:
+			for si in range(mi.mesh.get_surface_count()):
+				var sm := mi.mesh.surface_get_material(si)
+				if sm != null:
+					u_mats[sm] = true
+
+	_assert(map_meshes.size() <= 900, "Map MeshInstance3D count optimized <= 900 (found %d)" % map_meshes.size())
+	_assert(u_meshes.size() <= 350, "Map unique meshes optimized <= 350 (found %d)" % u_meshes.size())
+	_assert(u_mats.size() <= 200, "Map unique materials optimized <= 200 (found %d)" % u_mats.size())
+
+	opt_map.queue_free()
+	opt_conq.queue_free()
+	opt_vehs.queue_free()
+
+	# 4. Verify MainGame LoadingOverlay API
+	var main_inst := (load("res://scenes/main.tscn") as PackedScene).instantiate() as MainGame
+	add_child(main_inst)
+	_assert(not main_inst.is_loading_visible(), "MainGame LoadingOverlay starts hidden")
+	main_inst.set_loading_state(true, 65.0, "Carregando teste...")
+	_assert(main_inst.is_loading_visible() and absf(main_inst._loading_bar.value - 65.0) < 0.01, "MainGame LoadingOverlay displays progress cleanly")
+	main_inst.set_loading_state(false)
+	_assert(not main_inst.is_loading_visible(), "MainGame LoadingOverlay hides cleanly")
+	main_inst.queue_free()
