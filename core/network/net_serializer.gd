@@ -22,6 +22,20 @@ const SNAP_EMOTING: int = 1 << 13
 const SNAP_MARKED_TARGET: int = 1 << 14
 const SNAP_KEG_CONCUSSED: int = 1 << 15
 
+## Compact active buff flags (16-bit mask for overhead skill icons & remote rim VFX).
+const BUFF_HERO_SHIELD: int = 1 << 0
+const BUFF_LEG_IT: int = 1 << 1
+const BUFF_ELIXIR: int = 1 << 2
+const BUFF_BURNING_BULLETS: int = 1 << 3
+const BUFF_POISONED_BLADE: int = 1 << 4
+const BUFF_FRENZY_FIRE: int = 1 << 5
+const BUFF_PIERCING_SHOT: int = 1 << 6
+const BUFF_EAT_GRENADES: int = 1 << 7
+const BUFF_SIXTH_SENSE: int = 1 << 8
+const BUFF_COMBAT_MED_HOT: int = 1 << 9
+const BUFF_BANDAGE: int = 1 << 10
+const BUFF_FIREPROOF: int = 1 << 11
+
 
 static func _pack_angle_u16(radians: float) -> int:
 	var wrapped: float = fposmod(radians, TAU)
@@ -92,7 +106,8 @@ static func pack_authoritative_state(
 	shield: int,
 	vehicle_id: int,
 	seat_idx: int,
-	knockback_seq: int
+	knockback_seq: int,
+	buffs: int = 0
 ) -> PackedByteArray:
 	var buf := StreamPeerBuffer.new()
 	buf.put_u32(ack_tick)
@@ -108,6 +123,7 @@ static func pack_authoritative_state(
 	buf.put_16(clampi(vehicle_id, -1, 32767))
 	buf.put_8(clampi(seat_idx, -1, 127))
 	buf.put_u8(knockback_seq & 0xFF)
+	buf.put_u16(buffs & 0xFFFF)
 	return buf.data_array
 
 
@@ -124,6 +140,7 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 	var vehicle_id: int = buf.get_16()
 	var seat_idx: int = buf.get_8()
 	var knockback_seq: int = buf.get_u8()
+	var buffs: int = buf.get_u16() if bytes.size() >= 40 else 0
 	return {
 		"ack_tick": ack_tick,
 		"pos": pos,
@@ -134,6 +151,7 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 		"vehicle_id": vehicle_id,
 		"seat_idx": seat_idx,
 		"knockback_seq": knockback_seq,
+		"buffs": buffs,
 	}
 
 
@@ -174,6 +192,7 @@ static func pack_world_snapshot(
 		var meta: int = (int(h.get("team", 0)) & 0x3) | ((int(h.get("class_id", 0)) & 0x3) << 2) | ((int(h.get("weapon_slot", 0)) & 0x3) << 4)
 		buf.put_u8(meta)
 		buf.put_u16(int(h.get("flags", 0)) & 0xFFFF)
+		buf.put_u16(int(h.get("buffs", 0)) & 0xFFFF)
 		var pos: Vector3 = h.get("pos", Vector3.ZERO)
 		buf.put_float(pos.x)
 		buf.put_float(pos.y)
@@ -244,6 +263,7 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 		var id: int = buf.get_u32()
 		var meta: int = buf.get_u8()
 		var flags: int = buf.get_u16()
+		var buffs: int = buf.get_u16()
 		var pos := Vector3(buf.get_float(), buf.get_float(), buf.get_float())
 		var vel: Vector3 = _get_vec3_s16_vel(buf)
 		var yaw: float = _unwrap_signed_angle(_unpack_angle_u16(buf.get_u16()))
@@ -258,6 +278,7 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 			"class_id": (meta >> 2) & 0x3,
 			"weapon_slot": (meta >> 4) & 0x3,
 			"flags": flags,
+			"buffs": buffs,
 			"pos": pos,
 			"vel": vel,
 			"yaw": yaw,

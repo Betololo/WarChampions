@@ -34,11 +34,14 @@ var current_screen: String = "hub"
 var _in_match_mode: bool = false
 var _pending_mode: String = "bots" # "bots", "host", "join"
 var _settings_return_screen: String = "hub"
+var _skills_return_screen: String = "hub"
+var _skills_tab_class: int = 0
 
 ## Screens
 var _hub_screen: Control
 var _armory_screen: Control
 var _settings_screen: Control
+var _skills_screen: Control
 
 ## Common UI Elements
 var _ip_input: LineEdit
@@ -60,7 +63,9 @@ var _deploy_btn: Button
 var _mp_card: PanelContainer
 var _mp_drawer: VBoxContainer
 var _hub_settings_btn: Button
+var _hub_skills_btn: Button
 var _armory_settings_btn: Button
+var _armory_skills_btn: Button
 var _weapon_variant_row: HBoxContainer
 var _weapon_variant_selectors: Array[OptionButton] = []
 
@@ -79,6 +84,11 @@ var _widget_hotkey_buttons: Array[Button] = []
 var _reset_hotkeys_btn: Button
 var _listening_hotkey_kind: String = "" # "skill" | "widget" | ""
 var _listening_hotkey_slot: int = -1
+
+## Skills Guide UI Elements
+var _skills_back_btn: Button
+var _skills_tab_buttons: Array[Button] = []
+var _skills_grid: GridContainer
 
 
 func _ready() -> void:
@@ -170,6 +180,7 @@ func _build_ui() -> void:
 	_build_hub_screen(stack)
 	_build_armory_screen(stack)
 	_build_settings_screen(stack)
+	_build_skills_screen(stack)
 
 
 func _build_hub_screen(parent: Control) -> void:
@@ -314,15 +325,25 @@ func _build_hub_screen(parent: Control) -> void:
 
 	var armory_btn := Button.new()
 	armory_btn.text = "Arsenal & Classes"
-	armory_btn.custom_minimum_size = Vector2(235, 40)
+	armory_btn.custom_minimum_size = Vector2(185, 40)
 	armory_btn.pressed.connect(func() -> void:
 		show_screen("armory")
 	)
 	nav_row.add_child(armory_btn)
 
+	_hub_skills_btn = Button.new()
+	_hub_skills_btn.text = "Habilidades"
+	_hub_skills_btn.custom_minimum_size = Vector2(185, 40)
+	_hub_skills_btn.pressed.connect(func() -> void:
+		_skills_return_screen = "hub"
+		_skills_tab_class = selected_class
+		show_screen("skills")
+	)
+	nav_row.add_child(_hub_skills_btn)
+
 	_hub_settings_btn = Button.new()
 	_hub_settings_btn.text = "Atalhos (Hotkeys) & Config"
-	_hub_settings_btn.custom_minimum_size = Vector2(235, 40)
+	_hub_settings_btn.custom_minimum_size = Vector2(215, 40)
 	_hub_settings_btn.pressed.connect(func() -> void:
 		_settings_return_screen = "hub"
 		show_screen("settings")
@@ -331,7 +352,7 @@ func _build_hub_screen(parent: Control) -> void:
 
 	_lag_btn = Button.new()
 	_lag_btn.text = "Simulador de Lag: OFF (0ms)"
-	_lag_btn.custom_minimum_size = Vector2(240, 40)
+	_lag_btn.custom_minimum_size = Vector2(235, 40)
 	_lag_btn.pressed.connect(_toggle_lag_sim)
 	nav_row.add_child(_lag_btn)
 
@@ -356,7 +377,7 @@ func _build_armory_screen(parent: Control) -> void:
 
 	var back_btn := Button.new()
 	back_btn.text = "<- Voltar ao Hub"
-	back_btn.custom_minimum_size = Vector2(160, 36)
+	back_btn.custom_minimum_size = Vector2(150, 36)
 	back_btn.pressed.connect(func() -> void:
 		show_screen("hub")
 	)
@@ -370,9 +391,19 @@ func _build_armory_screen(parent: Control) -> void:
 	arm_title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.24))
 	arm_top.add_child(arm_title)
 
+	_armory_skills_btn = Button.new()
+	_armory_skills_btn.text = "Ver Habilidades"
+	_armory_skills_btn.custom_minimum_size = Vector2(150, 36)
+	_armory_skills_btn.pressed.connect(func() -> void:
+		_skills_return_screen = "armory"
+		_skills_tab_class = selected_class
+		show_screen("skills")
+	)
+	arm_top.add_child(_armory_skills_btn)
+
 	_armory_settings_btn = Button.new()
 	_armory_settings_btn.text = "Atalhos (Hotkeys)"
-	_armory_settings_btn.custom_minimum_size = Vector2(180, 36)
+	_armory_settings_btn.custom_minimum_size = Vector2(160, 36)
 	_armory_settings_btn.pressed.connect(func() -> void:
 		_settings_return_screen = "armory"
 		show_screen("settings")
@@ -802,6 +833,172 @@ func _build_settings_screen(parent: Control) -> void:
 	pause_row.add_child(_leave_btn)
 
 
+func _build_skills_screen(parent: Control) -> void:
+	_skills_screen = VBoxContainer.new()
+	_skills_screen.visible = false
+	_skills_screen.add_theme_constant_override("separation", 10)
+	parent.add_child(_skills_screen)
+
+	var sk_top := HBoxContainer.new()
+	_skills_screen.add_child(sk_top)
+
+	_skills_back_btn = Button.new()
+	_skills_back_btn.text = "<- Voltar ao Hub"
+	_skills_back_btn.custom_minimum_size = Vector2(180, 36)
+	_skills_back_btn.pressed.connect(func() -> void:
+		show_screen(_skills_return_screen if _skills_return_screen == "armory" else "hub")
+	)
+	sk_top.add_child(_skills_back_btn)
+
+	var sk_title := Label.new()
+	sk_title.text = "ENCICLOPÉDIA DE HABILIDADES (NÍVEL MÁXIMO R5)"
+	sk_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sk_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sk_title.add_theme_font_size_override("font_size", 20)
+	sk_title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.24))
+	sk_top.add_child(sk_title)
+
+	var sk_spacer := Control.new()
+	sk_spacer.custom_minimum_size = Vector2(180, 36)
+	sk_top.add_child(sk_spacer)
+
+	var tab_row := HBoxContainer.new()
+	tab_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	tab_row.add_theme_constant_override("separation", 10)
+	_skills_screen.add_child(tab_row)
+
+	var tab_labels: Array[String] = [
+		"Soldier (5)",
+		"Gunner (5)",
+		"Commando (6)",
+		"Itens / Widgets (4)",
+	]
+	_skills_tab_buttons.clear()
+	for tab_i in range(tab_labels.size()):
+		var t_btn := Button.new()
+		t_btn.text = tab_labels[tab_i]
+		t_btn.custom_minimum_size = Vector2(195, 34)
+		var cap_tab: int = tab_i
+		t_btn.pressed.connect(func() -> void:
+			select_skills_tab(cap_tab)
+		)
+		tab_row.add_child(t_btn)
+		_skills_tab_buttons.append(t_btn)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(920, 415)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_skills_screen.add_child(scroll)
+
+	_skills_grid = GridContainer.new()
+	_skills_grid.columns = 2
+	_skills_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_skills_grid.add_theme_constant_override("h_separation", 12)
+	_skills_grid.add_theme_constant_override("v_separation", 10)
+	scroll.add_child(_skills_grid)
+
+
+func select_skills_tab(tab_idx: int) -> void:
+	_skills_tab_class = clampi(tab_idx, 0, 3)
+	_rebuild_skills_grid()
+
+
+func _rebuild_skills_grid() -> void:
+	var tab_colors: Array[Color] = [
+		Color(0.24, 0.56, 0.88),
+		Color(0.86, 0.52, 0.18),
+		Color(0.58, 0.30, 0.82),
+		Color(0.24, 0.74, 0.44),
+	]
+	for i in range(_skills_tab_buttons.size()):
+		var is_active: bool = (i == _skills_tab_class)
+		_skills_tab_buttons[i].modulate = Color(1.0, 0.96, 0.75) if is_active else Color(0.65, 0.70, 0.78)
+		_skills_tab_buttons[i].add_theme_color_override(
+			"font_color",
+			Color(1.0, 0.88, 0.32) if is_active else Color(0.86, 0.90, 0.96)
+		)
+
+	if _skills_grid == null:
+		return
+	for child in _skills_grid.get_children():
+		_skills_grid.remove_child(child)
+		child.queue_free()
+
+	var entries: Array[Dictionary] = (
+		SkillCatalog.get_widgets()
+		if _skills_tab_class == 3
+		else SkillCatalog.get_class_skills(_skills_tab_class)
+	)
+	var accent_col: Color = tab_colors[clampi(_skills_tab_class, 0, tab_colors.size() - 1)]
+
+	for entry in entries:
+		var card := PanelContainer.new()
+		card.custom_minimum_size = Vector2(446, 122)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.add_theme_stylebox_override("panel", _make_card_style(Color(0.07, 0.11, 0.18, 0.96), accent_col, 2))
+		_skills_grid.add_child(card)
+
+		var cm := MarginContainer.new()
+		cm.add_theme_constant_override("margin_left", 10)
+		cm.add_theme_constant_override("margin_right", 10)
+		cm.add_theme_constant_override("margin_top", 8)
+		cm.add_theme_constant_override("margin_bottom", 8)
+		card.add_child(cm)
+
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		cm.add_child(row)
+
+		var icon_rect := TextureRect.new()
+		icon_rect.custom_minimum_size = Vector2(46, 46)
+		icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon_rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon_rect.texture = CartoonAssets.get_texture(str(entry.get("icon", "")))
+		row.add_child(icon_rect)
+
+		var info_v := VBoxContainer.new()
+		info_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		info_v.add_theme_constant_override("separation", 3)
+		row.add_child(info_v)
+
+		var hdr_row := HBoxContainer.new()
+		hdr_row.add_theme_constant_override("separation", 8)
+		info_v.add_child(hdr_row)
+
+		var name_lbl := Label.new()
+		name_lbl.text = str(entry.get("name", ""))
+		name_lbl.add_theme_font_size_override("font_size", 15)
+		name_lbl.add_theme_color_override("font_color", Color(1.0, 0.90, 0.36))
+		hdr_row.add_child(name_lbl)
+
+		var cat_lbl := Label.new()
+		cat_lbl.text = "[%s]" % str(entry.get("category", ""))
+		cat_lbl.add_theme_font_size_override("font_size", 11)
+		cat_lbl.add_theme_color_override("font_color", Color(0.48, 0.90, 1.0))
+		cat_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hdr_row.add_child(cat_lbl)
+
+		var stats_lbl := Label.new()
+		stats_lbl.text = "Recarga: %s | Duração: %s | Área: %s\nEfeito: %s" % [
+			str(entry.get("cooldown", "")),
+			str(entry.get("duration", "")),
+			str(entry.get("area", "")),
+			str(entry.get("effect_stats", "")),
+		]
+		stats_lbl.add_theme_font_size_override("font_size", 11)
+		stats_lbl.add_theme_color_override("font_color", Color(0.82, 0.94, 0.74))
+		stats_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info_v.add_child(stats_lbl)
+
+		var desc_lbl := Label.new()
+		desc_lbl.text = str(entry.get("description", ""))
+		desc_lbl.add_theme_font_size_override("font_size", 11)
+		desc_lbl.add_theme_color_override("font_color", Color(0.88, 0.92, 0.98))
+		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info_v.add_child(desc_lbl)
+
+
 func show_screen(screen_name: String) -> void:
 	current_screen = screen_name
 	if screen_name != "settings" and is_listening_hotkey():
@@ -812,11 +1009,17 @@ func show_screen(screen_name: String) -> void:
 		_armory_screen.visible = (screen_name == "armory")
 	if _settings_screen != null:
 		_settings_screen.visible = (screen_name == "settings")
+	if _skills_screen != null:
+		_skills_screen.visible = (screen_name == "skills")
 	if screen_name == "armory":
 		_refresh_summary()
 	elif screen_name == "settings":
 		if _settings_back_btn != null:
 			_settings_back_btn.text = "<- Voltar ao Arsenal" if _settings_return_screen == "armory" else "<- Voltar ao Hub"
+	elif screen_name == "skills":
+		if _skills_back_btn != null:
+			_skills_back_btn.text = "<- Voltar ao Arsenal" if _skills_return_screen == "armory" else "<- Voltar ao Hub"
+		_rebuild_skills_grid()
 
 
 func set_in_match_mode(in_match: bool) -> void:

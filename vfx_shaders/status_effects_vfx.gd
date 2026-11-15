@@ -9,6 +9,22 @@ const HERO_SHADER: Shader = preload("res://vfx_shaders/hero_cel_shader.gdshader"
 const HERO_CLOAK_SHADER: Shader = preload("res://vfx_shaders/hero_cloak_shader.gdshader")
 const XRAY_SHADER: Shader = preload("res://vfx_shaders/xray_silhouette.gdshader")
 
+const MAX_OVERHEAD_BUFF_SLOTS: int = 6
+const BUFF_ICON_TABLE: Array[Array] = [
+	[NetSerializer.BUFF_HERO_SHIELD, "icon_skill_1_0"],
+	[NetSerializer.BUFF_LEG_IT, "icon_skill_1_1"],
+	[NetSerializer.BUFF_ELIXIR, "icon_skill_2_4"],
+	[NetSerializer.BUFF_BURNING_BULLETS, "icon_skill_0_1"],
+	[NetSerializer.BUFF_POISONED_BLADE, "icon_skill_2_2"],
+	[NetSerializer.BUFF_FRENZY_FIRE, "icon_skill_1_3"],
+	[NetSerializer.BUFF_PIERCING_SHOT, "icon_skill_2_1"],
+	[NetSerializer.BUFF_EAT_GRENADES, "icon_skill_1_4"],
+	[NetSerializer.BUFF_SIXTH_SENSE, "icon_skill_0_4"],
+	[NetSerializer.BUFF_COMBAT_MED_HOT, "icon_skill_0_0"],
+	[NetSerializer.BUFF_BANDAGE, "icon_widget_0"],
+	[NetSerializer.BUFF_FIREPROOF, "icon_widget_2"],
+]
+
 static var _xray_mat: ShaderMaterial = null
 static var _shared_meshes: Dictionary = {}
 static var _shared_mats: Dictionary = {}
@@ -139,6 +155,72 @@ static func _vfx_plus_cross(
 	return cross
 
 
+static func _collect_active_buff_icon_keys(hero: HeroCharacter, stealthed: bool, is_enemy: bool) -> Array[String]:
+	var keys: Array[String] = []
+	for entry in BUFF_ICON_TABLE:
+		var bit: int = int(entry[0])
+		if (hero.active_buffs & bit) != 0:
+			keys.append(str(entry[1]))
+			if keys.size() >= MAX_OVERHEAD_BUFF_SLOTS:
+				return keys
+	if stealthed and not is_enemy and keys.size() < MAX_OVERHEAD_BUFF_SLOTS:
+		keys.append("icon_skill_2_0")
+	return keys
+
+
+static func _update_overhead_buff_icons(hero: HeroCharacter, stealthed: bool, is_enemy: bool, vis: bool) -> void:
+	if hero == null or hero.visual_root == null:
+		return
+	var keys: Array[String] = []
+	if vis and not hero.is_defeated:
+		keys = _collect_active_buff_icon_keys(hero, stealthed, is_enemy)
+	var count: int = keys.size()
+	var row: Node3D = hero._overhead_buff_row
+	if row == null or not is_instance_valid(row) or row.is_queued_for_deletion():
+		if count == 0:
+			return
+		row = Node3D.new()
+		row.name = "OverheadBuffRow"
+		row.position = Vector3(0.0, 2.38, 0.0)
+		hero.visual_root.add_child(row)
+		hero._overhead_buff_row = row
+		hero._overhead_buff_slots.clear()
+		for i in range(MAX_OVERHEAD_BUFF_SLOTS):
+			var sp := Sprite3D.new()
+			sp.name = "BuffIcon_%d" % i
+			sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			sp.pixel_size = 0.011
+			sp.no_depth_test = false
+			sp.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+			sp.transparent = true
+			sp.render_priority = 4
+			sp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			sp.visible = false
+			row.add_child(sp)
+			hero._overhead_buff_slots.append(sp)
+
+	if count == 0:
+		row.visible = false
+		for sp in hero._overhead_buff_slots:
+			if is_instance_valid(sp):
+				sp.visible = false
+				sp.texture = null
+		return
+
+	row.visible = true
+	for i in range(hero._overhead_buff_slots.size()):
+		var sp: Sprite3D = hero._overhead_buff_slots[i]
+		if not is_instance_valid(sp):
+			continue
+		if i < count:
+			sp.texture = CartoonAssets.get_texture(keys[i])
+			sp.position = Vector3((float(i) - float(count - 1) * 0.5) * 0.50, 0.0, 0.0)
+			sp.visible = sp.texture != null
+		else:
+			sp.visible = false
+			sp.texture = null
+
+
 static func attach_hero_vfx_and_shader(hero: HeroCharacter) -> void:
 	if hero == null:
 		return
@@ -207,13 +289,16 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var show_xray: bool = (marked_enemy or sensed_enemy) and not hero.is_defeated
 	var speed_flag: int = 1 if ((hero.active_flags & NetSerializer.SNAP_SPEED_BOOST) != 0) else 0
 	var eat_flag: int = 1 if ((hero.active_flags & NetSerializer.SNAP_EAT_GRENADES) != 0) else 0
-	var frenzy_flag: int = 1 if (hero.status_effects != null and hero.status_effects.frenzy_timer > 0.0) else 0
-	var pierce_flag: int = 1 if (hero.status_effects != null and hero.status_effects.piercing_timer > 0.0) else 0
+	var frenzy_flag: int = 1 if ((hero.active_buffs & NetSerializer.BUFF_FRENZY_FIRE) != 0 or (hero.status_effects != null and hero.status_effects.frenzy_timer > 0.0)) else 0
+	var pierce_flag: int = 1 if ((hero.active_buffs & NetSerializer.BUFF_PIERCING_SHOT) != 0 or (hero.status_effects != null and hero.status_effects.piercing_timer > 0.0)) else 0
+	var stealth_ally_flag: int = 1 if (stealthed and not is_enemy) else 0
+	var mark_flag: int = 1 if ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) else 0
 	var cloak_q: int = int(roundf(clampf(cloak_val, 0.0, 1.0) * 100.0))
 
-	var state_key: String = "%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d" % [
+	var state_key: String = "%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d" % [
 		1 if hero.current_vehicle_id >= 0 else 0,
 		0 if vis else 1,
+		1 if hero.is_defeated else 0,
 		1 if show_xray else 0,
 		1 if burning else 0,
 		1 if poisoned else 0,
@@ -224,12 +309,16 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 		frenzy_flag,
 		pierce_flag,
 		cloak_q,
+		hero.active_buffs,
+		stealth_ally_flag,
+		mark_flag,
 	]
 
 	if state_key == hero._last_vfx_key:
 		return
 	hero._last_vfx_key = state_key
 	hero.visual_root.visible = vis
+	_update_overhead_buff_icons(hero, stealthed, is_enemy, vis)
 	if not vis:
 		return
 
@@ -757,3 +846,163 @@ static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_po
 		for mi in fade_meshes:
 			tw.tween_property(mi, "transparency", 1.0, dur)
 		tw.chain().tween_callback(root.queue_free)
+
+
+static func _get_aoe_theme_color(class_id: int, slot_idx: int) -> Color:
+	if class_id == NetworkManager.CLASS_SOLDIER:
+		match slot_idx:
+			0:
+				return Color(0.20, 0.95, 0.56)
+			3:
+				return Color(1.0, 0.56, 0.14)
+			4:
+				return Color(1.0, 0.86, 0.22)
+	elif class_id == NetworkManager.CLASS_GUNNER and slot_idx == 1:
+		return Color(0.32, 0.94, 1.0)
+	return Color(1.0, 0.44, 0.12)
+
+
+static func _spawn_aoe_rings_into(
+	root: Node3D,
+	radius: float,
+	theme_col: Color,
+	dur: float,
+	disc_alpha: float,
+	tw: Tween,
+	fade_meshes: Array[MeshInstance3D]
+) -> void:
+	var cyl: CylinderMesh = _get_shared_cylinder()
+	var torus: TorusMesh = _get_shared_torus()
+	var diam: float = radius * 2.0
+
+	var mat_disc: StandardMaterial3D = _get_shared_mat(Color(theme_col.r, theme_col.g, theme_col.b, disc_alpha), false)
+	var disc: MeshInstance3D = _vfx_part(
+		root, cyl, mat_disc,
+		Vector3(0.0, 0.08, 0.0),
+		Vector3(diam, 0.03, diam),
+		Vector3.ZERO, fade_meshes
+	)
+	disc.name = "AoEGroundDisc"
+
+	var mat_perim: StandardMaterial3D = _get_shared_mat(Color(theme_col.r, theme_col.g, theme_col.b, 0.90), true)
+	var perim: MeshInstance3D = _vfx_part(
+		root, torus, mat_perim,
+		Vector3(0.0, 0.12, 0.0),
+		Vector3(diam, 0.35, diam),
+		Vector3.ZERO, fade_meshes
+	)
+	perim.name = "AoEPerimeterRing"
+
+	var wave_col: Color = theme_col.lerp(Color.WHITE, 0.40)
+	var mat_wave: StandardMaterial3D = _get_shared_mat(Color(wave_col.r, wave_col.g, wave_col.b, 0.92), true)
+	var wave := MeshInstance3D.new()
+	wave.name = "AoEWaveRing"
+	wave.mesh = torus
+	wave.material_override = mat_wave
+	wave.position = Vector3(0.0, 0.14, 0.0)
+	wave.scale = Vector3(radius * 0.4, 0.45, radius * 0.4)
+	wave.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(wave)
+
+	if tw != null:
+		tw.tween_property(wave, "scale", Vector3(diam, 0.45, diam), 0.45)
+		tw.tween_property(wave, "transparency", 1.0, 0.45)
+		tw.tween_property(disc, "transparency", 1.0, dur)
+		tw.tween_property(perim, "transparency", 1.0, dur)
+
+
+static func spawn_aoe_area_vfx(
+	parent: Node,
+	class_id: int,
+	slot_idx: int,
+	origin: Vector3,
+	radius: float,
+	affected_positions: Array[Vector3] = []
+) -> Node3D:
+	if parent == null or radius <= 0.0:
+		return null
+	warm_shared_meshes()
+
+	var root := Node3D.new()
+	root.name = "AoEAreaVFX_%d_%d" % [class_id, slot_idx]
+	root.position = origin
+	parent.add_child(root)
+
+	var theme_col: Color = _get_aoe_theme_color(class_id, slot_idx)
+	var dur: float = 1.1
+	var tw: Tween = root.create_tween() if root.is_inside_tree() else null
+	if tw != null:
+		tw.set_parallel(true)
+
+	var ring_meshes: Array[MeshInstance3D] = []
+	_spawn_aoe_rings_into(root, radius, theme_col, dur, 0.22, tw, ring_meshes)
+
+	var cyl: CylinderMesh = _get_shared_cylinder()
+	var torus: TorusMesh = _get_shared_torus()
+	var marker_col: Color = theme_col.lerp(Color.WHITE, 0.30)
+	var mat_marker: StandardMaterial3D = _get_shared_mat(Color(marker_col.r, marker_col.g, marker_col.b, 0.94), true)
+	var mat_col: StandardMaterial3D = _get_shared_mat(Color(theme_col.r, theme_col.g, theme_col.b, 0.42), true)
+	var marker_meshes: Array[MeshInstance3D] = []
+	var is_offensive: bool = (class_id == NetworkManager.CLASS_SOLDIER and slot_idx == 3)
+
+	for idx in range(affected_positions.size()):
+		var tpos: Vector3 = affected_positions[idx]
+		var marker := Node3D.new()
+		marker.name = "AffectedMarker_%d" % idx
+		marker.position = tpos - origin
+		root.add_child(marker)
+
+		var halo: MeshInstance3D = _vfx_part(
+			marker, torus, mat_marker,
+			Vector3(0.0, 0.12, 0.0),
+			Vector3(1.5, 0.55, 1.5),
+			Vector3.ZERO, marker_meshes
+		)
+		var beam: MeshInstance3D = _vfx_part(
+			marker, cyl, mat_col,
+			Vector3(0.0, 1.15, 0.0),
+			Vector3(0.42, 2.2, 0.42),
+			Vector3.ZERO, marker_meshes
+		)
+		var emblem: Node3D = _vfx_plus_cross(
+			marker, mat_marker,
+			Vector3(0.0, 2.35, 0.0),
+			0.42, 0.11, marker_meshes
+		)
+		if is_offensive:
+			emblem.rotation.z = PI * 0.25
+
+		if tw != null:
+			tw.tween_property(halo, "scale", Vector3(2.1, 0.55, 2.1), 0.8)
+			tw.tween_property(beam, "position:y", 1.95, 0.8)
+			tw.tween_property(emblem, "position:y", 2.90, 0.8)
+			tw.tween_property(emblem, "rotation:y", PI, 0.8)
+
+	if tw != null:
+		for mi in marker_meshes:
+			tw.tween_property(mi, "transparency", 1.0, 0.8)
+		tw.chain().tween_callback(root.queue_free)
+
+	return root
+
+
+static func spawn_explosion_area_ring(parent: Node, origin: Vector3, radius: float) -> Node3D:
+	if parent == null or radius <= 0.0 or DisplayServer.get_name().contains("headless"):
+		return null
+	warm_shared_meshes()
+
+	var root := Node3D.new()
+	root.name = "ExplosionAreaVFX"
+	root.position = origin
+	parent.add_child(root)
+
+	var tw: Tween = root.create_tween() if root.is_inside_tree() else null
+	if tw != null:
+		tw.set_parallel(true)
+
+	var ring_meshes: Array[MeshInstance3D] = []
+	_spawn_aoe_rings_into(root, radius, Color(1.0, 0.44, 0.12), 0.65, 0.16, tw, ring_meshes)
+	if tw != null:
+		tw.chain().tween_callback(root.queue_free)
+
+	return root

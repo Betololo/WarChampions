@@ -142,8 +142,9 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 
 		4: # Elixir: Burst speed + small absorption shield
 			if owner_hero.status_effects != null:
-				owner_hero.status_effects.apply_speed_boost(1.45 + float(rank) * 0.06, 4.5 + float(rank) * 0.6)
-				owner_hero.status_effects.apply_shield(20 + rank * 8, 4.5 + float(rank) * 0.6)
+				var elx_dur: float = 4.5 + float(rank) * 0.6
+				owner_hero.status_effects.apply_speed_boost(1.45 + float(rank) * 0.06, elx_dur, true)
+				owner_hero.status_effects.apply_shield(20 + rank * 8, elx_dur, false)
 				return true
 			return false
 

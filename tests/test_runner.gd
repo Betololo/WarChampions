@@ -37,6 +37,9 @@ func _ready() -> void:
 	await _test_phase7_task1_skills_hud_pooling()
 	await _test_phase7_task2_hotkeys_menu()
 	await _test_phase7_task3_perf_cache_vfx()
+	await _test_phase8_task1_skill_icons_and_guide()
+	await _test_phase8_task2_aoe_vfx_and_overhead_buffs()
+	await _test_phase8_task3_plane_accel_and_crash()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -4091,3 +4094,630 @@ func _test_phase7_task3_perf_cache_vfx() -> void:
 	vfx_jeep.queue_free()
 	local_v.queue_free()
 	enemy_v.queue_free()
+
+
+func _test_phase8_task1_skill_icons_and_guide() -> void:
+	# 1. All 16 skill icons generate 40x40 textures with 16 pairwise distinct pixel payloads + legacy fallback
+	var skill_keys: Array[String] = []
+	for cls_id in range(3):
+		var count: int = 6 if cls_id == NetworkManager.CLASS_COMMANDO else 5
+		for slot_i in range(count):
+			skill_keys.append("icon_skill_%d_%d" % [cls_id, slot_i])
+
+	var unique_payloads: Dictionary = {}
+	var all_icons_valid: bool = true
+	for sk in skill_keys:
+		var tex: ImageTexture = CartoonAssets.get_texture(sk)
+		if tex == null or tex.get_width() != 40 or tex.get_height() != 40:
+			all_icons_valid = false
+			break
+		var img: Image = tex.get_image()
+		if img == null:
+			all_icons_valid = false
+			break
+		var payload_b64: String = Marshalls.raw_to_base64(img.get_data())
+		unique_payloads[payload_b64] = sk
+
+	var legacy_ok: bool = true
+	for leg_i in range(5):
+		var leg_tex: ImageTexture = CartoonAssets.get_texture("icon_skill_%d" % leg_i)
+		var norm_tex: ImageTexture = CartoonAssets.get_texture("icon_skill_0_%d" % leg_i)
+		if leg_tex == null or norm_tex == null or leg_tex.get_width() != 40 or leg_tex.get_height() != 40:
+			legacy_ok = false
+			break
+		if leg_tex.get_image().get_data() != norm_tex.get_image().get_data():
+			legacy_ok = false
+			break
+
+	_assert(
+		all_icons_valid and unique_payloads.size() == 16 and legacy_ok,
+		"CartoonAssets generates 16 distinct 40x40 skill icons (%d/16 unique) with legacy fallback" % unique_payloads.size()
+	)
+
+	# 2. SkillCatalog canonical counts, non-empty fields & AoE radii
+	var s_list: Array[Dictionary] = SkillCatalog.get_class_skills(NetworkManager.CLASS_SOLDIER)
+	var g_list: Array[Dictionary] = SkillCatalog.get_class_skills(NetworkManager.CLASS_GUNNER)
+	var c_list: Array[Dictionary] = SkillCatalog.get_class_skills(NetworkManager.CLASS_COMMANDO)
+	var w_list: Array[Dictionary] = SkillCatalog.get_widgets()
+	var catalog_fields_ok: bool = true
+	for lst in [s_list, g_list, c_list, w_list]:
+		for entry in lst:
+			for req_k in ["icon", "name", "category", "cooldown", "duration", "area", "effect_stats", "description"]:
+				if str(entry.get(req_k, "")).strip_edges().is_empty():
+					catalog_fields_ok = false
+					break
+	var mark_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_2_5")
+	var burn_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_0_1")
+	var med_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_0_0")
+	_assert(
+		s_list.size() == 5 and g_list.size() == 5 and c_list.size() == 6 and w_list.size() == 4
+		and catalog_fields_ok and str(mark_entry.get("name", "")) == "Mark Target"
+		and str(burn_entry.get("effect_stats", "")) == "+16 dano fogo/s"
+		and str(mark_entry.get("duration", "")) == "6.5s varredura / 12s marca"
+		and is_equal_approx(float(med_entry.get("aoe_radius", 0.0)), 12.0),
+		"SkillCatalog provides 5/5/6 class skills + 4 widgets with complete Rank-5 stats"
+	)
+
+	# 3. HUDController syncs _skill_slot_icons & tooltips per hero class
+	var hud := HUDController.new()
+	add_child(hud)
+	await _flush_deferred()
+
+	var h_sol := HeroCharacter.new()
+	h_sol.setup_identity(8101, "HudSol", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var h_gun := HeroCharacter.new()
+	h_gun.setup_identity(8102, "HudGun", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, true, false)
+	var h_com := HeroCharacter.new()
+	h_com.setup_identity(8103, "HudCom", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	add_child(h_sol)
+	add_child(h_gun)
+	add_child(h_com)
+
+	hud.set_local_hero(h_sol)
+	var sol_t0: Texture2D = hud._skill_slot_icons[0].texture
+	var sol_t1: Texture2D = hud._skill_slot_icons[1].texture
+	var sol_tip0: String = hud._skill_slot_bgs[0].tooltip_text
+
+	hud.set_local_hero(h_gun)
+	var gun_t0: Texture2D = hud._skill_slot_icons[0].texture
+	var gun_t1: Texture2D = hud._skill_slot_icons[1].texture
+	var gun_tip0: String = hud._skill_slot_bgs[0].tooltip_text
+
+	hud.set_local_hero(h_com)
+	var com_t0: Texture2D = hud._skill_slot_icons[0].texture
+	var com_t1: Texture2D = hud._skill_slot_icons[1].texture
+	var com_tip0: String = hud._skill_slot_bgs[0].tooltip_text
+
+	var hud_textures_match: bool = (
+		sol_t0 == CartoonAssets.get_texture("icon_skill_0_0")
+		and sol_t1 == CartoonAssets.get_texture("icon_skill_0_1")
+		and gun_t0 == CartoonAssets.get_texture("icon_skill_1_0")
+		and gun_t1 == CartoonAssets.get_texture("icon_skill_1_1")
+		and com_t0 == CartoonAssets.get_texture("icon_skill_2_0")
+		and com_t1 == CartoonAssets.get_texture("icon_skill_2_1")
+		and sol_t0 != gun_t0 and gun_t0 != com_t0 and sol_t0 != com_t0
+		and sol_t1 != gun_t1 and gun_t1 != com_t1 and sol_t1 != com_t1
+	)
+	var hud_tips_ok: bool = (
+		sol_tip0.contains("Combat Medicine")
+		and gun_tip0.contains("Hero Shield")
+		and com_tip0.contains("Stealth")
+	)
+	_assert(
+		hud_textures_match and hud_tips_ok,
+		"HUDController syncs distinct class skill icons and tooltips when switching Soldier/Gunner/Commando"
+	)
+
+	# 4. ClassSelectMenu "skills" guide navigation from Hub & Armory + card rendering
+	var menu := ClassSelectMenu.new()
+	add_child(menu)
+	await _flush_deferred()
+
+	var hub_sk_btn_ok: bool = menu._hub_skills_btn != null and menu._hub_skills_btn.visible
+	menu._hub_skills_btn.pressed.emit()
+	var hub_to_skills_ok: bool = menu.current_screen == "skills" and menu._skills_screen.visible and menu._skills_back_btn.text == "<- Voltar ao Hub"
+	menu._skills_back_btn.pressed.emit()
+	var back_hub_ok: bool = menu.current_screen == "hub" and menu._hub_screen.visible
+
+	menu.show_screen("armory")
+	menu.select_class(NetworkManager.CLASS_COMMANDO)
+	var arm_sk_btn_ok: bool = menu._armory_skills_btn != null and menu._armory_skills_btn.visible
+	menu._armory_skills_btn.pressed.emit()
+	var arm_to_skills_ok: bool = (
+		menu.current_screen == "skills"
+		and menu._skills_tab_class == NetworkManager.CLASS_COMMANDO
+		and menu._skills_back_btn.text == "<- Voltar ao Arsenal"
+		and menu._skills_grid.get_child_count() == 6
+	)
+
+	var found_mark_target: bool = false
+	var found_icon_tex: bool = false
+	for lbl_node in menu._skills_grid.find_children("*", "Label", true, false):
+		if (lbl_node as Label).text.contains("Mark Target"):
+			found_mark_target = true
+			break
+	for tex_node in menu._skills_grid.find_children("*", "TextureRect", true, false):
+		if (tex_node as TextureRect).texture != null:
+			found_icon_tex = true
+			break
+
+	menu.select_skills_tab(0)
+	var soldier_tab_count: int = menu._skills_grid.get_child_count()
+	var found_combat_med: bool = false
+	for lbl_node in menu._skills_grid.find_children("*", "Label", true, false):
+		if (lbl_node as Label).text.contains("Combat Medicine"):
+			found_combat_med = true
+			break
+
+	menu.select_skills_tab(3)
+	var widget_tab_count: int = menu._skills_grid.get_child_count()
+
+	menu._skills_back_btn.pressed.emit()
+	var back_armory_ok: bool = menu.current_screen == "armory" and menu._armory_screen.visible
+
+	_assert(
+		hub_sk_btn_ok and hub_to_skills_ok and back_hub_ok
+		and arm_sk_btn_ok and arm_to_skills_ok
+		and found_mark_target and found_icon_tex
+		and soldier_tab_count == 5 and found_combat_med and widget_tab_count == 4
+		and back_armory_ok,
+		"ClassSelectMenu opens Habilidades guide from Hub/Armory, renders cards/icons/stats, and returns cleanly"
+	)
+
+	menu.queue_free()
+	hud.queue_free()
+	h_sol.queue_free()
+	h_gun.queue_free()
+	h_com.queue_free()
+
+
+func _test_phase8_task2_aoe_vfx_and_overhead_buffs() -> void:
+	# 1. NetSerializer authoritative_state + world_snapshot active_buffs roundtrip & default compatibility
+	var test_buffs: int = NetSerializer.BUFF_HERO_SHIELD | NetSerializer.BUFF_BURNING_BULLETS | NetSerializer.BUFF_LEG_IT
+	var auth_bytes: PackedByteArray = NetSerializer.pack_authoritative_state(
+		42, Vector3(1.0, 2.0, -3.0), Vector3(0.5, 0.0, -1.0),
+		NetSerializer.SNAP_GROUNDED, 95, 60, -1, -1, 3, test_buffs
+	)
+	var auth_dec: Dictionary = NetSerializer.unpack_authoritative_state(auth_bytes)
+	var auth_default_bytes: PackedByteArray = NetSerializer.pack_authoritative_state(
+		43, Vector3.ZERO, Vector3.ZERO, NetSerializer.SNAP_GROUNDED, 100, 0, -1, -1, 0
+	)
+	var auth_default_dec: Dictionary = NetSerializer.unpack_authoritative_state(auth_default_bytes)
+	var ws_bytes: PackedByteArray = NetSerializer.pack_world_snapshot(
+		88, 1500, 50, 50,
+		[
+			{"id": 11, "team": 0, "class_id": 1, "weapon_slot": 0, "flags": NetSerializer.SNAP_SHIELDED, "buffs": test_buffs, "pos": Vector3.ZERO, "vel": Vector3.ZERO, "yaw": 0.0, "pitch": 0.0, "hp": 150, "shield": 100, "vehicle_id": -1, "seat_idx": -1},
+			{"id": 12, "team": 1, "class_id": 0, "weapon_slot": 0, "flags": 1, "pos": Vector3(5.0, 0.0, 0.0), "vel": Vector3.ZERO, "yaw": 0.0, "pitch": 0.0, "hp": 110, "shield": 0, "vehicle_id": -1, "seat_idx": -1},
+		],
+		[], []
+	)
+	var ws_dec: Dictionary = NetSerializer.unpack_world_snapshot(ws_bytes)
+	var ws_heroes: Array = ws_dec.get("heroes", [])
+	_assert(
+		int(auth_dec.get("buffs", 0)) == test_buffs
+		and int(auth_default_dec.get("buffs", -1)) == 0
+		and ws_heroes.size() == 2
+		and int((ws_heroes[0] as Dictionary).get("buffs", 0)) == test_buffs
+		and int((ws_heroes[1] as Dictionary).get("buffs", -1)) == 0,
+		"NetSerializer roundtrips u16 active_buffs in authoritative_state & world_snapshot with buffs=0 default compatibility"
+	)
+
+	# 2. Skill/widget active_buffs bitmasks, Leg It vs Elixir separation, Hero Shield break, & OverheadBuffRow icons
+	var prev_solo: bool = NetworkManager.is_solo_bot_mode
+	NetworkManager.is_solo_bot_mode = true
+
+	var sol := HeroCharacter.new()
+	sol.setup_identity(8201, "T2Soldier", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var ally_near := HeroCharacter.new()
+	ally_near.setup_identity(8202, "T2AllyNear", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	var ally_far := HeroCharacter.new()
+	ally_far.setup_identity(8203, "T2AllyFar", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var enemy_com := HeroCharacter.new()
+	enemy_com.setup_identity(8204, "T2Commando", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(sol)
+	add_child(ally_near)
+	add_child(ally_far)
+	add_child(enemy_com)
+
+	sol.global_position = Vector3.ZERO
+	ally_near.global_position = Vector3(6.0, 0.0, 0.0) # within 12.0m & 11.0m
+	ally_far.global_position = Vector3(16.0, 0.0, 0.0) # beyond 12.0m
+	ally_near.hp = 60
+	ally_far.hp = 60
+
+	var ctx: Dictionary = {"heroes_by_id": {8201: sol, 8202: ally_near, 8203: ally_far, 8204: enemy_com}}
+	var cmd := InputCmd.new()
+
+	var captured_vfx: Array[Dictionary] = []
+	var on_evt := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "skill_vfx":
+			captured_vfx.append(payload)
+	NetworkManager.game_event_received.connect(on_evt)
+
+	# Combat Medicine + Burning Bullets + Bandages + Fireproof on Soldier
+	var sol_sm: SkillManager = sol.skill_manager as SkillManager
+	sol_sm.try_activate_skill(0, cmd, ctx)
+	sol_sm.try_activate_skill(1, cmd, ctx)
+	sol_sm.try_activate_widget(0, ctx)
+	sol_sm.try_activate_widget(2, ctx)
+	var sol_buffs_ok: bool = (
+		(sol.active_buffs & NetSerializer.BUFF_COMBAT_MED_HOT) != 0
+		and (sol.active_buffs & NetSerializer.BUFF_BURNING_BULLETS) != 0
+		and (sol.active_buffs & NetSerializer.BUFF_BANDAGE) != 0
+		and (sol.active_buffs & NetSerializer.BUFF_FIREPROOF) != 0
+		and (ally_near.active_buffs & NetSerializer.BUFF_COMBAT_MED_HOT) != 0
+		and (ally_far.active_buffs & NetSerializer.BUFF_COMBAT_MED_HOT) == 0
+	)
+
+	# Gunner: Hero Shield -> break shield clears BUFF_HERO_SHIELD; Leg It -> BUFF_LEG_IT; Frenzy Fire -> BUFF_FRENZY_FIRE
+	var gun_sm: SkillManager = ally_near.skill_manager as SkillManager
+	gun_sm.try_activate_skill(0, cmd, ctx)
+	var shield_set: bool = (ally_near.active_buffs & NetSerializer.BUFF_HERO_SHIELD) != 0 and ally_near.shield > 0
+	ally_near.apply_damage_server(ally_near.shield, 8204, false)
+	var shield_cleared_on_break: bool = ally_near.shield == 0 and (ally_near.active_buffs & NetSerializer.BUFF_HERO_SHIELD) == 0
+
+	gun_sm.try_activate_skill(1, cmd, ctx)
+	gun_sm.try_activate_skill(3, cmd, ctx)
+	var gun_buffs_ok: bool = (
+		(ally_near.active_buffs & NetSerializer.BUFF_LEG_IT) != 0
+		and (ally_near.active_buffs & NetSerializer.BUFF_FRENZY_FIRE) != 0
+		and (sol.active_buffs & NetSerializer.BUFF_LEG_IT) != 0
+		and (sol.active_buffs & NetSerializer.BUFF_ELIXIR) == 0
+	)
+
+	# Commando: Elixir -> BUFF_ELIXIR (NOT Leg It, NOT Hero Shield), Piercing Shot, Poisoned Blade
+	var com_sm: SkillManager = enemy_com.skill_manager as SkillManager
+	com_sm.try_activate_skill(4, cmd, ctx)
+	com_sm.try_activate_skill(1, cmd, ctx)
+	com_sm.try_activate_skill(2, cmd, ctx)
+	var com_buffs_ok: bool = (
+		(enemy_com.active_buffs & NetSerializer.BUFF_ELIXIR) != 0
+		and (enemy_com.active_buffs & NetSerializer.BUFF_LEG_IT) == 0
+		and (enemy_com.active_buffs & NetSerializer.BUFF_HERO_SHIELD) == 0
+		and (enemy_com.active_buffs & NetSerializer.BUFF_PIERCING_SHOT) != 0
+		and (enemy_com.active_buffs & NetSerializer.BUFF_POISONED_BLADE) != 0
+	)
+
+	_assert(
+		sol_buffs_ok and shield_set and shield_cleared_on_break and gun_buffs_ok and com_buffs_ok,
+		"All timed skills/widgets map to exact active_buffs bits (Leg It vs Elixir distinct, Hero Shield clears on break)"
+	)
+
+	# Verify OverheadBuffRow Sprite3D icons on Soldier & Commando
+	StatusEffectsVFX.update_hero_client_visuals(sol, sol, 0.016)
+	var sol_row := sol.visual_root.get_node_or_null("OverheadBuffRow") as Node3D
+	var sol_visible_texs: Array[Texture2D] = []
+	if sol_row != null:
+		for c in sol_row.get_children():
+			if c is Sprite3D and (c as Sprite3D).visible:
+				sol_visible_texs.append((c as Sprite3D).texture)
+	var has_leg_it_icon: bool = sol_visible_texs.has(CartoonAssets.get_texture("icon_skill_1_1"))
+	var has_burn_icon: bool = sol_visible_texs.has(CartoonAssets.get_texture("icon_skill_0_1"))
+	var has_band_icon: bool = sol_visible_texs.has(CartoonAssets.get_texture("icon_widget_0"))
+
+	StatusEffectsVFX.update_hero_client_visuals(enemy_com, sol, 0.016)
+	var com_row := enemy_com.visual_root.get_node_or_null("OverheadBuffRow") as Node3D
+	var com_visible_texs: Array[Texture2D] = []
+	if com_row != null:
+		for c in com_row.get_children():
+			if c is Sprite3D and (c as Sprite3D).visible:
+				com_visible_texs.append((c as Sprite3D).texture)
+	var has_elixir_icon: bool = com_visible_texs.has(CartoonAssets.get_texture("icon_skill_2_4"))
+
+	# Stealth beyond detect radius hides OverheadBuffRow from enemy perspective
+	enemy_com.global_position = Vector3(40.0, 0.0, 0.0)
+	com_sm.try_activate_skill(0, cmd, ctx)
+	StatusEffectsVFX.update_hero_client_visuals(enemy_com, sol, 0.016)
+	var hidden_when_stealthed: bool = com_row != null and not com_row.visible and not enemy_com.visual_root.visible
+
+	# Defeated hero hides OverheadBuffRow; clear_all() hides/clears all slots
+	sol.is_defeated = true
+	StatusEffectsVFX.update_hero_client_visuals(sol, sol, 0.016)
+	var hidden_when_defeated: bool = sol_row != null and not sol_row.visible
+
+	sol.is_defeated = false
+	sol.status_effects.clear_all()
+	StatusEffectsVFX.update_hero_client_visuals(sol, sol, 0.016)
+	var hidden_when_cleared: bool = sol.active_buffs == 0 and sol_row != null and not sol_row.visible
+
+	_assert(
+		sol_row != null and sol_visible_texs.size() == 5 and has_leg_it_icon and has_burn_icon and has_band_icon
+		and com_row != null and has_elixir_icon
+		and hidden_when_stealthed and hidden_when_defeated and hidden_when_cleared,
+		"StatusEffectsVFX displays pooled OverheadBuffRow Sprite3D icons and hides on stealth/defeat/clear_all"
+	)
+
+	# 3. Combat Medicine AoE payload + StatusEffectsVFX.spawn_aoe_area_vfx geometry
+	NetworkManager.game_event_received.disconnect(on_evt)
+	var med_payload: Dictionary = captured_vfx[0] if not captured_vfx.is_empty() else {}
+	var aff_ids: Array = med_payload.get("affected_ids", [])
+	var aoe_payload_ok: bool = (
+		is_equal_approx(float(med_payload.get("aoe_radius", 0.0)), 12.0)
+		and aff_ids.has(8201) and aff_ids.has(8202) and not aff_ids.has(8203)
+	)
+
+	var aoe_stage := Node3D.new()
+	add_child(aoe_stage)
+	var aoe_node: Node3D = StatusEffectsVFX.spawn_aoe_area_vfx(
+		aoe_stage, NetworkManager.CLASS_SOLDIER, 0, Vector3.ZERO, 12.0,
+		[Vector3.ZERO, Vector3(6.0, 0.0, 0.0)]
+	)
+	var disc := aoe_node.get_node_or_null("AoEGroundDisc") as MeshInstance3D if aoe_node != null else null
+	var perim := aoe_node.get_node_or_null("AoEPerimeterRing") as MeshInstance3D if aoe_node != null else null
+	var m0 := aoe_node.get_node_or_null("AffectedMarker_0") as Node3D if aoe_node != null else null
+	var m1 := aoe_node.get_node_or_null("AffectedMarker_1") as Node3D if aoe_node != null else null
+	_assert(
+		aoe_payload_ok
+		and aoe_node != null
+		and disc != null and is_equal_approx(disc.scale.x, 24.0)
+		and perim != null and is_equal_approx(perim.scale.x, 24.0)
+		and m0 != null and m1 != null and m1.position.distance_to(Vector3(6.0, 0.0, 0.0)) < 0.01,
+		"Combat Medicine skill_vfx payload carries aoe_radius=12.0 & affected_ids, and spawn_aoe_area_vfx scales disc/ring to 24.0m with target markers"
+	)
+
+	NetworkManager.is_solo_bot_mode = prev_solo
+	aoe_stage.queue_free()
+	sol.queue_free()
+	ally_near.queue_free()
+	ally_far.queue_free()
+	enemy_com.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase8_task3_plane_accel_and_crash() -> void:
+	var arena := Node3D.new()
+	arena.name = "Phase8Task3PlaneArena"
+	add_child(arena)
+
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(260.0, 1.0, 260.0)
+	floor_col.shape = floor_box
+	floor_body.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var plane := VehiclePlane.new()
+	plane.id = 8301
+	plane.team = NetworkManager.TEAM_ROYAL
+	plane.position = Vector3(0.0, 0.5, 40.0)
+	arena.add_child(plane)
+	plane.spawn_transform = plane.global_transform
+
+	var pilot := HeroCharacter.new()
+	pilot.setup_identity(8302, "T3Pilot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(pilot)
+	plane.try_enter_hero(pilot)
+
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+	var heroes_map: Dictionary = {8302: pilot}
+	var ctx: Dictionary = {"heroes_by_id": heroes_map}
+
+	# 1. Idle standstill & no Space teleport below TAKEOFF_SPEED
+	var idle_start_pos: Vector3 = plane.global_position
+	for t in range(30):
+		var idle_cmd := InputCmd.new()
+		idle_cmd.move_dir = Vector2.ZERO
+		idle_cmd.aim_yaw = 0.0
+		idle_cmd.aim_pitch = 0.0
+		if t >= 15:
+			idle_cmd.set_button(InputCmd.BTN_JUMP, true)
+		pilot.latest_server_input = idle_cmd
+		plane.step_vehicle_server(1.0 / 60.0, heroes_map, ctx)
+		await get_tree().physics_frame
+
+	var idle_horiz_disp: float = Vector2(plane.global_position.x - idle_start_pos.x, plane.global_position.z - idle_start_pos.z).length()
+	_assert(
+		plane._airspeed < 0.1 and idle_horiz_disp < 0.25 and plane.global_position.y <= idle_start_pos.y + 0.15,
+		"VehiclePlane remains stationary when idle without W and blocks Space climb before TAKEOFF_SPEED (airspeed=%.2f, disp=%.2fm, dy=%.2fm)" % [plane._airspeed, idle_horiz_disp, plane.global_position.y - idle_start_pos.y]
+	)
+
+	# 2. Progressive runway acceleration (10 ticks -> 35 ticks -> 75 ticks -> 125 ticks) + S brake
+	var accel_start_y: float = plane.global_position.y
+	var spd_10: float = 0.0
+	var dy_10: float = 0.0
+	var spd_35: float = 0.0
+	var dy_35: float = 0.0
+	var spd_75: float = 0.0
+	for tick in range(1, 126):
+		var w_cmd := InputCmd.new()
+		w_cmd.move_dir = Vector2(0.0, -1.0)
+		w_cmd.aim_yaw = 0.0
+		w_cmd.aim_pitch = 0.0
+		pilot.latest_server_input = w_cmd
+		plane.step_vehicle_server(1.0 / 60.0, heroes_map, ctx)
+		await get_tree().physics_frame
+		if tick == 10:
+			spd_10 = plane._airspeed
+			dy_10 = plane.global_position.y - accel_start_y
+		elif tick == 35:
+			spd_35 = plane._airspeed
+			dy_35 = plane.global_position.y - accel_start_y
+		elif tick == 75:
+			spd_75 = plane._airspeed
+
+	var spd_125: float = plane._airspeed
+	for _b in range(45):
+		var s_cmd := InputCmd.new()
+		s_cmd.move_dir = Vector2(0.0, 1.0)
+		s_cmd.aim_yaw = 0.0
+		s_cmd.aim_pitch = 0.0
+		pilot.latest_server_input = s_cmd
+		plane.step_vehicle_server(1.0 / 60.0, heroes_map, ctx)
+		await get_tree().physics_frame
+	var spd_braked: float = plane._airspeed
+
+	_assert(
+		spd_10 >= 3.0 and spd_10 <= 12.0 and dy_10 < 0.25
+		and spd_35 > VehiclePlane.TAKEOFF_SPEED and dy_35 > 0.05
+		and spd_75 > 30.0 and spd_125 > 36.0 and spd_braked < spd_125 - 10.0,
+		"VehiclePlane accelerates progressively on runway (t10=%.1f, t35=%.1f/dy=%.2f, t75=%.1f, t125=%.1f) and brakes cleanly with S (%.1f)" % [spd_10, spd_35, dy_35, spd_75, spd_125, spd_braked]
+	)
+
+	# 3. Wall crash explosion + enemy bot splash + zero friendly fire + _respawn_vehicle reset
+	var wall_body := StaticBody3D.new()
+	wall_body.collision_layer = 1
+	var wall_col := CollisionShape3D.new()
+	var wall_box := BoxShape3D.new()
+	wall_box.size = Vector3(24.0, 16.0, 3.0)
+	wall_col.shape = wall_box
+	wall_body.position = Vector3(0.0, 6.0, -35.0)
+	wall_body.add_child(wall_col)
+	arena.add_child(wall_body)
+
+	var enemy_wall := HeroCharacter.new()
+	enemy_wall.setup_identity(8303, "T3EnemyWall", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	arena.add_child(enemy_wall)
+	enemy_wall.global_position = Vector3(3.0, 0.5, -31.0)
+
+	var ally_wall := HeroCharacter.new()
+	ally_wall.setup_identity(8304, "T3AllyWall", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	arena.add_child(ally_wall)
+	ally_wall.global_position = Vector3(-3.0, 0.5, -31.0)
+
+	var enemy_jeep := VehicleJeep.new()
+	enemy_jeep.id = 8306
+	enemy_jeep.team = NetworkManager.TEAM_NATIONAL
+	arena.add_child(enemy_jeep)
+	enemy_jeep.global_position = Vector3(5.0, 0.8, -31.0)
+
+	var ally_jeep := VehicleJeep.new()
+	ally_jeep.id = 8307
+	ally_jeep.team = NetworkManager.TEAM_ROYAL
+	arena.add_child(ally_jeep)
+	ally_jeep.global_position = Vector3(-5.0, 0.8, -31.0)
+
+	var wall_heroes: Dictionary = {8302: pilot, 8303: enemy_wall, 8304: ally_wall}
+	var wall_ctx: Dictionary = {"heroes_by_id": wall_heroes}
+
+	var exp_events: Array[Dictionary] = []
+	var hit_events: Array[Dictionary] = []
+	var on_crash_evt := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "explosion_vfx":
+			exp_events.append(payload)
+		elif ev_type == "hit_vfx":
+			hit_events.append(payload)
+	NetworkManager.game_event_received.connect(on_crash_evt)
+
+	plane.global_position = Vector3(0.0, 3.0, 0.0)
+	plane.rotation = Vector3.ZERO
+	plane._airspeed = 34.0
+	plane._was_airborne = true
+	plane._crash_armed_time = 0.5
+	plane.linear_velocity = Vector3(0.0, 0.0, -34.0)
+	plane._prev_vel = plane.linear_velocity
+
+	for _w in range(90):
+		if plane.is_destroyed:
+			break
+		var fly_cmd := InputCmd.new()
+		fly_cmd.move_dir = Vector2(0.0, -1.0)
+		fly_cmd.aim_yaw = 0.0
+		fly_cmd.aim_pitch = 0.0
+		pilot.latest_server_input = fly_cmd
+		plane.step_vehicle_server(1.0 / 60.0, wall_heroes, wall_ctx)
+		await get_tree().physics_frame
+
+	var has_crash_exp: bool = false
+	for ev in exp_events:
+		if is_equal_approx(float(ev.get("radius", 0.0)), VehiclePlane.CRASH_RADIUS) and int(ev.get("attacker_id", -1)) == 8302:
+			has_crash_exp = true
+			break
+
+	_assert(
+		plane.is_destroyed
+		and enemy_wall.hp < enemy_wall.max_hp
+		and ally_wall.hp == ally_wall.max_hp
+		and enemy_jeep.hp < enemy_jeep.max_hp
+		and ally_jeep.hp == ally_jeep.max_hp
+		and has_crash_exp,
+		"VehiclePlane wall crash detonates with radial enemy splash (enemy_hp=%d/%d, e_veh=%d/%d), zero friendly fire (ally_hp=%d/%d, a_veh=%d/%d), and explosion_vfx" % [enemy_wall.hp, enemy_wall.max_hp, enemy_jeep.hp, enemy_jeep.max_hp, ally_wall.hp, ally_wall.max_hp, ally_jeep.hp, ally_jeep.max_hp]
+	)
+
+	plane._respawn_vehicle()
+	_assert(
+		not plane.is_destroyed and plane.hp == plane.max_hp and plane._airspeed == 0.0 and not plane._was_airborne and is_equal_approx(plane.gravity_scale, 1.0),
+		"VehiclePlane._respawn_vehicle cleanly resets airspeed, airborne state, gravity_scale, and hp"
+	)
+
+	# 4. Pilot bail-out + unmanned nose-down ballistic dive explosion killing enemy bot
+	exp_events.clear()
+	hit_events.clear()
+
+	var dive_plane := VehiclePlane.new()
+	dive_plane.id = 8305
+	dive_plane.team = NetworkManager.TEAM_ROYAL
+	dive_plane.position = Vector3(50.0, 6.5, 30.0)
+	arena.add_child(dive_plane)
+
+	var dive_pilot := HeroCharacter.new()
+	dive_pilot.setup_identity(8311, "T3DivePilot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(dive_pilot)
+	dive_plane.try_enter_hero(dive_pilot)
+
+	var dive_enemy := HeroCharacter.new()
+	dive_enemy.setup_identity(8312, "T3DiveTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, true)
+	arena.add_child(dive_enemy)
+	dive_enemy.global_position = Vector3(50.0, 0.5, -14.0)
+
+	var dive_heroes: Dictionary = {8311: dive_pilot, 8312: dive_enemy}
+	var dive_ctx: Dictionary = {"heroes_by_id": dive_heroes}
+
+	await get_tree().physics_frame
+	dive_plane.global_position = Vector3(50.0, 6.5, 30.0)
+	dive_plane.rotation = Vector3.ZERO
+	dive_plane._airspeed = 34.0
+	dive_plane._was_airborne = true
+	dive_plane._crash_armed_time = 0.5
+	dive_plane.linear_velocity = Vector3(0.0, 0.0, -34.0)
+	dive_plane._prev_vel = dive_plane.linear_velocity
+
+	for _p in range(5):
+		var dcmd := InputCmd.new()
+		dcmd.move_dir = Vector2(0.0, -1.0)
+		dcmd.aim_yaw = 0.0
+		dcmd.aim_pitch = 0.0
+		dive_pilot.latest_server_input = dcmd
+		dive_plane.step_vehicle_server(1.0 / 60.0, dive_heroes, dive_ctx)
+		await get_tree().physics_frame
+
+	var bail_z: float = dive_plane.global_position.z
+	dive_plane.exit_hero(dive_pilot)
+	dive_pilot.global_position = Vector3(50.0, 20.0, 60.0) # Far clear of blast
+
+	var max_dive_pitch: float = 0.0
+	for _u in range(150):
+		if dive_plane.is_destroyed:
+			break
+		dive_plane.step_vehicle_server(1.0 / 60.0, dive_heroes, dive_ctx)
+		max_dive_pitch = minf(max_dive_pitch, dive_plane.rotation.x)
+		await get_tree().physics_frame
+
+	NetworkManager.game_event_received.disconnect(on_crash_evt)
+
+	var dive_exp_ok: bool = false
+	for ev in exp_events:
+		if is_equal_approx(float(ev.get("radius", 0.0)), VehiclePlane.CRASH_RADIUS) and int(ev.get("attacker_id", -1)) == 8311:
+			dive_exp_ok = true
+			break
+	var dive_hit_ok: bool = false
+	for hev in hit_events:
+		if int(hev.get("attacker_id", -1)) == 8311 and int(hev.get("victim_id", -1)) == 8312 and int(hev.get("damage", 0)) > 0:
+			dive_hit_ok = true
+			break
+
+	_assert(
+		dive_plane.is_destroyed
+		and dive_plane.global_position.z < bail_z - 15.0
+		and max_dive_pitch < -0.15
+		and dive_enemy.is_defeated and dive_enemy.last_killer_id == 8311
+		and dive_exp_ok and dive_hit_ok,
+		"Unmanned bailed-out plane maintains forward momentum (dz=%.1fm), pitches nose-down (min_pitch=%.2f), detonates on ground impact, kills enemy bot (defeated=%s, killer=%d), and broadcasts explosion_vfx + hit_vfx" % [dive_plane.global_position.z - bail_z, max_dive_pitch, str(dive_enemy.is_defeated), dive_enemy.last_killer_id]
+	)
+
+	arena.queue_free()
+	await _flush_deferred()

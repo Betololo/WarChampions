@@ -528,7 +528,8 @@ func _physics_process(delta: float) -> void:
 					hero.shield,
 					hero.current_vehicle_id,
 					hero.current_seat_index,
-					hero.knockback_seq
+					hero.knockback_seq,
+					hero.active_buffs
 				)
 				NetworkManager.send_authoritative_state(hero.entity_id, packed)
 
@@ -732,6 +733,9 @@ func _on_world_snapshot(snapshot: Dictionary) -> void:
 	for h_dict in snapshot.get("heroes", []):
 		var hid: int = int(h_dict.get("id", 0))
 		if hid == NetworkManager.local_peer_id:
+			var lh: HeroCharacter = heroes_by_id.get(hid, null)
+			if lh != null and is_instance_valid(lh):
+				lh.active_buffs = int(h_dict.get("buffs", lh.active_buffs))
 			continue
 		if not heroes_by_id.has(hid):
 			var p_info: Dictionary = NetworkManager.players_info.get(hid, {})
@@ -840,7 +844,9 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 					hud.spawn_damage_number(hit_pos, dmg_amt, is_crit, s_tag)
 		"explosion_vfx":
 			var exp_pos: Vector3 = payload.get("pos", Vector3.ZERO)
-			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, exp_pos, "explosion", float(payload.get("radius", 5.0)))
+			var exp_radius: float = float(payload.get("radius", 5.0))
+			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, exp_pos, "explosion", exp_radius)
+			StatusEffectsVFX.spawn_explosion_area_ring(projectiles_root, exp_pos, exp_radius)
 			var exp_attacker_id: int = int(payload.get("attacker_id", -1))
 			SoundSynthesizer.play_sfx("explosion", 0.0, exp_attacker_id == NetworkManager.local_peer_id, exp_pos)
 		"vehicle_destroyed":
@@ -863,6 +869,15 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			if caster_hero != null and caster_hero.has_method("trigger_skill_visual"):
 				caster_hero.trigger_skill_visual(skill_cls, skill_slot)
 			StatusEffectsVFX.spawn_skill_vfx(projectiles_root, skill_cls, skill_slot, skill_pos, caster_yaw)
+			var aoe_radius: float = float(payload.get("aoe_radius", 0.0))
+			if aoe_radius > 0.0:
+				var aoe_origin: Vector3 = payload.get("aoe_origin", skill_pos)
+				var affected_positions: Array[Vector3] = []
+				for tid in payload.get("affected_ids", []):
+					var th: HeroCharacter = heroes_by_id.get(int(tid), null)
+					if th != null and is_instance_valid(th):
+						affected_positions.append(th.global_position)
+				StatusEffectsVFX.spawn_aoe_area_vfx(projectiles_root, skill_cls, skill_slot, aoe_origin, aoe_radius, affected_positions)
 			SoundSynthesizer.play_sfx("heal", 0.0, skill_caster_id == NetworkManager.local_peer_id, skill_pos)
 		"eat_grenades":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)
