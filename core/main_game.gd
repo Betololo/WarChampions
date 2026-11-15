@@ -260,6 +260,8 @@ func _should_use_loading_screen() -> bool:
 		return false
 	if not OS.get_cmdline_user_args().is_empty():
 		return false
+	if get_tree() == null or get_tree().current_scene != self:
+		return false
 	return is_inside_tree() and _loading_layer != null
 
 

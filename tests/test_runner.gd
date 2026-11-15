@@ -2382,7 +2382,9 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 	var subframe_moved: bool = true
 	var max_cam_hero_horiz_div: float = 0.0
 
+	hero._curr_phys_pos = hero.global_position
 	for frame in range(30):
+		hero._prev_phys_pos = hero._curr_phys_pos
 		hero.simulate_movement(move_cmd, 1.0 / 60.0)
 		hero.velocity.y = 0.0
 		hero.active_flags |= NetSerializer.SNAP_GROUNDED
