@@ -43,6 +43,8 @@ var hp: int = 350
 var turret_yaw: float = 0.0
 var turret_pitch: float = 0.0
 var is_destroyed: bool = false
+var is_marked: bool = false
+var marked_timer: float = 0.0
 var respawn_delay: float = 25.0
 var _respawn_timer: float = 0.0
 var spawn_transform: Transform3D = Transform3D.IDENTITY
@@ -215,6 +217,31 @@ func try_enter_hero(hero: HeroCharacter) -> int:
 	return -1
 
 
+func try_switch_seat(hero: HeroCharacter, target_seat_idx: int) -> bool:
+	if is_destroyed or hero == null or hero.is_defeated or hero.current_vehicle_id != id:
+		return false
+	if target_seat_idx < 0 or target_seat_idx >= seats.size():
+		return false
+	if hero.current_seat_index == target_seat_idx:
+		return true
+	var target_seat: SeatSlot = seats[target_seat_idx]
+	if target_seat.occupant_id >= 0:
+		return false
+	var prev_seat: SeatSlot = get_seat(hero.current_seat_index)
+	if prev_seat != null and prev_seat.occupant_id == hero.entity_id:
+		prev_seat.occupant_id = -1
+	target_seat.occupant_id = hero.entity_id
+	hero.current_seat_index = target_seat_idx
+	if is_aircraft() and target_seat_idx == 0:
+		hero.aim_yaw = rotation.y
+		if hero.hero_camera != null:
+			hero.hero_camera.yaw = rotation.y
+			hero.hero_camera.pitch = maxf(hero.hero_camera.pitch, 0.06)
+	_sync_hero_seat_state(hero, target_seat)
+	hero.stats_changed.emit()
+	return true
+
+
 func exit_hero(hero: HeroCharacter) -> void:
 	if hero == null or hero.current_vehicle_id != id:
 		return
@@ -283,6 +310,45 @@ func compute_directional_multiplier(hit_dir_world: Vector3, hit_pos_world: Vecto
 		if hit_dir_world.normalized().dot(-rear_normal) > 0.45:
 			return 2.0
 	return 1.0
+
+
+## Calculates exact Bazooka directional armor damage: 40 Front / 60 Side / 95 Rear.
+func compute_bazooka_directional_damage(hit_dir_world: Vector3, hit_pos_world: Vector3) -> int:
+	var fwd_normal: Vector3 = -global_transform.basis.z.normalized()
+	var dir_check: Vector3 = hit_pos_world - global_position
+	dir_check.y = 0.0
+	if dir_check.length_squared() > 0.05:
+		var d: float = dir_check.normalized().dot(fwd_normal)
+		if d >= 0.45:
+			return 40
+		if d <= -0.45:
+			return 95
+		return 60
+	if hit_dir_world.length_squared() > 0.01:
+		var hd: Vector3 = Vector3(hit_dir_world.x, 0.0, hit_dir_world.z).normalized()
+		var d2: float = hd.dot(fwd_normal)
+		if d2 <= -0.45:
+			return 40
+		if d2 >= 0.45:
+			return 95
+	return 60
+
+
+func apply_bazooka_damage_server(attacker_id: int, hit_dir: Vector3, hit_pos: Vector3) -> void:
+	if is_destroyed:
+		return
+	var final_dmg: int = compute_bazooka_directional_damage(hit_dir, hit_pos)
+	hp = maxi(0, hp - final_dmg)
+	NetworkManager.broadcast_game_event("hit_vfx", {
+		"pos": hit_pos,
+		"kind": "spark",
+		"attacker_id": attacker_id,
+		"damage": final_dmg,
+		"headshot": final_dmg >= 95,
+		"is_vehicle": true,
+	})
+	if hp == 0:
+		_on_destroyed(attacker_id)
 
 
 func apply_damage_server(amount: int, attacker_id: int, hit_dir: Vector3, hit_pos: Vector3, is_explosive: bool) -> void:
@@ -358,9 +424,17 @@ func _respawn_vehicle() -> void:
 	respawned.emit(id)
 
 
+func apply_marked(duration: float = 12.0) -> void:
+	marked_timer = maxf(marked_timer, duration)
+	is_marked = marked_timer > 0.0
+
+
 func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictionary) -> void:
 	if not heroes_by_id.is_empty():
 		_last_heroes_by_id = heroes_by_id
+	if marked_timer > 0.0:
+		marked_timer = maxf(0.0, marked_timer - delta)
+	is_marked = marked_timer > 0.0
 	if is_destroyed:
 		_respawn_timer -= delta
 		if _respawn_timer <= 0.0:
@@ -659,6 +733,7 @@ func _process(delta: float) -> void:
 
 func push_remote_snapshot(server_tick: int, server_time_ms: float, snap: Dictionary) -> void:
 	hp = int(snap.get("hp", hp))
+	is_marked = bool(snap.get("marked", false))
 	is_destroyed = (hp <= 0)
 	visible = hp > 0
 	collision_layer = 8 if not is_destroyed else 0
@@ -679,6 +754,7 @@ func build_snapshot_dict() -> Dictionary:
 	return {
 		"id": id,
 		"type": vehicle_type,
+		"marked": is_marked,
 		"pos": global_position,
 		"rot": quaternion,
 		"vel": linear_velocity,

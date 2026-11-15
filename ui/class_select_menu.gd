@@ -2,9 +2,9 @@ class_name ClassSelectMenu
 extends CanvasLayer
 
 ## War Champions Multi-Screen Menu & In-Game Pause System:
-## - HubScreen: War Champions 12v12 Cartoon Warfare, Quick Offline Bots, Multiplayer Drawer.
-## - ArmoryScreen: Royal (Azure) vs National (Crimson) Factions, Exclusive Class loadouts & 3 skills.
-## - SettingsScreen: Master/SFX/Music volume sliders, Mouse Sensitivity, Portuguese controls, In-match Pause.
+## - HubScreen: War Champions 20v20 Cartoon Warfare, Quick Offline Bots, Multiplayer Drawer.
+## - ArmoryScreen: Royal (Azure) vs National (Crimson) Factions, Exclusive Class loadouts, Weapon Variants & 5-6 skills.
+## - SettingsScreen: Master/SFX/Music sliders, Mouse Sensitivity, Custom Skill/Widget Hotkeys, In-match Pause.
 
 signal host_online_pressed(team: int, class_id: int, port: int)
 signal join_online_pressed(team: int, class_id: int, ip: String, port: int)
@@ -50,6 +50,8 @@ var _class_cards: Array[PanelContainer] = []
 var _lag_btn: Button
 var _deploy_btn: Button
 var _mp_drawer: VBoxContainer
+var _weapon_variant_row: HBoxContainer
+var _weapon_variant_selectors: Array[OptionButton] = []
 
 ## Settings UI Elements
 var _master_vol_slider: HSlider
@@ -60,13 +62,44 @@ var _resume_btn: Button
 var _leave_btn: Button
 var _settings_back_btn: Button
 var _settings_title: Label
+var _skill_hotkey_buttons: Array[Button] = []
+var _widget_hotkey_buttons: Array[Button] = []
+var _reset_hotkeys_btn: Button
+var _listening_hotkey_kind: String = "" # "skill" | "widget" | ""
+var _listening_hotkey_slot: int = -1
 
 
 func _ready() -> void:
 	layer = 20
+	set_process_input(true)
 	_build_ui()
 	_refresh_summary()
 	show_screen("hub")
+
+
+func _input(event: InputEvent) -> void:
+	if _listening_hotkey_kind.is_empty():
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		var k := event as InputEventKey
+		if k.keycode == KEY_ESCAPE:
+			_cancel_hotkey_listen()
+			get_viewport().set_input_as_handled()
+			return
+		if k.keycode in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]:
+			return
+		assign_hotkey_from_ui(_listening_hotkey_kind, _listening_hotkey_slot, k.keycode)
+		get_viewport().set_input_as_handled()
+
+
+static func get_class_weapon_slots(p_class_id: int) -> Array[int]:
+	match p_class_id:
+		NetworkManager.CLASS_SOLDIER:
+			return [WeaponBase.WeaponKind.SMG, WeaponBase.WeaponKind.SHOTGUN, WeaponBase.WeaponKind.PISTOL, WeaponBase.WeaponKind.TNT]
+		NetworkManager.CLASS_GUNNER:
+			return [WeaponBase.WeaponKind.MG, WeaponBase.WeaponKind.SHOTGUN, WeaponBase.WeaponKind.BAZOOKA]
+		_:
+			return [WeaponBase.WeaponKind.SNIPER, WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.PISTOL, WeaponBase.WeaponKind.TNT]
 
 
 func _make_card_style(bg: Color, border: Color, border_w: int = 2) -> StyleBoxFlat:
@@ -106,7 +139,7 @@ func _build_ui() -> void:
 	add_child(center)
 
 	var main_panel := PanelContainer.new()
-	main_panel.custom_minimum_size = Vector2(960, 600)
+	main_panel.custom_minimum_size = Vector2(980, 620)
 	main_panel.add_theme_stylebox_override("panel", _make_card_style(Color(0.09, 0.13, 0.20, 0.97), Color(0.96, 0.78, 0.22), 3))
 	center.add_child(main_panel)
 
@@ -144,7 +177,7 @@ func _build_hub_screen(parent: Control) -> void:
 	title_box.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "12v12 Cartoon Warfare — Seaside Frontline"
+	subtitle.text = "20v20 Cartoon Warfare — Seaside Frontline"
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_font_size_override("font_size", 16)
 	subtitle.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
@@ -157,7 +190,7 @@ func _build_hub_screen(parent: Control) -> void:
 	_hub_screen.add_child(mode_box)
 
 	var solo_btn := Button.new()
-	solo_btn.text = "Treino Offline 12v12 Bots"
+	solo_btn.text = "Treino Offline 20v20 Bots"
 	solo_btn.custom_minimum_size = Vector2(480, 46)
 	solo_btn.pressed.connect(func() -> void:
 		_pending_mode = "bots"
@@ -370,25 +403,25 @@ func _build_armory_screen(parent: Control) -> void:
 		{
 			"id": NetworkManager.CLASS_SOLDIER,
 			"name": "SOLDIER",
-			"stats": "HP: 110 | Velocidade: 7.8 m/s",
+			"stats": "HP: 110 | Velocidade: 6.3 m/s",
 			"weapons": "SMG, Shotgun, Pistola, TNT",
-			"skills": "1. Combat Medicine (Cura)\n2. Blasting Strike (Repulsão)\n3. Grenade Spam (Dispersão)",
+			"skills": "Combat Med • Blasting • Grenade\nSixth Sense • Burning Bullets",
 			"col": Color(0.20, 0.45, 0.75),
 		},
 		{
 			"id": NetworkManager.CLASS_GUNNER,
 			"name": "GUNNER",
-			"stats": "HP: 150 | Velocidade: 6.4 m/s",
+			"stats": "HP: 150 | Velocidade: 5.4 m/s",
 			"weapons": "Metralhadora MG, Shotgun, Bazooka",
-			"skills": "1. Hero Shield (Escudo)\n2. I Eat Grenades (Absorve)\n3. Frenzy Fire (Rajada)",
+			"skills": "Hero Shield • Eat Grenades • Frenzy\nExplosive Keg • Leg Shot",
 			"col": Color(0.65, 0.40, 0.15),
 		},
 		{
 			"id": NetworkManager.CLASS_COMMANDO,
 			"name": "COMMANDO",
-			"stats": "HP: 80 | Velocidade: 9.0 m/s",
+			"stats": "HP: 80 | Velocidade: 7.2 m/s",
 			"weapons": "Sniper, Faca, Pistola, TNT",
-			"skills": "1. Stealth / Cloak (Invisível)\n2. Poison Dart (Veneno DoT)\n3. Troop Trap (Mina Terrestre)",
+			"skills": "Stealth • Poisoned Blade • Troop Trap\nElixir • Piercing • Mark Target",
 			"col": Color(0.45, 0.20, 0.60),
 		},
 	]
@@ -398,7 +431,7 @@ func _build_armory_screen(parent: Control) -> void:
 
 	for info in class_info:
 		var c_card := PanelContainer.new()
-		c_card.custom_minimum_size = Vector2(290, 230)
+		c_card.custom_minimum_size = Vector2(290, 200)
 		c_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.08, 0.12, 0.18, 0.95), info["col"], 2))
 		cls_row.add_child(c_card)
 		_class_cards.append(c_card)
@@ -454,6 +487,34 @@ func _build_armory_screen(parent: Control) -> void:
 		skl_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		cv.add_child(skl_lbl)
 
+	# Equippable Weapon Variants per Slot for Selected Class
+	var var_card := PanelContainer.new()
+	var_card.custom_minimum_size = Vector2(900, 74)
+	var_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.06, 0.10, 0.16, 0.95), Color(0.35, 0.50, 0.70), 2))
+	_armory_screen.add_child(var_card)
+
+	var vm := MarginContainer.new()
+	vm.add_theme_constant_override("margin_left", 12)
+	vm.add_theme_constant_override("margin_right", 12)
+	vm.add_theme_constant_override("margin_top", 6)
+	vm.add_theme_constant_override("margin_bottom", 6)
+	var_card.add_child(vm)
+
+	var v_outer := VBoxContainer.new()
+	v_outer.add_theme_constant_override("separation", 4)
+	vm.add_child(v_outer)
+
+	var var_hdr := Label.new()
+	var_hdr.text = "EQUIPAMENTO — VARIANTES POR SLOT DA CLASSE SELECIONADA:"
+	var_hdr.add_theme_font_size_override("font_size", 11)
+	var_hdr.add_theme_color_override("font_color", Color(0.55, 0.90, 1.0))
+	v_outer.add_child(var_hdr)
+
+	_weapon_variant_row = HBoxContainer.new()
+	_weapon_variant_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_weapon_variant_row.add_theme_constant_override("separation", 10)
+	v_outer.add_child(_weapon_variant_row)
+
 	_summary_lbl = Label.new()
 	_summary_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_summary_lbl.add_theme_font_size_override("font_size", 14)
@@ -463,7 +524,7 @@ func _build_armory_screen(parent: Control) -> void:
 	# Deploy Button
 	_deploy_btn = Button.new()
 	_deploy_btn.text = "ENTRAR NA BATALHA"
-	_deploy_btn.custom_minimum_size = Vector2(460, 48)
+	_deploy_btn.custom_minimum_size = Vector2(460, 44)
 	_deploy_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_deploy_btn.add_theme_color_override("font_color", Color(1.0, 0.94, 0.40))
 	_deploy_btn.pressed.connect(_on_deploy_clicked)
@@ -507,7 +568,7 @@ func _build_settings_screen(parent: Control) -> void:
 
 	# Left Column: Audio & Sensitivity Sliders
 	var left_card := PanelContainer.new()
-	left_card.custom_minimum_size = Vector2(420, 310)
+	left_card.custom_minimum_size = Vector2(400, 390)
 	left_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.07, 0.11, 0.17, 0.95), Color(0.35, 0.50, 0.70), 2))
 	sets_box.add_child(left_card)
 
@@ -593,48 +654,97 @@ func _build_settings_screen(parent: Control) -> void:
 	)
 	lv.add_child(_sens_slider)
 
-	# Right Column: Controls Cheat-Sheet
+	# Right Column: Custom Skill/Widget Hotkeys & Controls Summary
 	var right_card := PanelContainer.new()
-	right_card.custom_minimum_size = Vector2(460, 310)
+	right_card.custom_minimum_size = Vector2(490, 390)
 	right_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.07, 0.11, 0.17, 0.95), Color(0.35, 0.50, 0.70), 2))
 	sets_box.add_child(right_card)
 
 	var rm := MarginContainer.new()
-	rm.add_theme_constant_override("margin_left", 16)
-	rm.add_theme_constant_override("margin_right", 16)
-	rm.add_theme_constant_override("margin_top", 12)
-	rm.add_theme_constant_override("margin_bottom", 12)
+	rm.add_theme_constant_override("margin_left", 14)
+	rm.add_theme_constant_override("margin_right", 14)
+	rm.add_theme_constant_override("margin_top", 10)
+	rm.add_theme_constant_override("margin_bottom", 10)
 	right_card.add_child(rm)
 
 	var rv := VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 6)
 	rm.add_child(rv)
 
+	var bind_hdr_row := HBoxContainer.new()
+	rv.add_child(bind_hdr_row)
+
+	var bind_hdr := Label.new()
+	bind_hdr.text = "Atalhos Personalizáveis (Skills & Itens)"
+	bind_hdr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bind_hdr.add_theme_font_size_override("font_size", 15)
+	bind_hdr.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
+	bind_hdr_row.add_child(bind_hdr)
+
+	_reset_hotkeys_btn = Button.new()
+	_reset_hotkeys_btn.text = "Restaurar Padrões"
+	_reset_hotkeys_btn.custom_minimum_size = Vector2(138, 26)
+	_reset_hotkeys_btn.pressed.connect(func() -> void:
+		InputCmd.reset_default_hotkeys()
+		_cancel_hotkey_listen()
+		_refresh_hotkey_buttons()
+		_notify_hud_hotkeys_changed()
+	)
+	bind_hdr_row.add_child(_reset_hotkeys_btn)
+
+	var sk_grid := GridContainer.new()
+	sk_grid.columns = 3
+	sk_grid.add_theme_constant_override("h_separation", 8)
+	sk_grid.add_theme_constant_override("v_separation", 6)
+	rv.add_child(sk_grid)
+
+	_skill_hotkey_buttons.clear()
+	for s_i in range(6):
+		var btn := Button.new()
+		btn.custom_minimum_size = Vector2(146, 30)
+		var captured_s: int = s_i
+		btn.pressed.connect(func() -> void:
+			_begin_hotkey_listen("skill", captured_s)
+		)
+		sk_grid.add_child(btn)
+		_skill_hotkey_buttons.append(btn)
+
+	var wd_grid := GridContainer.new()
+	wd_grid.columns = 2
+	wd_grid.add_theme_constant_override("h_separation", 8)
+	wd_grid.add_theme_constant_override("v_separation", 6)
+	rv.add_child(wd_grid)
+
+	_widget_hotkey_buttons.clear()
+	for w_i in range(4):
+		var wbtn := Button.new()
+		wbtn.custom_minimum_size = Vector2(224, 30)
+		var captured_w: int = w_i
+		wbtn.pressed.connect(func() -> void:
+			_begin_hotkey_listen("widget", captured_w)
+		)
+		wd_grid.add_child(wbtn)
+		_widget_hotkey_buttons.append(wbtn)
+
+	_refresh_hotkey_buttons()
+
 	var ctrl_hdr := Label.new()
-	ctrl_hdr.text = "Guia de Controles (Resumo)"
-	ctrl_hdr.add_theme_font_size_override("font_size", 16)
+	ctrl_hdr.text = "Resumo de Controles"
+	ctrl_hdr.add_theme_font_size_override("font_size", 14)
 	ctrl_hdr.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
 	rv.add_child(ctrl_hdr)
 
 	var controls_text: String = (
-		"• WASD: Movimentação\n" +
-		"• Espaço: Pular / Paraquedas (segurar após 1.0s de queda)\n" +
-		"• Ctrl / C: Agachar\n" +
-		"• 1, 2, 3, 4 / Q: Selecionar / Alternar Armas\n" +
-		"• 5-9 / F / G: Habilidades de Classe\n" +
-		"• Z / X / V: Widgets / Antídoto / Chave Inglesa\n" +
-		"• E: Entrar / Sair de Veículo (Jeep, Tanque, Avião, Barco, AA)\n" +
-		"• R: Recarregar Arma\n" +
-		"• Botão Direito: Mirar / Luneta Sniper\n" +
-		"• F8: Alternar Simulador de Lag de Rede\n" +
-		"• M: Ligar / Desligar Música\n" +
-		"• T: Provocar / Emote Comic\n" +
-		"• ESC: Menu de Pausa e Configurações"
+		"• WASD: Mover | Espaço: Pular / Paraquedas | Ctrl/C: Agachar\n" +
+		"• 1..4: Armas | Q: Última Arma usada | R: Recarregar | Botão Direito: Mirar\n" +
+		"• E: Entrar/Sair Veículo | F1..F4: Trocar Assento do Veículo\n" +
+		"• F8: Simulador de Lag | M: Música | T: Emote | ESC: Pausa"
 	)
 	var ctrl_body := Label.new()
 	ctrl_body.text = controls_text
-	ctrl_body.add_theme_font_size_override("font_size", 12)
+	ctrl_body.add_theme_font_size_override("font_size", 11)
 	ctrl_body.add_theme_color_override("font_color", Color(0.88, 0.92, 0.98))
+	ctrl_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	rv.add_child(ctrl_body)
 
 	# In-match Pause Action Row (Retomar / Sair)
@@ -753,17 +863,111 @@ func _toggle_lag_sim() -> void:
 			_lag_btn.text = "Simulador de Lag: OFF (0ms)"
 
 
+func select_weapon_variant(p_class_id: int, slot_idx: int, arch: int) -> void:
+	NetworkManager.set_slot_archetype(p_class_id, slot_idx, arch)
+	if p_class_id == selected_class:
+		_refresh_summary()
+
+
+func _rebuild_weapon_variant_selectors() -> void:
+	if _weapon_variant_row == null:
+		return
+	for child in _weapon_variant_row.get_children():
+		child.queue_free()
+	_weapon_variant_selectors.clear()
+	var kinds: Array[int] = get_class_weapon_slots(selected_class)
+	var arch_tags: Array[String] = ["Equilibrada", "Cadência+", "Precisão+"]
+	for slot_idx in range(kinds.size()):
+		var w_kind: int = kinds[slot_idx]
+		var box := HBoxContainer.new()
+		box.add_theme_constant_override("separation", 4)
+		var slot_lbl := Label.new()
+		slot_lbl.text = "%d:" % (slot_idx + 1)
+		slot_lbl.add_theme_font_size_override("font_size", 11)
+		slot_lbl.add_theme_color_override("font_color", Color(1.0, 0.88, 0.40))
+		box.add_child(slot_lbl)
+
+		var opt := OptionButton.new()
+		opt.custom_minimum_size = Vector2(196, 28)
+		for a_idx in range(3):
+			var vname: String = WeaponBase.get_variant_display_name(w_kind, a_idx)
+			opt.add_item("%s (%s)" % [vname, arch_tags[a_idx]], a_idx)
+		var cur_arch: int = NetworkManager.get_slot_archetype(selected_class, slot_idx, NetworkManager.ARCHETYPE_BALANCED)
+		opt.selected = clampi(cur_arch, 0, 2)
+		var cap_slot: int = slot_idx
+		opt.item_selected.connect(func(sel_idx: int) -> void:
+			select_weapon_variant(selected_class, cap_slot, sel_idx)
+		)
+		box.add_child(opt)
+		_weapon_variant_row.add_child(box)
+		_weapon_variant_selectors.append(opt)
+
+
+func _begin_hotkey_listen(kind: String, slot_idx: int) -> void:
+	_listening_hotkey_kind = kind
+	_listening_hotkey_slot = slot_idx
+	_refresh_hotkey_buttons()
+	if kind == "skill" and slot_idx >= 0 and slot_idx < _skill_hotkey_buttons.size():
+		_skill_hotkey_buttons[slot_idx].text = "Sk%d: [Tecla...]" % (slot_idx + 1)
+	elif kind == "widget" and slot_idx >= 0 and slot_idx < _widget_hotkey_buttons.size():
+		_widget_hotkey_buttons[slot_idx].text = "[Pressione Tecla...]"
+
+
+func _cancel_hotkey_listen() -> void:
+	_listening_hotkey_kind = ""
+	_listening_hotkey_slot = -1
+	_refresh_hotkey_buttons()
+
+
+func assign_hotkey_from_ui(kind: String, slot_idx: int, keycode: int) -> void:
+	if kind == "skill":
+		InputCmd.set_skill_key(slot_idx, keycode)
+	elif kind == "widget":
+		InputCmd.set_widget_key(slot_idx, keycode)
+	_listening_hotkey_kind = ""
+	_listening_hotkey_slot = -1
+	_refresh_hotkey_buttons()
+	_notify_hud_hotkeys_changed()
+
+
+func _refresh_hotkey_buttons() -> void:
+	for s_i in range(_skill_hotkey_buttons.size()):
+		var lbl: String = InputCmd.key_short_label(InputCmd.get_skill_key(s_i))
+		_skill_hotkey_buttons[s_i].text = "Skill %d: %s" % [s_i + 1, lbl]
+	var w_names: Array[String] = ["Bandagem", "Chave", "Antifogo", "Antídoto"]
+	for w_i in range(_widget_hotkey_buttons.size()):
+		var wlbl: String = InputCmd.key_short_label(InputCmd.get_widget_key(w_i))
+		_widget_hotkey_buttons[w_i].text = "%s: %s" % [w_names[w_i], wlbl]
+
+
+func _notify_hud_hotkeys_changed() -> void:
+	if not is_inside_tree():
+		return
+	for node in get_tree().get_nodes_in_group("hud_controllers"):
+		if node != null and node.has_method("refresh_hotkey_labels"):
+			node.refresh_hotkey_labels()
+	var hud_node: Node = get_tree().root.find_child("HUDController", true, false)
+	if hud_node != null and hud_node.has_method("refresh_hotkey_labels"):
+		hud_node.refresh_hotkey_labels()
+
+
 func _refresh_summary() -> void:
 	var t_name: String = "Royal Army" if selected_team == 0 else "National Army"
 	var t_prefix: String = "royal" if selected_team == 0 else "national"
 	var c_names: Array[String] = ["Soldier", "Gunner", "Commando"]
 	var w_desc: Array[String] = [
-		"SMG, Shotgun, Pistola e TNT",
-		"Metralhadora MG, Shotgun e Bazooka",
-		"Rifle Sniper, Faca, Pistola e TNT",
+		"SMG, Shotgun, Pistola, TNT",
+		"Metralhadora MG, Shotgun, Bazooka",
+		"Rifle Sniper, Faca, Pistola, TNT",
 	]
+	var equipped_names: PackedStringArray = []
+	var kinds: Array[int] = get_class_weapon_slots(selected_class)
+	for s_i in range(kinds.size()):
+		var a: int = NetworkManager.get_slot_archetype(selected_class, s_i, NetworkManager.ARCHETYPE_BALANCED)
+		equipped_names.append(WeaponBase.get_variant_display_name(kinds[s_i], a))
+	_rebuild_weapon_variant_selectors()
 	if _summary_lbl != null:
-		_summary_lbl.text = "Selecionado: %s | %s — Armas Exclusivas: %s" % [t_name, c_names[selected_class], w_desc[selected_class]]
+		_summary_lbl.text = "%s | %s (%s) — Variantes: %s" % [t_name, c_names[selected_class], w_desc[selected_class], ", ".join(equipped_names)]
 	if _preview_flag != null:
 		_preview_flag.texture = CartoonAssets.get_texture("flag_%s" % t_prefix)
 	if _preview_portrait != null:

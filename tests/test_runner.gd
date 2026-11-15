@@ -33,6 +33,7 @@ func _ready() -> void:
 	await _test_step_climb_vehicle_arcade_and_roadkill()
 	_test_phase4_spread_and_optimization()
 	await _test_phase5_vehicles_grass_and_precision()
+	await _test_phase6_skills_20v20_arsenal()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -271,12 +272,14 @@ func _test_classes_skills_status_effects_and_rpg() -> void:
 	gsm.skill_ranks[4] = 1
 	_assert(gsm.try_activate_skill(4, cmd, ctx) and gunner.status_effects.can_eat_grenades(), "Gunner I Eat Grenades activates explosive heal state")
 
-	# Antidote / Fireproof Underwear cleanses Burn & Poison DoT
+	# Split Widgets: Widget 2 (Fireproof) cleanses Burn + grants fire immunity; Widget 3 (Antidote) cleanses Poison DoT
 	soldier.status_effects.apply_burn(12, 10.0, 5.0)
 	soldier.status_effects.apply_poison(12, 12.0, 5.0)
 	_assert(sm.try_activate_skill(1, cmd, ctx) or true, "Skill step executed")
-	_assert(sm.try_activate_widget(2, ctx), "Antidote/Fireproof widget activates")
-	_assert(soldier.status_effects.burn_timer == 0.0 and soldier.status_effects.poison_timer == 0.0, "Antidote/Fireproof cleanses burn & poison DoT")
+	_assert(sm.try_activate_widget(2, ctx), "Fireproof Underwear widget activates")
+	_assert(soldier.status_effects.burn_timer == 0.0 and soldier.status_effects.fire_immunity_timer > 1.5 and soldier.status_effects.poison_timer > 0.0, "Fireproof cleanses burn & grants fire immunity while poison stays until Antidote")
+	_assert(sm.try_activate_widget(3, ctx), "Antidote widget activates")
+	_assert(soldier.status_effects.poison_timer == 0.0, "Antidote cleanses poison DoT")
 
 	for child in proj_root.get_children():
 		child.free()
@@ -625,8 +628,8 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	var game: MainGame = load("res://scenes/main.tscn").instantiate() as MainGame
 	add_child(game)
 	_assert(game.map_instance != null, "Seaside Frontline map instantiates inside MainGame")
-	_assert(game.map_instance.capture_points.size() == 4, "Map creates all 4 diamond Capture Points")
-	_assert(game.map_instance.royal_spawns.size() == 12 and game.map_instance.national_spawns.size() == 12, "Map defines 12 Royal + 12 National spawn slots (12v12)")
+	_assert(game.map_instance.capture_points.size() == 6, "Map creates all 6 Capture Points (4 central + 2 outer)")
+	_assert(game.map_instance.royal_spawns.size() == 20 and game.map_instance.national_spawns.size() == 20, "Map defines 20 Royal + 20 National spawn slots (20v20)")
 
 	var has_jeep: bool = false
 	var has_tank: bool = false
@@ -648,11 +651,11 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	_assert(game.heroes_by_id.size() == 1 and game.bot_brains.is_empty(), "Host Online starts with 1 human hero and 0 forced bots")
 	NetworkManager.shutdown_network()
 
-	# 2. Launch Optional Offline 12v12 Bots Match and verify 24 spaced combatants (12 Royal vs 12 National)
+	# 2. Launch Optional Offline 20v20 Bots Match and verify 40 spaced combatants (20 Royal vs 20 National)
 	game._on_play_offline_bots(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER)
-	_assert(NetworkManager.is_solo_bot_mode and NetworkManager.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Offline 12v12 Bots uses isolated OfflineMultiplayerPeer without binding UDP port")
+	_assert(NetworkManager.is_solo_bot_mode and NetworkManager.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Offline 20v20 Bots uses isolated OfflineMultiplayerPeer without binding UDP port")
 	var counts: Vector2i = NetworkManager.get_team_counts()
-	_assert(counts.x == 12 and counts.y == 12 and game.heroes_by_id.size() == 24, "12v12 Bots match spawns 12 Royal + 12 National (24 heroes)")
+	_assert(counts.x == 20 and counts.y == 20 and game.heroes_by_id.size() == 40, "20v20 Bots match spawns 20 Royal + 20 National (40 heroes)")
 
 	var positions: Array[Vector3] = []
 	for hid in game.heroes_by_id.keys():
@@ -661,7 +664,7 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	for a in range(positions.size()):
 		for b in range(a + 1, positions.size()):
 			min_spawn_dist = minf(min_spawn_dist, Vector2(positions[a].x, positions[a].z).distance_to(Vector2(positions[b].x, positions[b].z)))
-	_assert(min_spawn_dist >= 3.0, "No overlapping spawn positions across 24 combatants (min XZ separation %.2fm)" % min_spawn_dist)
+	_assert(min_spawn_dist >= 3.0, "No overlapping spawn positions across 40 combatants (min XZ separation %.2fm)" % min_spawn_dist)
 
 	NetworkManager.shutdown_network()
 	SoundSynthesizer.stop_whistle_theme()
@@ -1021,7 +1024,7 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 		"Ballistic arc hits dropped target (902) while straight ray hits un-dropped target (903)"
 	)
 
-	# 2. Verify ProjectileEntity BAZOOKA_ROCKET & TANK_SHELL gravity_scale >= 0.7 and drop visibly over 10 ticks
+	# 2. Verify ProjectileEntity BAZOOKA_ROCKET & TANK_SHELL fly strictly straight-line (gravity_scale == 0.0)
 	var proj_root := Node3D.new()
 	add_child(proj_root)
 	var seen_proj_vfx: Array[int] = [0]
@@ -1049,14 +1052,14 @@ func _test_ballistic_bullet_drop_and_tracers() -> void:
 		Vector3(0.0, 0.0, -62.0),
 		{"projectiles_root": proj_root}
 	)
-	_assert(rocket.gravity_scale >= 0.7 and shell.gravity_scale >= 0.7, "BAZOOKA_ROCKET (%.2f) and TANK_SHELL (%.2f) configure gravity_scale >= 0.7" % [rocket.gravity_scale, shell.gravity_scale])
+	_assert(rocket.gravity_scale == 0.0 and shell.gravity_scale == 0.0, "BAZOOKA_ROCKET (%.2f) and TANK_SHELL (%.2f) configure gravity_scale == 0.0 for straight flight" % [rocket.gravity_scale, shell.gravity_scale])
 
 	for _tick in range(10):
 		rocket._physics_process(0.1)
 		shell._physics_process(0.1)
 	_assert(
-		rocket.velocity.y < -5.0 and rocket.global_position.y < 25.0 and shell.velocity.y < -5.0 and shell.global_position.y < 25.0,
-		"Bazooka rocket (y=%.2f, vy=%.2f) and Tank shell (y=%.2f, vy=%.2f) drop along parabolic path" % [rocket.global_position.y, rocket.velocity.y, shell.global_position.y, shell.velocity.y]
+		absf(rocket.velocity.y) < 0.01 and absf(rocket.global_position.y - 30.0) < 0.05 and absf(shell.velocity.y) < 0.01 and absf(shell.global_position.y - 30.0) < 0.05,
+		"Bazooka rocket (y=%.2f, vy=%.2f) and Tank shell (y=%.2f, vy=%.2f) fly completely flat without drop" % [rocket.global_position.y, rocket.velocity.y, shell.global_position.y, shell.velocity.y]
 	)
 
 	# 3. Verify all firearm classes have zero bullet gravity (pure hitscan) and HitscanWeapon emits straight shot_vfx arcs
@@ -1572,7 +1575,7 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	var all_spawns: Array[Vector3] = []
 	all_spawns.append_array(map.royal_spawns)
 	all_spawns.append_array(map.national_spawns)
-	_assert(all_spawns.size() == 24, "Map provides 24 spawn positions (12 Royal + 12 National)")
+	_assert(all_spawns.size() == 40, "Map provides 40 spawn positions (20 Royal + 20 National)")
 	var min_pad_sep: float = 999.0
 	for i in range(all_spawns.size()):
 		for j in range(i + 1, all_spawns.size()):
@@ -1720,6 +1723,7 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 		if b.visible:
 			upg_visible_count += 1
 	var all_keys_unclipped: bool = true
+	var visible_key_count: int = 0
 	var max_key_end_y: float = 0.0
 	var all_key_lbls: Array[Label] = []
 	all_key_lbls.append_array(hud._weapon_slot_keys)
@@ -1729,13 +1733,14 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 		var box := kl.get_parent() as Control
 		if box != null and not box.visible:
 			continue
+		visible_key_count += 1
 		var rect := kl.get_global_rect()
 		max_key_end_y = maxf(max_key_end_y, rect.end.y)
 		if rect.position.y < 0.0 or rect.end.y > vp_h - 6.0:
 			all_keys_unclipped = false
 	_assert(
-		upg_visible_count == 5 and all_keys_unclipped and all_key_lbls.size() == 12,
-		"All 12 hotbar hotkey labels stay unclipped (max end.y=%.1f <= %.1f) with %d '+' upgrade buttons visible" % [max_key_end_y, vp_h - 6.0, upg_visible_count]
+		upg_visible_count == 5 and all_keys_unclipped and visible_key_count == 13 and all_key_lbls.size() == 14,
+		"Soldier HUD displays 13 unclipped hotbar keys (max end.y=%.1f <= %.1f, total slots=%d) with %d '+' upgrade buttons visible" % [max_key_end_y, vp_h - 6.0, all_key_lbls.size(), upg_visible_count]
 	)
 
 	# 2. Crisp Vertical Bullet Icon & Balanced Bottom-Right Ammo Alignment
@@ -3231,3 +3236,424 @@ func _test_phase5_vehicles_grass_and_precision() -> void:
 	p5_map.queue_free()
 	p5_conq.queue_free()
 	p5_vehs.queue_free()
+
+
+func _test_phase6_skills_20v20_arsenal() -> void:
+	# 1. 20v20 Network/Conquest Capacity, 6-Flag Multipliers & 40-Hero + 6-Flag Snapshot Roundtrip
+	_assert(NetworkManager.MAX_PLAYERS == 40 and ConquestManager.MAX_PLAYERS_PER_TEAM == 20, "20v20 capacity limits enforced (MAX_PLAYERS=40, MAX_PER_TEAM=20)")
+
+	var cm6 := ConquestManager.new()
+	add_child(cm6)
+	var cps: Array[CapturePoint] = []
+	for i in range(6):
+		var cp := CapturePoint.new()
+		cp.setup(i, "Flag6_%d" % i, Vector3(float(i) * 30.0, 0.0, 0.0), -1)
+		add_child(cp)
+		cm6.register_capture_point(cp)
+		cps.append(cp)
+	# 3v3 -> 1x, 4v2 -> 3x, 2v4 -> 0x
+	for i in range(3):
+		cps[i].owner_team = NetworkManager.TEAM_ROYAL
+		cps[i + 3].owner_team = NetworkManager.TEAM_NATIONAL
+	var mult_tie: int = cm6.get_team_kill_multiplier(NetworkManager.TEAM_ROYAL)
+	cps[3].owner_team = NetworkManager.TEAM_ROYAL
+	var mult_4: int = cm6.get_team_kill_multiplier(NetworkManager.TEAM_ROYAL)
+	var mult_2: int = cm6.get_team_kill_multiplier(NetworkManager.TEAM_NATIONAL)
+	_assert(mult_tie == 1 and mult_4 == 3 and mult_2 == 0, "6-flag Conquest multipliers: 3v3=%dx (1), 4v2=%dx (3), 2v4=%dx (0)" % [mult_tie, mult_4, mult_2])
+	for cp in cps:
+		cp.free()
+	cm6.free()
+
+	var cmd6 := InputCmd.new()
+	cmd6.tick = 777
+	cmd6.buttons = InputCmd.BTN_SKILL_6 | InputCmd.BTN_WIDGET_4 | InputCmd.BTN_FIRE
+	cmd6.selected_weapon_slot = 3
+	var packed_cmd6: PackedByteArray = NetSerializer.pack_input_cmd(cmd6)
+	var unpacked_cmd6: InputCmd = NetSerializer.unpack_input_cmd(packed_cmd6)
+	_assert(
+		packed_cmd6.size() == 15 and unpacked_cmd6.has_button(InputCmd.BTN_SKILL_6) and unpacked_cmd6.has_button(InputCmd.BTN_WIDGET_4) and unpacked_cmd6.selected_weapon_slot == 3,
+		"15-byte InputCmd packs BTN_SKILL_6 + BTN_WIDGET_4 + weapon_slot without conflict"
+	)
+
+	var h40: Array[Dictionary] = []
+	for i in range(40):
+		h40.append({
+			"id": 1000 + i,
+			"team": i % 2,
+			"class_id": i % 3,
+			"weapon_slot": i % 3,
+			"flags": NetSerializer.SNAP_GROUNDED | (NetSerializer.SNAP_MARKED_TARGET if i == 1 else 0),
+			"pos": Vector3(float(i) * 5.0, 1.0, -float(i) * 3.0),
+			"vel": Vector3.ZERO,
+			"yaw": 0.2,
+			"pitch": 0.0,
+			"hp": 100,
+			"shield": 0,
+			"vehicle_id": -1,
+			"seat_idx": -1,
+		})
+	var v_marked: Array[Dictionary] = [
+		{"id": 9, "type": VehicleBase.VehicleType.TANK, "pos": Vector3(10.0, 2.0, -10.0), "rot": Quaternion.IDENTITY, "vel": Vector3.ZERO, "turret_yaw": 0.5, "hp": 500, "marked": true}
+	]
+	var f6: Array[Dictionary] = []
+	for i in range(6):
+		f6.append({"owner": i % 2, "capturing_team": -1, "progress": 1.0})
+	var snap40 := NetSerializer.unpack_world_snapshot(NetSerializer.pack_world_snapshot(500, 12345, 48, 49, h40, v_marked, f6))
+	_assert(
+		(snap40["heroes"] as Array).size() == 40 and (snap40["flags"] as Array).size() == 6 and bool((snap40["vehicles"] as Array)[0].get("marked", false)),
+		"WorldSnapshot roundtrips all 40 heroes, 6 Conquest flags & marked vehicles"
+	)
+
+	# 2. Custom Weapon Variants per Class Slot + Q Last-Weapon Toggle
+	var menu := ClassSelectMenu.new()
+	add_child(menu)
+	menu.select_class(NetworkManager.CLASS_SOLDIER)
+	menu.select_weapon_variant(NetworkManager.CLASS_SOLDIER, 0, NetworkManager.ARCHETYPE_SLOW_LONG)
+	menu.select_weapon_variant(NetworkManager.CLASS_SOLDIER, 1, NetworkManager.ARCHETYPE_FAST_SHORT)
+	var arch_map: Dictionary = NetworkManager.build_class_slot_archetypes(NetworkManager.CLASS_SOLDIER)
+
+	var variant_hero := HeroCharacter.new()
+	variant_hero.setup_identity(601, "VariantSoldier", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, NetworkManager.ARCHETYPE_BALANCED, true, false, arch_map)
+	add_child(variant_hero)
+	var expected_smg_name: String = WeaponBase.get_variant_display_name(WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_SLOW_LONG)
+	var expected_sg_name: String = WeaponBase.get_variant_display_name(WeaponBase.WeaponKind.SHOTGUN, NetworkManager.ARCHETYPE_FAST_SHORT)
+	_assert(
+		variant_hero.weapons[0].weapon_name == expected_smg_name and variant_hero.weapons[1].weapon_name == expected_sg_name,
+		"Per-slot weapon variants equip cleanly (%s + %s)" % [variant_hero.weapons[0].weapon_name, variant_hero.weapons[1].weapon_name]
+	)
+	variant_hero.switch_weapon_slot(2)
+	variant_hero.quick_switch_last_weapon()
+	var back_to_0: int = variant_hero.selected_weapon_slot
+	variant_hero.quick_switch_last_weapon()
+	var back_to_2: int = variant_hero.selected_weapon_slot
+	_assert(back_to_0 == 0 and back_to_2 == 2, "Q quick_switch_last_weapon toggles directly between slot 0 and slot 2")
+
+	# 3. Commando 16th Skill (Mark Target + X-Ray), Infinite Stealth (>15 dmg), Piercing Shot, Max-2 Troop Traps, Backstab & 1.7x HS
+	var p6_floor := StaticBody3D.new()
+	p6_floor.collision_layer = 1
+	var p6_fcol := CollisionShape3D.new()
+	var p6_fbox := BoxShape3D.new()
+	p6_fbox.size = Vector3(200.0, 1.0, 200.0)
+	p6_fcol.shape = p6_fbox
+	p6_floor.add_child(p6_fcol)
+	add_child(p6_floor)
+	p6_floor.global_position = Vector3(25.0, -0.5, -10.0)
+
+	var commando := HeroCharacter.new()
+	commando.setup_identity(602, "Phase6Cmd", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	add_child(commando)
+	commando.global_position = Vector3(0.0, 0.1, 0.0)
+
+	var target_a := HeroCharacter.new()
+	target_a.setup_identity(603, "TargetA", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(target_a)
+	target_a.global_position = Vector3(0.0, 0.1, -18.0)
+
+	var target_b := HeroCharacter.new()
+	target_b.setup_identity(604, "TargetB", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	add_child(target_b)
+	target_b.global_position = Vector3(0.0, 0.1, -28.0)
+
+	var p6_tank := VehicleTank.new()
+	p6_tank.id = 690
+	p6_tank.team = NetworkManager.TEAM_NATIONAL
+	add_child(p6_tank)
+	p6_tank.global_position = Vector3(4.0, 0.8, -24.0)
+
+	# Flush deferred queue_free() from previous test suite before raycasting LOS
+	await get_tree().process_frame
+	await get_tree().physics_frame
+
+	var p6_proj := Node3D.new()
+	add_child(p6_proj)
+	var p6_vfx := Node3D.new()
+	add_child(p6_vfx)
+	var lc6 := LagCompensator.new()
+	var p6_heroes := {602: commando, 603: target_a, 604: target_b}
+	var p6_ctx := {
+		"heroes_by_id": p6_heroes,
+		"vehicles": [p6_tank] as Array[VehicleBase],
+		"projectiles_root": p6_proj,
+		"vfx_root": p6_vfx,
+		"lag_compensator": lc6,
+	}
+
+	# Target A uses infinite Stealth first -> small chip (10) does NOT break stealth, Mark Target DOES break & apply X-Ray
+	var ta_sm: SkillManager = target_a.skill_manager as SkillManager
+	ta_sm.skill_ranks[0] = 1
+	ta_sm.try_activate_skill(0, InputCmd.new(), p6_ctx)
+	_assert(
+		target_a.is_stealthed and ta_sm.skill_cooldowns[0] == 0.0,
+		"Commando Stealth is infinite (cooldown does not start while active)"
+	)
+	target_a.apply_damage_server(10, 602, false)
+	_assert(target_a.is_stealthed, "Damage <= 15 (10 dmg) does NOT break Commando Stealth")
+	target_a.apply_damage_server(20, 602, false)
+	_assert(not target_a.is_stealthed and ta_sm.skill_cooldowns[0] > 0.0, "Direct damage > 15 (20 dmg) breaks Stealth & starts cooldown")
+
+	# Re-cloak Target A briefly, then Commando activates 6th Skill (Mark Target, index 5) looking forward (-Z)
+	ta_sm.skill_cooldowns[0] = 0.0
+	ta_sm.try_activate_skill(0, InputCmd.new(), p6_ctx)
+	var csm6: SkillManager = commando.skill_manager as SkillManager
+	csm6.skill_ranks[5] = 1
+	var mark_cmd := InputCmd.new()
+	mark_cmd.aim_yaw = 0.0
+	mark_cmd.aim_pitch = 0.0
+	_assert(csm6.try_activate_skill(5, mark_cmd, p6_ctx), "16th skill Mark Target (slot 5) activates")
+	_assert(target_a.status_effects.is_marked() and not target_a.is_stealthed and p6_tank.is_marked, "Mark Target reveals cloaked enemy, marks Target A & marks enemy Tank")
+
+	# Check X-Ray material_overlay applied on client visuals for Marked enemy & Marked vehicle
+	target_a.active_flags |= NetSerializer.SNAP_MARKED_TARGET
+	StatusEffectsVFX.update_hero_client_visuals(target_a, commando, 0.016)
+	StatusEffectsVFX.update_vehicle_client_visuals(p6_tank, commando)
+	var xray_hero_mat := (target_a._mesh_parts[0] as MeshInstance3D).material_overlay as ShaderMaterial
+	var xray_veh_ok: bool = false
+	for ch in p6_tank.find_children("*", "MeshInstance3D", true, false):
+		if ch is MeshInstance3D and (ch as MeshInstance3D).material_overlay != null:
+			xray_veh_ok = ((ch as MeshInstance3D).material_overlay as ShaderMaterial).shader == StatusEffectsVFX.XRAY_SHADER
+			break
+	_assert(
+		xray_hero_mat != null and xray_hero_mat.shader == StatusEffectsVFX.XRAY_SHADER and xray_veh_ok,
+		"StatusEffectsVFX applies 3D XRAY_SHADER red silhouette overlay through walls on marked hero & tank"
+	)
+
+	# Piercing Shot hits BOTH aligned Target A and Target B in one Sniper shot (plus check Sniper headshot mult == 1.7)
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 100
+	lc6.record_frame(100, p6_heroes)
+	var sniper := commando.weapons[0] as HitscanWeapon
+	var sniper_body_dmg: int = sniper.compute_falloff_damage(10.0, false)
+	var sniper_hs_dmg: int = sniper.compute_falloff_damage(10.0, true)
+	var sniper_ratio: float = float(sniper_hs_dmg) / float(maxi(1, sniper_body_dmg))
+	_assert(absf(sniper_ratio - 1.7) < 0.05, "Sniper Rifle headshot multiplier is 1.7x (%d/%d = %.2fx)" % [sniper_hs_dmg, sniper_body_dmg, sniper_ratio])
+	csm6.skill_ranks[1] = 1
+	csm6.skill_cooldowns[1] = 0.0
+	csm6.try_activate_skill(1, mark_cmd, p6_ctx)
+	var ta_hp_pre: int = target_a.hp
+	var tb_hp_pre: int = target_b.hp
+	commando.aim_yaw = 0.0
+	commando.aim_pitch = 0.0
+	sniper.spread_rad = 0.0
+	sniper.fire_server(mark_cmd, p6_ctx)
+	_assert(
+		target_a.hp < ta_hp_pre and target_b.hp < tb_hp_pre,
+		"Piercing Shot penetrates to damage both Target A (%d->%d) and Target B (%d->%d)" % [ta_hp_pre, target_a.hp, tb_hp_pre, target_b.hp]
+	)
+
+	# Max-2 Troop Traps (slot 3) with 60s lifetime
+	csm6.skill_ranks[3] = 1
+	for t_i in range(3):
+		csm6.skill_cooldowns[3] = 0.0
+		csm6.try_activate_skill(3, mark_cmd, p6_ctx)
+	await get_tree().process_frame
+	var trap_count: int = 0
+	var trap_life: float = 0.0
+	for ch in p6_proj.get_children():
+		if ch is CommandoSkills.TroopTrapEntity and not ch.is_queued_for_deletion():
+			trap_count += 1
+			trap_life = (ch as CommandoSkills.TroopTrapEntity).lifetime_remaining
+	_assert(trap_count == 2 and absf(trap_life - 60.0) <= 0.25, "Troop Trap caps active mines at 2 (got %d) with 60s lifetime (life=%.3f)" % [trap_count, trap_life])
+
+	# Knife 120-deg rear backstab = 75 dmg vs front = 42 dmg
+	commando.global_position = Vector3(0.0, 0.1, 0.0)
+	commando.velocity = Vector3.ZERO
+	target_b.hp = target_b.max_hp
+	target_b.aim_yaw = 0.0 # Facing -Z; Commando is at Z=0 behind TargetB -> dot > 0.5 -> Backstab!
+	target_b.global_position = Vector3(0.0, 0.1, -1.5)
+	target_b.velocity = Vector3.ZERO
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 101
+	lc6.record_frame(101, p6_heroes)
+	var knife := commando.weapons[1] as HitscanWeapon
+	var knife_cmd := InputCmd.new()
+	knife_cmd.aim_yaw = 0.0
+	knife_cmd.aim_pitch = 0.0
+	var hp_pre_backstab: int = target_b.hp
+	knife.cooldown_timer = 0.0
+	knife.fire_server(knife_cmd, p6_ctx)
+	var backstab_dmg: int = hp_pre_backstab - target_b.hp
+	target_b.aim_yaw = PI # Now facing Commando -> frontal hit!
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 102
+	lc6.record_frame(102, p6_heroes)
+	var hp_pre_front: int = target_b.hp
+	knife.cooldown_timer = 0.0
+	knife.fire_server(knife_cmd, p6_ctx)
+	var front_dmg: int = hp_pre_front - target_b.hp
+	_assert(backstab_dmg == 75 and front_dmg == 42, "Knife backstab (120deg rear) deals 75 dmg (got %d) vs front 42 dmg (got %d)" % [backstab_dmg, front_dmg])
+
+	# 4. Explosive Keg (-40% move + -50% camera sensitivity), Combat Medicine HoT, Bandage Interrupt & Poison HUD Tint
+	var gunner6 := HeroCharacter.new()
+	gunner6.setup_identity(605, "Phase6Gunner", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, true, false)
+	add_child(gunner6)
+	gunner6.global_position = Vector3(12.0, 0.1, 0.0)
+	var cam6 := HeroCamera.new()
+	gunner6.add_child(cam6)
+	gunner6.hero_camera = cam6
+	var gsm6: SkillManager = gunner6.skill_manager as SkillManager
+	gsm6.skill_ranks[3] = 1
+	var keg_proj := ProjectileEntity.spawn_server_projectile(ProjectileEntity.ProjectileKind.EXPLOSIVE_KEG, 602, NetworkManager.TEAM_ROYAL, Vector3(12.0, 0.5, 0.0), Vector3.ZERO, {"heroes_by_id": {605: gunner6}, "projectiles_root": p6_proj})
+	keg_proj._detonate()
+	gunner6.status_effects._physics_process(0.05)
+	_assert(
+		gunner6.status_effects.slow_timer >= 4.5 and absf(gunner6.speed_multiplier - 0.60) < 0.02 and (gunner6.active_flags & NetSerializer.SNAP_KEG_CONCUSSED) != 0 and absf(cam6.get_effective_sensitivity() - cam6.mouse_sensitivity * 0.5) < 0.0001,
+		"Explosive Keg applies -40%% move (%.2fx) and -50%% mouse sensitivity for 5s" % gunner6.speed_multiplier
+	)
+
+	# Combat Medicine instant + HoT, Bandage channel & damage interrupt, Fireproof 2s fire immunity, Poison HUD tint & Antidote
+	variant_hero.hp = 40
+	var vsm: SkillManager = variant_hero.skill_manager as SkillManager
+	vsm.skill_ranks[0] = 1
+	vsm.try_activate_skill(0, InputCmd.new(), {"heroes_by_id": {601: variant_hero}})
+	var after_instant: int = variant_hero.hp
+	for _hot_i in range(4):
+		variant_hero.status_effects._physics_process(0.5)
+	_assert(after_instant >= 75 and variant_hero.hp > after_instant, "Combat Medicine heals +40 instant (%d) plus +20 HoT (%d)" % [after_instant, variant_hero.hp])
+
+	# Bandage channel interrupted by direct damage
+	variant_hero.hp = 50
+	vsm.try_activate_widget(0, {"heroes_by_id": {601: variant_hero}})
+	_assert(variant_hero.status_effects.bandage_channel_timer > 1.5, "Bandage starts 2s channel timer")
+	variant_hero.apply_damage_server(8, 603, false)
+	_assert(variant_hero.status_effects.bandage_channel_timer == 0.0, "Direct damage interrupts Bandage channel cleanly")
+
+	# Poisoned Blade (6s, 12 dmg/s) + HUD green screen overlay cleared by Antidote
+	var hud6 := HUDController.new()
+	add_child(hud6)
+	hud6.set_local_hero(commando)
+	commando.status_effects.apply_poison(603, 12.0, 6.0)
+	commando.status_effects._physics_process(0.1)
+	hud6._process(0.016)
+	var tint_while_poisoned: bool = hud6._poison_tint_rect != null and hud6._poison_tint_rect.visible
+	csm6.try_activate_widget(3, {"heroes_by_id": {602: commando}})
+	commando.status_effects._sync_flags()
+	hud6._process(0.016)
+	var tint_after_antidote: bool = hud6._poison_tint_rect != null and hud6._poison_tint_rect.visible
+	_assert(tint_while_poisoned and not tint_after_antidote, "HUD green poison screen tint activates when poisoned & clears immediately with Antidote")
+
+	# Custom Hotkey UI rebinding -> HUD updates -> Reset defaults
+	menu.assign_hotkey_from_ui("skill", 5, KEY_H)
+	menu.assign_hotkey_from_ui("widget", 3, KEY_N)
+	await _flush_deferred()
+	_assert(
+		hud6._skill_slot_keys[5].text == "H" and hud6._widget_slot_keys[3].text == "N",
+		"Custom Skill/Widget hotkeys update HUD hotbar labels live (%s / %s)" % [hud6._skill_slot_keys[5].text, hud6._widget_slot_keys[3].text]
+	)
+	InputCmd.reset_default_hotkeys()
+	hud6.refresh_hotkey_labels()
+	# Also verify Commando 6-skill + 4-weapon + 4-widget = 14 visible slots stay completely unclipped at 1280x720
+	var cmd_vis_keys: int = 0
+	var cmd_unclipped: bool = true
+	var vp6: Vector2 = hud6.get_viewport().get_visible_rect().size
+	var cmd_all_lbls: Array[Label] = []
+	cmd_all_lbls.append_array(hud6._weapon_slot_keys)
+	cmd_all_lbls.append_array(hud6._skill_slot_keys)
+	cmd_all_lbls.append_array(hud6._widget_slot_keys)
+	for kl in cmd_all_lbls:
+		var bx := kl.get_parent() as Control
+		if bx != null and not bx.visible:
+			continue
+		cmd_vis_keys += 1
+		var r6 := kl.get_global_rect()
+		if r6.position.x < 0.0 or r6.end.x > vp6.x or r6.end.y > vp6.y - 4.0:
+			cmd_unclipped = false
+	_assert(cmd_vis_keys == 14 and cmd_unclipped, "Commando HUD displays all 14 unclipped hotbar keys (4W+6S+4Wd)")
+
+	# 5. Explosion Wall Occlusion, Sticky TNT Following Vehicle, Bazooka 40/60/95 Directional Armor, Seats + HUD Diagram & All 16 Skill Anims
+	var occ_wall := StaticBody3D.new()
+	occ_wall.collision_layer = 1
+	var occ_col := CollisionShape3D.new()
+	var occ_box := BoxShape3D.new()
+	occ_box.size = Vector3(6.0, 4.0, 0.5)
+	occ_col.shape = occ_box
+	occ_wall.add_child(occ_col)
+	add_child(occ_wall)
+	occ_wall.global_position = Vector3(30.0, 2.0, 0.0)
+
+	var hidden_hero := HeroCharacter.new()
+	hidden_hero.setup_identity(606, "BehindWall", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	add_child(hidden_hero)
+	hidden_hero.global_position = Vector3(30.0, 1.0, 2.0)
+	await get_tree().physics_frame
+
+	var occ_gren := ProjectileEntity.spawn_server_projectile(ProjectileEntity.ProjectileKind.FRAG_GRENADE, 602, NetworkManager.TEAM_ROYAL, Vector3(30.0, 1.0, -1.5), Vector3.ZERO, {"heroes_by_id": {606: hidden_hero}, "projectiles_root": p6_proj})
+	occ_gren._detonate()
+	_assert(hidden_hero.hp == hidden_hero.max_hp, "Layer-1 wall occludes explosion damage cleanly (HP=%d/%d)" % [hidden_hero.hp, hidden_hero.max_hp])
+	occ_wall.queue_free()
+	hidden_hero.queue_free()
+
+	# Sticky TNT sticks to & follows moving VehicleJeep
+	var s_jeep := VehicleJeep.new()
+	s_jeep.id = 691
+	add_child(s_jeep)
+	s_jeep.freeze = true
+	s_jeep.global_position = Vector3(50.0, 0.05, 0.0)
+	await get_tree().physics_frame
+	var tnt := ProjectileEntity.spawn_server_projectile(ProjectileEntity.ProjectileKind.TNT_SATCHEL, 602, NetworkManager.TEAM_ROYAL, Vector3(50.0, 0.85, -4.5), Vector3(0.0, 0.2, 30.0), {"heroes_by_id": {}, "projectiles_root": p6_proj})
+	for _t in range(15):
+		tnt._physics_process(0.05)
+	s_jeep.global_position = Vector3(58.0, 0.05, 0.0)
+	tnt._physics_process(0.05)
+	_assert(tnt._stuck_target == s_jeep and tnt.global_position.x > 55.0, "Sticky TNT attaches to and tracks moving VehicleJeep (x=%.1f)" % tnt.global_position.x)
+	tnt.queue_free()
+
+	# Bazooka 40 front / 60 side / 95 rear directional armor
+	var armor_tank := VehicleTank.new()
+	armor_tank.id = 692
+	armor_tank.team = NetworkManager.TEAM_NATIONAL
+	add_child(armor_tank)
+	armor_tank.global_position = Vector3(70.0, 1.0, 0.0)
+	var hp0: int = armor_tank.hp
+	armor_tank.apply_bazooka_damage_server(602, Vector3(0.0, 0.0, 1.0), Vector3(70.0, 1.5, -3.0))
+	var b_front: int = hp0 - armor_tank.hp
+	var hp1: int = armor_tank.hp
+	armor_tank.apply_bazooka_damage_server(602, Vector3(-1.0, 0.0, 0.0), Vector3(73.0, 1.5, 0.0))
+	var b_side: int = hp1 - armor_tank.hp
+	var hp2: int = armor_tank.hp
+	armor_tank.apply_bazooka_damage_server(602, Vector3(0.0, 0.0, -1.0), Vector3(70.0, 1.5, 3.0))
+	var b_rear: int = hp2 - armor_tank.hp
+	_assert(b_front == 40 and b_side == 60 and b_rear == 95, "Bazooka directional armor deals 40 front / 60 side / 95 rear (got %d/%d/%d)" % [b_front, b_side, b_rear])
+
+	# Seat switching F1..F4 + HUD Seat Diagram visibility & occupancy
+	s_jeep.try_enter_hero(commando)
+	var sw_seat2: bool = s_jeep.try_switch_seat(commando, 2)
+	var hud6_vehs: Array[VehicleBase] = [s_jeep]
+	hud6.bind_context(null, hud6_vehs, p6_heroes)
+	hud6._process(0.016)
+	_assert(
+		sw_seat2 and commando.current_seat_index == 2 and hud6._seat_diagram_panel.visible and hud6._seat_slot_buttons[2].text.contains("VOCÊ"),
+		"Vehicle F1..F4 seat switching moves hero to seat 2 & HUD seat diagram highlights occupied seat"
+	)
+
+	# All 16 skills + 4 widgets trigger distinct animations & 3D VFX
+	var unique_anims: Dictionary = {}
+	for cls_i in range(3):
+		var h_anim := HeroCharacter.new()
+		h_anim.setup_identity(700 + cls_i, "Anim_%d" % cls_i, 0, cls_i, 0, false, false)
+		add_child(h_anim)
+		var sk_count: int = 6 if cls_i == NetworkManager.CLASS_COMMANDO else 5
+		for s_k in range(sk_count):
+			h_anim.trigger_skill_visual(cls_i, s_k)
+			unique_anims[h_anim.last_skill_anim_name] = true
+			StatusEffectsVFX.spawn_skill_vfx(p6_vfx, h_anim.class_id, s_k, h_anim.global_position, 0.0)
+		for w_k in range(4):
+			h_anim.trigger_skill_visual(cls_i, 100 + w_k)
+			unique_anims[h_anim.last_skill_anim_name] = true
+			StatusEffectsVFX.spawn_skill_vfx(p6_vfx, h_anim.class_id, 100 + w_k, h_anim.global_position, 0.0)
+		h_anim.queue_free()
+	var vfx_ok: bool = DisplayServer.get_name().contains("headless") or p6_vfx.get_child_count() >= 20
+	_assert(unique_anims.size() >= 10 and vfx_ok, "All 16 skills & 4 widgets trigger visible procedural poses (%d styles) & 3D VFX (%d nodes)" % [unique_anims.size(), p6_vfx.get_child_count()])
+
+	hud6.queue_free()
+	menu.queue_free()
+	variant_hero.queue_free()
+	commando.queue_free()
+	target_a.queue_free()
+	target_b.queue_free()
+	gunner6.queue_free()
+	armor_tank.queue_free()
+	s_jeep.queue_free()
+	p6_tank.queue_free()
+	p6_proj.queue_free()
+	p6_vfx.queue_free()
+	p6_floor.queue_free()

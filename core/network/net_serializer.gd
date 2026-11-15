@@ -19,6 +19,8 @@ const SNAP_FIRING: int = 1 << 10
 const SNAP_SIXTH_SENSE: int = 1 << 11
 const SNAP_EAT_GRENADES: int = 1 << 12
 const SNAP_EMOTING: int = 1 << 13
+const SNAP_MARKED_TARGET: int = 1 << 14
+const SNAP_KEG_CONCUSSED: int = 1 << 15
 
 
 static func _pack_angle_u16(radians: float) -> int:
@@ -51,7 +53,8 @@ static func pack_input_cmd(cmd: InputCmd) -> PackedByteArray:
 	buf.put_u16(_pack_angle_u16(cmd.aim_yaw))
 	buf.put_u16(_pack_angle_u16(cmd.aim_pitch))
 	buf.put_u16(cmd.buttons & 0xFFFF)
-	buf.put_u8(cmd.selected_weapon_slot & 0xFF)
+	var weapon_byte: int = (cmd.selected_weapon_slot & 0x0F) | (0x80 if cmd.has_button(InputCmd.BTN_WIDGET_4) else 0)
+	buf.put_u8(weapon_byte)
 	buf.put_u16(clampi(cmd.view_interp_tick_delta, 0, 65535))
 	return buf.data_array
 
@@ -72,7 +75,10 @@ static func unpack_input_cmd(bytes: PackedByteArray) -> InputCmd:
 	cmd.aim_yaw = _unwrap_signed_angle(_unpack_angle_u16(buf.get_u16()))
 	cmd.aim_pitch = clampf(_unwrap_signed_angle(_unpack_angle_u16(buf.get_u16())), -1.45, 1.45)
 	cmd.buttons = buf.get_u16()
-	cmd.selected_weapon_slot = buf.get_u8()
+	var weapon_byte: int = buf.get_u8()
+	cmd.selected_weapon_slot = weapon_byte & 0x0F
+	if (weapon_byte & 0x80) != 0:
+		cmd.buttons |= InputCmd.BTN_WIDGET_4
 	cmd.view_interp_tick_delta = buf.get_u16()
 	return cmd
 
@@ -160,7 +166,7 @@ static func pack_world_snapshot(
 	buf.put_u16(clampi(royal_tickets, 0, 65535))
 	buf.put_u16(clampi(national_tickets, 0, 65535))
 
-	var hero_count: int = mini(heroes.size(), 32)
+	var hero_count: int = mini(heroes.size(), 48)
 	buf.put_u8(hero_count)
 	for i in range(hero_count):
 		var h: Dictionary = heroes[i]
@@ -185,7 +191,8 @@ static func pack_world_snapshot(
 	for i in range(veh_count):
 		var v: Dictionary = vehicles[i]
 		buf.put_u16(int(v.get("id", 0)) & 0xFFFF)
-		buf.put_u8(int(v.get("type", 0)) & 0xFF)
+		var vtype_byte: int = (int(v.get("type", 0)) & 0x7F) | (0x80 if bool(v.get("marked", false)) else 0)
+		buf.put_u8(vtype_byte)
 		var pos: Vector3 = v.get("pos", Vector3.ZERO)
 		buf.put_float(pos.x)
 		buf.put_float(pos.y)
@@ -266,7 +273,9 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 	var veh_count: int = buf.get_u8()
 	for i in range(veh_count):
 		var id: int = buf.get_u16()
-		var vtype: int = buf.get_u8()
+		var vtype_raw: int = buf.get_u8()
+		var vtype: int = vtype_raw & 0x7F
+		var v_marked: bool = (vtype_raw & 0x80) != 0
 		var pos := Vector3(buf.get_float(), buf.get_float(), buf.get_float())
 		var rot := Quaternion(buf.get_float(), buf.get_float(), buf.get_float(), buf.get_float()).normalized()
 		var vel: Vector3 = _get_vec3_s16_vel(buf)
@@ -275,6 +284,7 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 		vehicles_out.append({
 			"id": id,
 			"type": vtype,
+			"marked": v_marked,
 			"pos": pos,
 			"rot": rot,
 			"vel": vel,

@@ -30,9 +30,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var pkind: int = ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET if weapon_kind == WeaponKind.BAZOOKA else ProjectileEntity.ProjectileKind.TNT_SATCHEL
 
 	var launch_vel: Vector3 = dir * projectile_speed
-	if pkind == ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET:
-		launch_vel += Vector3(0.0, 0.8, 0.0)
-	elif pkind == ProjectileEntity.ProjectileKind.TNT_SATCHEL:
+	if pkind == ProjectileEntity.ProjectileKind.TNT_SATCHEL:
 		launch_vel += Vector3(0.0, 4.5, 0.0)
 	ProjectileEntity.spawn_server_projectile(pkind, owner_hero.entity_id, owner_hero.team, origin, launch_vel, context, -1.0, owner_hero.get_parent())
 

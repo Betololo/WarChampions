@@ -201,7 +201,30 @@ func _load_weapon_stats() -> void:
 			is_explosive_weapon = true
 
 
+static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
+	var arch: int = clampi(p_archetype, 0, 2)
+	match w_kind:
+		WeaponKind.SMG:
+			return ["Tommy Submachine", "Sten Rápida (Curto)", "MP-41 Pesada (Longo)"][arch]
+		WeaponKind.MG:
+			return ["Metralhadora Padrão", "Serra-Ossos (Cadência)", "Bren Precisão (Longo)"][arch]
+		WeaponKind.SHOTGUN:
+			return ["Escopeta Combate", "Trench Cano Serrado", "Slug Longo Alcance"][arch]
+		WeaponKind.PISTOL:
+			return ["Pistola de Serviço", "Automática Ágil", "Revólver Pesado .44"][arch]
+		WeaponKind.SNIPER:
+			return ["Rifle Sniper Padrão", "Carabina Semi-Auto", "K98k Super Dano"][arch]
+		WeaponKind.KNIFE:
+			return ["Faca Tática", "Estilete Rápido", "Kukri Pesado"][arch]
+		WeaponKind.BAZOOKA:
+			return ["Bazooka M1", "Lança-Foguete Ágil", "Super Bazooka M9"][arch]
+		WeaponKind.TNT:
+			return ["Carga TNT", "Dinamite Leve", "Satchel Pesada"][arch]
+	return "Arma"
+
+
 func _apply_archetype_modifiers() -> void:
+	weapon_name = get_variant_display_name(weapon_kind, archetype)
 	damage_max = base_damage_max
 	damage_min = base_damage_min
 	fire_interval = base_fire_interval
@@ -331,7 +354,8 @@ func compute_falloff_damage(distance_m: float, is_headshot: bool, bonus_mult: fl
 	var t: float = clampf((distance_m - falloff_start_m) / maxf(falloff_end_m - falloff_start_m, 0.01), 0.0, 1.0)
 	var dmg: float = lerpf(damage_max, damage_min, t)
 	if is_headshot and not is_melee:
-		dmg *= 1.5
+		var hs_mult: float = 1.7 if weapon_kind == WeaponKind.SNIPER else 1.5
+		dmg *= hs_mult
 	dmg *= bonus_mult
 	return maxi(1, int(roundf(dmg)))
 
@@ -364,9 +388,9 @@ func get_aim_origin_and_dir(
 	var fwd_vec: Vector3 = (-aim_basis.z).normalized()
 	var origin: Vector3 = hero_pos + Vector3(0.0, eye_offset, 0.0) + right_vec * 0.24 - fwd_vec * 0.25
 
-	var convergence_range: float = minf(max_range_m, 260.0)
 	var pivot_pt: Vector3 = cam_ray.get("pivot", cam_origin)
 	var spring_len: float = float(cam_ray.get("spring_length", 0.0))
+	var convergence_range: float = clampf(spring_len + maxf(max_range_m, 30.0), spring_len + 2.0, 260.0)
 	var min_dist: float = maxf(1.4, spring_len + 0.45)
 
 	var best_hit_dist: float = convergence_range

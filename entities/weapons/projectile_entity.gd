@@ -27,6 +27,9 @@ var proximity_air_radius: float = 0.0 # > 0 for AA Flak
 var hp: int = 20 # Shootable mid-air (e.g. Explosive Keg)
 
 var _exploded: bool = false
+var _is_stuck: bool = false
+var _stuck_target: Node3D = null
+var _stuck_local_pos: Vector3 = Vector3.ZERO
 var _mesh: Node3D
 var _context: Dictionary = {}
 var _trail_timer: float = 0.0
@@ -77,7 +80,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 
 	match kind:
 		ProjectileKind.BAZOOKA_ROCKET:
-			gravity_scale = 0.72
+			gravity_scale = 0.0
 			splash_radius = 5.5
 			base_damage = 68.0
 			knockback_force = 12.0
@@ -109,7 +112,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			explode_on_impact = false
 			apply_keg_slow = true
 		ProjectileKind.TANK_SHELL:
-			gravity_scale = 1.08
+			gravity_scale = 0.0
 			splash_radius = 7.5
 			base_damage = 95.0
 			knockback_force = 16.0
@@ -255,6 +258,11 @@ func _physics_process(delta: float) -> void:
 			queue_free()
 		return
 
+	if _is_stuck:
+		if _stuck_target != null and is_instance_valid(_stuck_target) and _stuck_target.is_inside_tree():
+			global_position = _stuck_target.to_global(_stuck_local_pos)
+		return
+
 	velocity.y -= 18.0 * gravity_scale * delta
 	var next_pos: Vector3 = global_position + velocity * delta
 
@@ -280,6 +288,9 @@ func _physics_process(delta: float) -> void:
 				var collider: Object = res.get("collider", null)
 				var hit_enemy_hero: bool = (not is_visual_only) and (collider is HeroCharacter and (collider as HeroCharacter).team != owner_team)
 				var hit_vehicle: bool = (collider is Node and (collider as Node).is_in_group("vehicles"))
+				if kind == ProjectileKind.TNT_SATCHEL and not hit_enemy_hero:
+					_stick_to_surface(hit_pos, hit_normal, collider)
+					return
 				if explode_on_impact or hit_enemy_hero or hit_vehicle:
 					if is_visual_only:
 						queue_free()
@@ -288,12 +299,9 @@ func _physics_process(delta: float) -> void:
 						_detonate()
 					return
 				else:
-					# Bounce / roll (Grenades, Keg, TNT)
+					# Bounce / roll (Grenades, Keg)
 					global_position = hit_pos + hit_normal * 0.15
 					velocity = velocity.bounce(hit_normal) * bounce_restitution
-					if kind == ProjectileKind.TNT_SATCHEL:
-						velocity = Vector3.ZERO
-						gravity_scale = 0.0
 					return
 
 	global_position = next_pos
@@ -307,6 +315,22 @@ func _physics_process(delta: float) -> void:
 		if _trail_timer <= 0.0:
 			_trail_timer = 0.055
 			StatusEffectsVFX.spawn_cartoon_burst(get_parent(), global_position, "smoke", 0.32)
+
+
+func _stick_to_surface(hit_pos: Vector3, hit_normal: Vector3, collider: Object) -> void:
+	_is_stuck = true
+	velocity = Vector3.ZERO
+	gravity_scale = 0.0
+	var stuck_world_pos: Vector3 = hit_pos + hit_normal * 0.08
+	global_position = stuck_world_pos
+	if collider is Node3D:
+		var c_node: Node3D = collider as Node3D
+		if c_node.get_parent() is VehicleBase:
+			c_node = c_node.get_parent() as Node3D
+		_stuck_target = c_node
+		_stuck_local_pos = c_node.to_local(stuck_world_pos)
+	else:
+		_stuck_target = null
 
 
 func _detonate() -> void:
@@ -344,6 +368,17 @@ func _detonate() -> void:
 				continue
 			var dist: float = h.global_position.distance_to(global_position)
 			if dist <= splash_radius:
+				# Solid Layer-1 wall/destructible occlusion blocks splash damage & knockback
+				if is_inside_tree() and dist > 0.35:
+					var occ_space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+					if occ_space != null:
+						var occ_q := PhysicsRayQueryParameters3D.create(
+							global_position + Vector3(0.0, 0.22, 0.0),
+							h.global_position + Vector3(0.0, 1.0, 0.0),
+							1 | 64
+						)
+						if not occ_space.intersect_ray(occ_q).is_empty():
+							continue
 				var falloff: float = clampf(1.0 - (dist / splash_radius) * 0.75, 0.25, 1.0)
 				var diff_with_lift: Vector3 = h.global_position - global_position + Vector3(0.0, 0.9, 0.0)
 				if diff_with_lift.length_squared() < 0.001:
@@ -361,7 +396,7 @@ func _detonate() -> void:
 					h.apply_knockback(kb_dir * enemy_kb * falloff)
 
 					if apply_keg_slow and h.status_effects != null and h.status_effects.has_method("apply_concussion_slow"):
-						h.status_effects.apply_concussion_slow(0.55, 3.5)
+						h.status_effects.apply_concussion_slow(0.60, 5.0)
 
 					if dealt > 0:
 						var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
@@ -387,8 +422,11 @@ func _detonate() -> void:
 						var hit_dir: Vector3 = ((v as Node3D).global_position - global_position).normalized()
 						if velocity.length_squared() > 1.0:
 							hit_dir = velocity.normalized()
-						var vdmg: int = maxi(5, int(roundf(base_damage * 1.15 * clampf(1.0 - vdist / (splash_radius + 3.5), 0.25, 1.0))))
-						v.apply_damage_server(vdmg, owner_id, hit_dir, global_position, true)
+						if kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("apply_bazooka_damage_server"):
+							v.apply_bazooka_damage_server(owner_id, hit_dir, global_position)
+						else:
+							var vdmg: int = maxi(5, int(roundf(base_damage * 1.15 * clampf(1.0 - vdist / (splash_radius + 3.5), 0.25, 1.0))))
+							v.apply_damage_server(vdmg, owner_id, hit_dir, global_position, true)
 
 			for d in get_tree().get_nodes_in_group("destructible"):
 				if d == self or not (d is Node3D):

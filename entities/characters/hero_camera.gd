@@ -72,8 +72,16 @@ func set_active_camera(active: bool) -> void:
 		camera.current = active
 
 
+func get_effective_sensitivity() -> float:
+	var keg_mult: float = 1.0
+	var p_hero := get_parent() as HeroCharacter
+	if p_hero != null and ((p_hero.active_flags & NetSerializer.SNAP_KEG_CONCUSSED) != 0 or (p_hero.status_effects != null and p_hero.status_effects.slow_timer > 0.0)):
+		keg_mult = 0.5
+	return mouse_sensitivity * keg_mult * (scope_sensitivity_mult if is_scoped else 1.0)
+
+
 func apply_look_delta(relative: Vector2) -> void:
-	var sens: float = mouse_sensitivity * (scope_sensitivity_mult if is_scoped else 1.0)
+	var sens: float = get_effective_sensitivity()
 	yaw = wrapf(yaw - relative.x * sens, -PI, PI)
 	pitch = clampf(pitch - relative.y * sens, -1.35, 1.35)
 

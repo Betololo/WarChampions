@@ -134,6 +134,7 @@ var _weapon_slot_bgs: Array[PanelContainer] = []
 var _weapon_slot_icons: Array[TextureRect] = []
 var _weapon_slot_keys: Array[Label] = []
 
+var _skill_slot_boxes: Array[VBoxContainer] = []
 var _skill_slot_bgs: Array[PanelContainer] = []
 var _skill_slot_icons: Array[TextureRect] = []
 var _skill_slot_cd_lbls: Array[Label] = []
@@ -143,6 +144,9 @@ var _upgrade_buttons: Array[Button] = []
 var _widget_slot_icons: Array[TextureRect] = []
 var _widget_slot_cd_lbls: Array[Label] = []
 var _widget_slot_keys: Array[Label] = []
+
+var _poison_tint_rect: ColorRect
+var _poison_pulse_time: float = 0.0
 
 var _mastery_lbl: Label
 var _crosshair: Control
@@ -172,6 +176,9 @@ var _veh_hp_bar_bg: ColorRect
 var _veh_hp_bar_fill: ColorRect
 var _veh_pulse_time: float = 0.0
 var _last_hud_vehicle_id: int = -1
+var _seat_diagram_panel: PanelContainer
+var _seat_slot_buttons: Array[Button] = []
+var _seat_slot_labels: Array[Label] = []
 
 var _hitmarker_timer: float = 0.0
 var _damage_flash_timer: float = 0.0
@@ -223,6 +230,7 @@ static func get_seat_display_name(seat_type: int) -> String:
 
 func _ready() -> void:
 	layer = 10
+	add_to_group("hud_controllers")
 	_build_hud()
 
 
@@ -362,6 +370,14 @@ func _make_slot_style(highlighted: bool) -> StyleBoxFlat:
 
 
 func _build_hud() -> void:
+	# 0. Full-Screen Poisoned Blade Green Tint Overlay
+	_poison_tint_rect = ColorRect.new()
+	_poison_tint_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_poison_tint_rect.color = Color(0.16, 0.72, 0.22, 0.26)
+	_poison_tint_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_poison_tint_rect.visible = false
+	add_child(_poison_tint_rect)
+
 	# 1. Top-Left Circular Portrait + XP Ring + Level Badge
 	var tl_root := Control.new()
 	tl_root.offset_left = 14.0
@@ -479,16 +495,16 @@ func _build_hud() -> void:
 	_style_label(_royal_ticket_lbl, 34, Color(0.92, 0.97, 1.0))
 	top_hbox.add_child(_royal_ticket_lbl)
 
-	# 4 Flag ownership pips neatly beneath the scoreboard
+	# 6 Flag ownership pips neatly beneath the scoreboard
 	var pips_hbox := HBoxContainer.new()
-	pips_hbox.position = Vector2(180.0, 74.0)
-	pips_hbox.size = Vector2(160.0, 14.0)
+	pips_hbox.position = Vector2(150.0, 74.0)
+	pips_hbox.size = Vector2(220.0, 14.0)
 	pips_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	pips_hbox.add_theme_constant_override("separation", 10)
+	pips_hbox.add_theme_constant_override("separation", 8)
 	pips_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_anchor.add_child(pips_hbox)
 
-	for i in range(4):
+	for i in range(6):
 		var pip := ColorRect.new()
 		pip.custom_minimum_size = Vector2(14, 10)
 		pip.color = Color(0.85, 0.85, 0.85)
@@ -575,19 +591,19 @@ func _build_hud() -> void:
 	_ammo_icon_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	br_hbox.add_child(_ammo_icon_tex)
 
-	# 5. Bottom-Center: Transparent Hotbar (Weapons 1..4, Skills 5..9, Widgets 0/X/V)
+	# 5. Bottom-Center: Transparent Hotbar (Weapons 1..4, Skills 1..6, Widgets 1..4)
 	_hotbar_hbox = HBoxContainer.new()
 	_hotbar_hbox.anchor_left = 0.5
 	_hotbar_hbox.anchor_right = 0.5
 	_hotbar_hbox.anchor_top = 1.0
 	_hotbar_hbox.anchor_bottom = 1.0
-	_hotbar_hbox.offset_left = -370.0
-	_hotbar_hbox.offset_right = 370.0
-	_hotbar_hbox.offset_top = -114.0
+	_hotbar_hbox.offset_left = -335.0
+	_hotbar_hbox.offset_right = 335.0
+	_hotbar_hbox.offset_top = -104.0
 	_hotbar_hbox.offset_bottom = -8.0
 	_hotbar_hbox.clip_contents = false
 	_hotbar_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	_hotbar_hbox.add_theme_constant_override("separation", 6)
+	_hotbar_hbox.add_theme_constant_override("separation", 4)
 	_hotbar_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_hotbar_hbox)
 
@@ -599,13 +615,13 @@ func _build_hud() -> void:
 		slot_v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 		var bg := PanelContainer.new()
-		bg.custom_minimum_size = Vector2(42, 42)
+		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(w_idx == 0))
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		slot_v.add_child(bg)
 
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(36, 34)
+		icon.custom_minimum_size = Vector2(32, 30)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = CartoonAssets.get_texture("icon_weapon_%d" % w_idx)
@@ -624,12 +640,12 @@ func _build_hud() -> void:
 		_weapon_slot_icons.append(icon)
 		_weapon_slot_keys.append(k_lbl)
 
-	# 5 Skill slots (5/F, 6/G, 7, 8, 9) with upgrade '+' buttons above
-	var sk_keys: Array[String] = ["5/F", "6/G", "7", "8", "9"]
+	# 6 Skill slots (up to 6 for Commando, 5 for Soldier/Gunner) with upgrade '+' buttons above
 	var upg_sb_normal := _make_upgrade_button_style(Color(0.96, 0.78, 0.18, 0.94))
 	var upg_sb_hover := _make_upgrade_button_style(Color(1.0, 0.88, 0.34, 0.98))
 	var upg_sb_pressed := _make_upgrade_button_style(Color(0.84, 0.62, 0.10, 0.98))
-	for s_idx in range(5):
+	_skill_slot_boxes.clear()
+	for s_idx in range(6):
 		var sv := VBoxContainer.new()
 		sv.alignment = BoxContainer.ALIGNMENT_END
 		sv.add_theme_constant_override("separation", 2)
@@ -637,7 +653,7 @@ func _build_hud() -> void:
 
 		var upg := Button.new()
 		upg.text = "+"
-		upg.custom_minimum_size = Vector2(36, 18)
+		upg.custom_minimum_size = Vector2(34, 18)
 		upg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		upg.clip_text = true
 		upg.add_theme_font_size_override("font_size", 11)
@@ -655,13 +671,13 @@ func _build_hud() -> void:
 		_upgrade_buttons.append(upg)
 
 		var bg := PanelContainer.new()
-		bg.custom_minimum_size = Vector2(42, 42)
+		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sv.add_child(bg)
 
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(34, 34)
+		icon.custom_minimum_size = Vector2(30, 30)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = CartoonAssets.get_texture("icon_skill_%d" % s_idx)
@@ -672,37 +688,37 @@ func _build_hud() -> void:
 		cd_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cd_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		cd_lbl.text = ""
-		_style_label(cd_lbl, 13, Color(1.0, 0.90, 0.30))
+		_style_label(cd_lbl, 12, Color(1.0, 0.90, 0.30))
 		bg.add_child(cd_lbl)
 
 		var kl := Label.new()
-		kl.text = sk_keys[s_idx]
+		kl.text = _format_skill_hotkey_label(s_idx)
 		kl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_style_label(kl, 11, Color(0.95, 0.95, 0.95))
 		sv.add_child(kl)
 
 		_hotbar_hbox.add_child(sv)
+		_skill_slot_boxes.append(sv)
 		_skill_slot_bgs.append(bg)
 		_skill_slot_icons.append(icon)
 		_skill_slot_cd_lbls.append(cd_lbl)
 		_skill_slot_keys.append(kl)
 
-	# 3 Widget slots (Z/0, X, V)
-	var wd_keys: Array[String] = ["Z/0", "X", "V"]
-	for wj in range(3):
+	# 4 Widget slots (Bandages, Wrench, Fireproof, Antidote)
+	for wj in range(4):
 		var wv := VBoxContainer.new()
 		wv.alignment = BoxContainer.ALIGNMENT_END
 		wv.add_theme_constant_override("separation", 2)
 		wv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 		var bg := PanelContainer.new()
-		bg.custom_minimum_size = Vector2(42, 42)
+		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		wv.add_child(bg)
 
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(34, 34)
+		icon.custom_minimum_size = Vector2(30, 30)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = CartoonAssets.get_texture("icon_widget_%d" % wj)
@@ -717,7 +733,7 @@ func _build_hud() -> void:
 		bg.add_child(cd_lbl)
 
 		var kl := Label.new()
-		kl.text = wd_keys[wj]
+		kl.text = _format_widget_hotkey_label(wj)
 		kl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_style_label(kl, 11, Color(0.95, 0.95, 0.95))
 		wv.add_child(kl)
@@ -926,17 +942,90 @@ func _build_hud() -> void:
 	_veh_hp_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_veh_hp_bar_bg.add_child(_veh_hp_bar_fill)
 
+	# 12. Vehicle Seat Occupancy Schematic Panel (just above Vehicle HP bar)
+	_seat_diagram_panel = PanelContainer.new()
+	_seat_diagram_panel.anchor_left = 0.5
+	_seat_diagram_panel.anchor_right = 0.5
+	_seat_diagram_panel.anchor_top = 1.0
+	_seat_diagram_panel.anchor_bottom = 1.0
+	_seat_diagram_panel.offset_left = -215.0
+	_seat_diagram_panel.offset_right = 215.0
+	_seat_diagram_panel.offset_top = -188.0
+	_seat_diagram_panel.offset_bottom = -144.0
+	var seat_sb := StyleBoxFlat.new()
+	seat_sb.bg_color = Color(0.06, 0.08, 0.12, 0.82)
+	seat_sb.border_color = Color(0.45, 0.72, 0.96, 0.72)
+	seat_sb.set_border_width_all(2)
+	seat_sb.set_corner_radius_all(6)
+	seat_sb.content_margin_left = 8.0
+	seat_sb.content_margin_right = 8.0
+	seat_sb.content_margin_top = 4.0
+	seat_sb.content_margin_bottom = 4.0
+	_seat_diagram_panel.add_theme_stylebox_override("panel", seat_sb)
+	_seat_diagram_panel.visible = false
+	add_child(_seat_diagram_panel)
+
+	var seat_hbox := HBoxContainer.new()
+	seat_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	seat_hbox.add_theme_constant_override("separation", 6)
+	_seat_diagram_panel.add_child(seat_hbox)
+
+	_seat_slot_buttons.clear()
+	_seat_slot_labels.clear()
+	for s_i in range(4):
+		var btn := Button.new()
+		btn.custom_minimum_size = Vector2(96.0, 32.0)
+		btn.text = "F%d" % (s_i + 1)
+		btn.add_theme_font_size_override("font_size", 11)
+		var cap_seat: int = s_i
+		btn.pressed.connect(func() -> void:
+			NetworkManager.request_seat_switch(cap_seat)
+		)
+		seat_hbox.add_child(btn)
+		_seat_slot_buttons.append(btn)
+
+		var sl := Label.new()
+		sl.visible = false
+		sl.text = ""
+		btn.add_child(sl)
+		_seat_slot_labels.append(sl)
+
+
+static func _format_skill_hotkey_label(slot_idx: int) -> String:
+	var lbl: String = InputCmd.key_short_label(InputCmd.get_skill_key(slot_idx))
+	if slot_idx == 0 and InputCmd.get_skill_key(0) == KEY_5:
+		return "5/F"
+	if slot_idx == 1 and InputCmd.get_skill_key(1) == KEY_6:
+		return "6/G"
+	return lbl
+
+
+static func _format_widget_hotkey_label(slot_idx: int) -> String:
+	return InputCmd.key_short_label(InputCmd.get_widget_key(slot_idx))
+
+
+func refresh_hotkey_labels() -> void:
+	for i in range(mini(_skill_slot_keys.size(), 6)):
+		_skill_slot_keys[i].text = _format_skill_hotkey_label(i)
+	for j in range(mini(_widget_slot_keys.size(), 4)):
+		_widget_slot_keys[j].text = _format_widget_hotkey_label(j)
+
 
 func _hide_local_hud_overlays() -> void:
+	if _poison_tint_rect != null:
+		_poison_tint_rect.visible = false
 	if _crosshair != null:
 		_crosshair.visible = false
 	if _scope_overlay != null:
 		_scope_overlay.visible = false
 	if _veh_hp_panel != null:
 		_veh_hp_panel.visible = false
+	if _seat_diagram_panel != null:
+		_seat_diagram_panel.visible = false
 
 
 func _refresh_hotbar_icons() -> void:
+	refresh_hotkey_labels()
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
 		_hide_local_hud_overlays()
@@ -980,19 +1069,31 @@ func _process(delta: float) -> void:
 		_royal_mult_lbl.text = "%dx" % r_mult if r_mult > 0 else "0x"
 		_national_mult_lbl.text = "%dx" % n_mult if n_mult > 0 else "0x"
 
-		for i in range(mini(_conquest.capture_points.size(), _flag_pips.size())):
-			var cp: CapturePoint = _conquest.capture_points[i]
-			if cp.owner_team == NetworkManager.TEAM_ROYAL:
-				_flag_pips[i].color = Color(0.22, 0.55, 1.0)
-			elif cp.owner_team == NetworkManager.TEAM_NATIONAL:
-				_flag_pips[i].color = Color(0.92, 0.22, 0.22)
+		for i in range(_flag_pips.size()):
+			if i < _conquest.capture_points.size():
+				_flag_pips[i].visible = true
+				var cp: CapturePoint = _conquest.capture_points[i]
+				if cp.owner_team == NetworkManager.TEAM_ROYAL:
+					_flag_pips[i].color = Color(0.22, 0.55, 1.0)
+				elif cp.owner_team == NetworkManager.TEAM_NATIONAL:
+					_flag_pips[i].color = Color(0.92, 0.22, 0.22)
+				else:
+					_flag_pips[i].color = Color(0.85, 0.85, 0.85)
 			else:
-				_flag_pips[i].color = Color(0.85, 0.85, 0.85)
+				_flag_pips[i].visible = false
 
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
 		_hide_local_hud_overlays()
 		return
+
+	if _poison_tint_rect != null:
+		var is_poisoned: bool = (_local_hero.active_flags & NetSerializer.SNAP_POISONED) != 0 and not _local_hero.is_defeated
+		_poison_tint_rect.visible = is_poisoned
+		if is_poisoned:
+			_poison_pulse_time += delta
+			var alpha: float = 0.22 + 0.10 * (0.5 + 0.5 * sin(_poison_pulse_time * 5.0))
+			_poison_tint_rect.color = Color(0.16, 0.72, 0.22, alpha)
 
 	if _prev_hp_observed > _local_hero.hp:
 		trigger_damage_flash()
@@ -1080,7 +1181,13 @@ func _process(delta: float) -> void:
 			_portrait_gauge.queue_redraw()
 			_mastery_lbl.text = "Combat Mastery %d\nScore: %d/%d" % [sm.level, sm.xp, xp_next]
 
-		for i in range(5):
+		var num_skills: int = sm.skill_ranks.size()
+		for i in range(_skill_slot_boxes.size()):
+			var has_slot: bool = i < num_skills
+			_skill_slot_boxes[i].visible = has_slot
+			if not has_slot:
+				_upgrade_buttons[i].visible = false
+				continue
 			var rank: int = sm.skill_ranks[i]
 			var cd: float = sm.skill_cooldowns[i]
 			if rank <= 0:
@@ -1094,7 +1201,7 @@ func _process(delta: float) -> void:
 				_skill_slot_cd_lbls[i].text = "R%d" % rank
 			_upgrade_buttons[i].visible = sm.hero_points > 0 and rank < SkillManager.MAX_SKILL_RANK
 
-		for j in range(3):
+		for j in range(mini(sm.widget_cooldowns.size(), _widget_slot_icons.size())):
 			var wcd: float = sm.widget_cooldowns[j]
 			if wcd > 0.0:
 				_widget_slot_icons[j].modulate = Color(0.55, 0.55, 0.55, 0.72)
@@ -1209,6 +1316,8 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 		return
 	if _local_hero == null or _local_hero.is_defeated:
 		_veh_hp_panel.visible = false
+		if _seat_diagram_panel != null:
+			_seat_diagram_panel.visible = false
 		_last_hud_vehicle_id = -1
 		return
 
@@ -1233,6 +1342,8 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 
 	if target_v == null:
 		_veh_hp_panel.visible = false
+		if _seat_diagram_panel != null:
+			_seat_diagram_panel.visible = false
 		_last_hud_vehicle_id = -1
 		return
 
@@ -1240,6 +1351,7 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 	_veh_name_lbl.text = get_vehicle_display_name(target_v.vehicle_type)
 	_veh_seat_lbl.text = seat_text
 	_veh_hp_lbl.text = "HP: %d / %d" % [target_v.hp, target_v.max_hp]
+	_update_vehicle_seat_diagram(target_v)
 
 	var ratio: float = clampf(float(target_v.hp) / float(maxi(1, target_v.max_hp)), 0.0, 1.0)
 	if _last_hud_vehicle_id != target_v.id:
@@ -1258,26 +1370,72 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 		_veh_hp_bar_fill.color = Color(0.95, 0.14 + 0.22 * pulse, 0.12 + 0.12 * pulse)
 
 
+func _update_vehicle_seat_diagram(target_v: VehicleBase) -> void:
+	if _seat_diagram_panel == null or _local_hero == null:
+		return
+	var inside_this: bool = (_local_hero.current_vehicle_id == target_v.id)
+	_seat_diagram_panel.visible = inside_this
+	if not inside_this:
+		return
+	var seat_count: int = target_v.seats.size()
+	for i in range(_seat_slot_buttons.size()):
+		var btn: Button = _seat_slot_buttons[i]
+		if i >= seat_count:
+			btn.visible = false
+			continue
+		btn.visible = true
+		var s: VehicleBase.SeatSlot = target_v.seats[i]
+		var role_txt: String = get_seat_display_name(s.seat_type)
+		var is_mine: bool = (s.occupant_id == _local_hero.entity_id)
+		var is_occupied: bool = (s.occupant_id >= 0)
+		var state_txt: String = "VOCÊ" if is_mine else ("OCUPADO" if is_occupied else "LIVRE")
+		btn.text = "[F%d] %s (%s)" % [i + 1, role_txt.left(5), state_txt]
+		_seat_slot_labels[i].text = btn.text
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(4)
+		sb.set_border_width_all(2 if is_mine else 1)
+		if is_mine:
+			sb.bg_color = Color(0.85, 0.65, 0.14, 0.90)
+			sb.border_color = Color(1.0, 0.94, 0.45)
+			btn.add_theme_color_override("font_color", Color(0.06, 0.05, 0.02))
+		elif is_occupied:
+			var ally_col: Color = Color(0.18, 0.45, 0.85, 0.85) if target_v.team == NetworkManager.TEAM_ROYAL else Color(0.78, 0.22, 0.22, 0.85)
+			sb.bg_color = ally_col
+			sb.border_color = Color(0.82, 0.88, 0.96, 0.80)
+			btn.add_theme_color_override("font_color", Color.WHITE)
+		else:
+			sb.bg_color = Color(0.16, 0.20, 0.26, 0.82)
+			sb.border_color = Color(0.45, 0.52, 0.62, 0.72)
+			btn.add_theme_color_override("font_color", Color(0.86, 0.90, 0.96))
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_stylebox_override("hover", sb)
+		btn.add_theme_stylebox_override("pressed", sb)
+
+
 func _update_sixth_sense_markers() -> void:
 	if _sixth_sense_layer == null:
 		return
 	for c in _sixth_sense_layer.get_children():
 		c.queue_free()
-	if _local_hero == null or (_local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) == 0:
+	if _local_hero == null:
 		return
 	if _local_hero.hero_camera == null or _local_hero.hero_camera.camera == null:
 		return
+	var local_sixth_sense: bool = (_local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0
 	var cam: Camera3D = _local_hero.hero_camera.camera
 	for id_key in _heroes_ref.keys():
 		var enemy: HeroCharacter = _heroes_ref[id_key]
 		if enemy == null or enemy.is_defeated or enemy.team == _local_hero.team:
+			continue
+		var enemy_marked: bool = (enemy.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0
+		if not local_sixth_sense and not enemy_marked:
 			continue
 		var world_p: Vector3 = enemy.global_position + Vector3(0.0, 2.2, 0.0)
 		if cam.is_position_behind(world_p):
 			continue
 		var screen_p: Vector2 = cam.unproject_position(world_p)
 		var marker := Label.new()
-		marker.text = "◆"
-		marker.modulate = Color(1.0, 0.25, 0.25)
+		marker.text = "◎" if enemy_marked else "◆"
+		marker.modulate = Color(1.0, 0.22, 0.22)
 		marker.position = screen_p - Vector2(6, 10)
 		_sixth_sense_layer.add_child(marker)

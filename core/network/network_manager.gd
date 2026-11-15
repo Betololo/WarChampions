@@ -2,7 +2,7 @@ extends Node
 
 ## War Champions Dedicated-Server Authoritative Network Manager (12v12 / 24 players).
 const DEFAULT_PORT: int = 7777
-const MAX_PLAYERS: int = 24
+const MAX_PLAYERS: int = 40
 const CHANNEL_RELIABLE: int = 0
 const CHANNEL_UNRELIABLE: int = 1
 const TICK_RATE: int = 60
@@ -27,6 +27,7 @@ signal player_registered(peer_id: int, info: Dictionary)
 signal player_unregistered(peer_id: int)
 signal game_event_received(event_type: String, payload: Dictionary)
 signal connection_state_changed(connected: bool, is_server: bool)
+signal seat_switch_requested(peer_id: int, seat_idx: int)
 
 var is_dedicated_server: bool = false
 var is_solo_bot_mode: bool = false
@@ -52,11 +53,13 @@ var peer_input_buffers: Dictionary = {} # peer_id: int -> InputRingBuffer
 var _peer_last_input_tick: Dictionary = {} # peer_id: int -> int
 var _peer_future_streak: Dictionary = {} # peer_id: int -> int
 var _peer_seq_stats: Dictionary = {} # peer_id: int -> Dictionary
+var local_slot_archetypes: Dictionary = {} # "%d_%d" % [class_id, weapon_slot] -> archetype
 var local_profile: Dictionary = {
 	"name": "Hero",
 	"team": TEAM_ROYAL,
 	"class_id": CLASS_SOLDIER,
 	"archetype": ARCHETYPE_BALANCED,
+	"slot_archetypes": {},
 }
 
 
@@ -128,7 +131,7 @@ func start_dedicated_server(port: int = DEFAULT_PORT) -> Error:
 	server_tick = 0
 	local_peer_id = 1
 	connection_state_changed.emit(true, true)
-	print("[NetworkManager] Dedicated server listening on UDP port %d (Max %d / 12v12)" % [port, MAX_PLAYERS])
+	print("[NetworkManager] Dedicated server listening on UDP port %d (Max %d / 20v20)" % [port, MAX_PLAYERS])
 	return OK
 
 
@@ -262,18 +265,52 @@ func get_view_interp_tick_delta() -> int:
 	return clampi(interp_ticks, 0, 65535)
 
 
-func set_local_loadout(player_name: String, team: int, class_id: int, archetype: int) -> void:
+func set_slot_archetype(p_class_id: int, slot_idx: int, arch: int) -> void:
+	local_slot_archetypes["%d_%d" % [clampi(p_class_id, 0, 2), maxi(0, slot_idx)]] = clampi(arch, 0, 2)
+
+
+func get_slot_archetype(p_class_id: int, slot_idx: int, fallback: int = ARCHETYPE_BALANCED) -> int:
+	return int(local_slot_archetypes.get("%d_%d" % [clampi(p_class_id, 0, 2), maxi(0, slot_idx)], fallback))
+
+
+func build_class_slot_archetypes(p_class_id: int, fallback: int = ARCHETYPE_BALANCED) -> Dictionary:
+	var out: Dictionary = {}
+	for slot in range(4):
+		var key: String = "%d_%d" % [clampi(p_class_id, 0, 2), slot]
+		if local_slot_archetypes.has(key):
+			out[slot] = int(local_slot_archetypes[key])
+		elif fallback != ARCHETYPE_BALANCED:
+			out[slot] = fallback
+	return out
+
+
+func set_local_loadout(player_name: String, team: int, class_id: int, archetype: int, slot_archetypes: Dictionary = {}) -> void:
+	var merged_slots: Dictionary = build_class_slot_archetypes(class_id, archetype)
+	for k in slot_archetypes.keys():
+		merged_slots[int(k)] = clampi(int(slot_archetypes[k]), 0, 2)
 	local_profile = {
 		"name": player_name,
 		"team": clampi(team, 0, 1),
 		"class_id": clampi(class_id, 0, 2),
 		"archetype": clampi(archetype, 0, 2),
+		"slot_archetypes": merged_slots,
 	}
 	if is_active_enet_connected():
 		if multiplayer.is_server():
-			_register_player_internal(1, local_profile.duplicate())
+			_register_player_internal(1, local_profile.duplicate(true))
 		else:
 			_rpc_register_profile.rpc_id(1, local_profile)
+
+
+func request_seat_switch(seat_idx: int) -> void:
+	if seat_idx < 0 or seat_idx >= 4:
+		return
+	if not is_active_enet_connected() and not is_solo_bot_mode:
+		return
+	if multiplayer.is_server():
+		seat_switch_requested.emit(local_peer_id, seat_idx)
+	else:
+		_rpc_request_seat_switch.rpc_id(1, seat_idx)
 
 
 func get_team_counts() -> Vector2i:
@@ -461,6 +498,14 @@ func _rpc_client_game_event(event_type: String, payload: Dictionary) -> void:
 
 
 @rpc("any_peer", "call_remote", "reliable", 0)
+func _rpc_request_seat_switch(seat_idx: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender: int = multiplayer.get_remote_sender_id()
+	seat_switch_requested.emit(sender, clampi(seat_idx, 0, 3))
+
+
+@rpc("any_peer", "call_remote", "reliable", 0)
 func _rpc_server_game_event(event_type: String, payload: Dictionary) -> void:
 	if not multiplayer.is_server():
 		return
@@ -469,11 +514,17 @@ func _rpc_server_game_event(event_type: String, payload: Dictionary) -> void:
 
 
 func _register_player_internal(peer_id: int, profile: Dictionary) -> void:
+	var raw_slots: Variant = profile.get("slot_archetypes", {})
+	var clean_slots: Dictionary = {}
+	if raw_slots is Dictionary:
+		for k in (raw_slots as Dictionary).keys():
+			clean_slots[int(k)] = clampi(int((raw_slots as Dictionary)[k]), 0, 2)
 	var info: Dictionary = {
 		"name": str(profile.get("name", "Player_%d" % peer_id)),
 		"team": clampi(int(profile.get("team", TEAM_ROYAL)), 0, 1),
 		"class_id": clampi(int(profile.get("class_id", CLASS_SOLDIER)), 0, 2),
 		"archetype": clampi(int(profile.get("archetype", ARCHETYPE_BALANCED)), 0, 2),
+		"slot_archetypes": clean_slots,
 		"is_bot": false,
 		"xp": int(players_info.get(peer_id, {}).get("xp", 0)),
 		"level": int(players_info.get(peer_id, {}).get("level", 1)),
