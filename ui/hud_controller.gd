@@ -178,6 +178,12 @@ var _damage_flash_timer: float = 0.0
 var _prev_hp_observed: int = -1
 var _killfeed_lines: Array[String] = []
 var _last_portrait_key: String = ""
+var _slot_style_active: StyleBoxFlat
+var _slot_style_idle: StyleBoxFlat
+var _last_highlighted_slot: int = -1
+var _last_gauge_xp: int = -1
+var _last_gauge_level: int = -1
+var _last_gauge_team: int = -1
 
 var _local_hero: HeroCharacter = null
 var _conquest: ConquestManager = null
@@ -333,6 +339,10 @@ func _apply_crosshair_spread(gap: float) -> void:
 
 
 func _make_slot_style(highlighted: bool) -> StyleBoxFlat:
+	if highlighted and _slot_style_active != null:
+		return _slot_style_active
+	if not highlighted and _slot_style_idle != null:
+		return _slot_style_idle
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.05, 0.07, 0.10, 0.42) if not highlighted else Color(0.95, 0.85, 0.45, 0.30)
 	sb.border_color = Color(1.0, 1.0, 1.0, 0.88) if highlighted else Color(1.0, 1.0, 1.0, 0.22)
@@ -344,6 +354,10 @@ func _make_slot_style(highlighted: bool) -> StyleBoxFlat:
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
 	sb.corner_radius_bottom_right = 6
+	if highlighted:
+		_slot_style_active = sb
+	else:
+		_slot_style_idle = sb
 	return sb
 
 
@@ -1012,7 +1026,8 @@ func _process(delta: float) -> void:
 			var w_slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
 			var active_w: WeaponBase = _local_hero.weapons[w_slot] as WeaponBase
 			if active_w != null:
-				weapon_spread_bonus = clampf(active_w.spread_rad * 60.0, 0.0, 5.0)
+				var has_frenzy: bool = _local_hero.status_effects != null and _local_hero.status_effects.has_method("has_frenzy_fire") and _local_hero.status_effects.has_frenzy_fire()
+				weapon_spread_bonus = clampf(active_w.spread_rad * active_w.get_current_spread_mult(is_scoped, has_frenzy) * 140.0, 0.0, 9.0)
 		var recoil_bloom: float = _crosshair_bloom + _local_hero._weapon_recoil_anim * 5.0
 		var target_spread: float = clampf(6.0 + weapon_spread_bonus + move_bloom + air_bloom + crouch_bonus + recoil_bloom, 4.0, 28.0)
 		_crosshair_spread_px = lerpf(_crosshair_spread_px, target_spread, minf(1.0, 18.0 * delta))
@@ -1034,8 +1049,10 @@ func _process(delta: float) -> void:
 	# Update Active Weapon slot highlight & Ammo counter
 	if not _local_hero.weapons.is_empty():
 		var slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
-		for i in range(mini(_local_hero.weapons.size(), _weapon_slot_bgs.size())):
-			_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(i == slot))
+		if slot != _last_highlighted_slot:
+			_last_highlighted_slot = slot
+			for i in range(mini(_local_hero.weapons.size(), _weapon_slot_bgs.size())):
+				_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(i == slot))
 		var w: WeaponBase = _local_hero.weapons[slot] as WeaponBase
 		if w != null:
 			if w.is_melee:
@@ -1052,12 +1069,16 @@ func _process(delta: float) -> void:
 	if _local_hero.skill_manager != null and _local_hero.skill_manager is SkillManager:
 		var sm := _local_hero.skill_manager as SkillManager
 		var xp_next: int = maxi(1, sm.get_xp_for_next_level())
-		_level_lbl.text = "%d" % sm.level
-		_hero_pts_lbl.text = ("★ %d Hero Pts" % sm.hero_points) if sm.hero_points > 0 else ""
-		_portrait_gauge.team_id = _local_hero.team
-		_portrait_gauge.xp_ratio = float(sm.xp) / float(xp_next)
-		_portrait_gauge.queue_redraw()
-		_mastery_lbl.text = "Combat Mastery %d\nScore: %d/%d" % [sm.level, sm.xp, xp_next]
+		if sm.xp != _last_gauge_xp or sm.level != _last_gauge_level or _local_hero.team != _last_gauge_team:
+			_last_gauge_xp = sm.xp
+			_last_gauge_level = sm.level
+			_last_gauge_team = _local_hero.team
+			_level_lbl.text = "%d" % sm.level
+			_hero_pts_lbl.text = ("★ %d Hero Pts" % sm.hero_points) if sm.hero_points > 0 else ""
+			_portrait_gauge.team_id = _local_hero.team
+			_portrait_gauge.xp_ratio = float(sm.xp) / float(xp_next)
+			_portrait_gauge.queue_redraw()
+			_mastery_lbl.text = "Combat Mastery %d\nScore: %d/%d" % [sm.level, sm.xp, xp_next]
 
 		for i in range(5):
 			var rank: int = sm.skill_ranks[i]

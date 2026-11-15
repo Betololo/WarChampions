@@ -5,6 +5,24 @@ extends RefCounted
 ## smooth vertex normals, painted fabric/skin textures, headgear, and detailed 3D weapons)
 ## matching classic Battlefield Heroes proportions instead of blocky primitives.
 
+static var _mesh_cache: Dictionary = {}
+static var _mat_cache: Dictionary = {}
+static var _prim_cache: Dictionary = {}
+static var _weapon_cache: Dictionary = {}
+static var default_shadow_mode: GeometryInstance3D.ShadowCastingSetting = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+static func clear_caches() -> void:
+	_mesh_cache.clear()
+	_mat_cache.clear()
+	_prim_cache.clear()
+	_weapon_cache.clear()
+
+
+static func _store_mesh(key: String, mesh: ArrayMesh) -> ArrayMesh:
+	_mesh_cache[key] = mesh
+	return mesh
+
 
 static func _emit_ring_strip(
 	st: SurfaceTool,
@@ -212,12 +230,16 @@ static func add_part(parent: Node3D, mesh: Mesh, pos: Vector3, rot: Vector3, mat
 	mi.position = pos
 	mi.rotation = rot
 	mi.material_override = mat
+	mi.cast_shadow = default_shadow_mode
 	parent.add_child(mi)
 	parts_list.append(mi)
 	return mi
 
 
 static func make_sculpted_mat(col: Color, tex_key: String = "", roughness: float = 0.68, metallic: float = 0.0) -> StandardMaterial3D:
+	var key := "%s|%s|%.3f|%.3f" % [col.to_html(true), tex_key, roughness, metallic]
+	if _mat_cache.has(key):
+		return _mat_cache[key] as StandardMaterial3D
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = col
 	if col.a < 0.99:
@@ -230,6 +252,7 @@ static func make_sculpted_mat(col: Color, tex_key: String = "", roughness: float
 		mat.set_meta("tex_key", tex_key)
 	mat.roughness = roughness
 	mat.metallic = metallic
+	_mat_cache[key] = mat
 	return mat
 
 
@@ -243,12 +266,15 @@ static func get_torso_profile(class_id: int) -> Dictionary:
 
 
 static func build_torso_mesh(class_id: int) -> ArrayMesh:
+	var k := "torso_%d" % class_id
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var c_hem := Color(0.64, 0.65, 0.72)
 	var c_shade := Color(0.82, 0.83, 0.88)
 	var c_mid := Color(0.95, 0.95, 0.98)
 	var c_lit := Color.WHITE
 	if class_id == 1: # Gunner broad barrel chest enveloping deltoid sockets & flared hem over heavy thighs
-		return make_loft([
+		return _store_mesh(k, make_loft([
 			{"y": -0.10, "rx": 0.306, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
 			{"y": -0.02, "rx": 0.258, "rz": 0.160, "p": 2.4, "col": c_shade, "side_ao": 0.10, "v": 0.88},
 			{"y": 0.06, "rx": 0.208, "rz": 0.144, "p": 2.5, "col": c_shade, "side_ao": 0.08, "v": 0.75},
@@ -257,9 +283,9 @@ static func build_torso_mesh(class_id: int) -> ArrayMesh:
 			{"y": 0.54, "rx": 0.368, "rz": 0.202, "p": 2.3, "col": c_lit, "side_ao": 0.08, "v": 0.13},
 			{"y": 0.60, "rx": 0.265, "rz": 0.158, "p": 2.1, "col": c_lit, "side_ao": 0.04, "v": 0.05},
 			{"y": 0.64, "rx": 0.122, "rz": 0.110, "p": 2.0, "col": c_mid.lightened(0.03), "v": 0.00},
-		], 20)
+		], 20))
 	elif class_id == 2: # Commando sharp V-taper & dramatic long flared trenchcoat skirt
-		return make_loft([
+		return _store_mesh(k, make_loft([
 			{"y": -0.32, "z": 0.015, "rx": 0.298, "rz": 0.228, "p": 2.4, "col": c_hem, "side_ao": 0.14, "v": 1.00},
 			{"y": -0.14, "z": 0.008, "rx": 0.244, "rz": 0.184, "p": 2.4, "col": c_shade, "side_ao": 0.10, "v": 0.87},
 			{"y": 0.06, "rx": 0.170, "rz": 0.128, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
@@ -267,9 +293,9 @@ static func build_torso_mesh(class_id: int) -> ArrayMesh:
 			{"y": 0.48, "rx": 0.298, "rz": 0.175, "p": 2.4, "col": c_lit, "side_ao": 0.12, "v": 0.22},
 			{"y": 0.57, "rx": 0.258, "rz": 0.152, "p": 2.2, "col": c_lit, "side_ao": 0.05, "v": 0.10},
 			{"y": 0.65, "rx": 0.112, "rz": 0.104, "p": 2.1, "col": c_lit, "v": 0.00},
-		], 20)
+		], 20))
 	# Soldier tailored WWII jacket with pinched waist & flared coat tail
-	return make_loft([
+	return _store_mesh(k, make_loft([
 		{"y": -0.18, "z": 0.006, "rx": 0.238, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
 		{"y": -0.04, "rx": 0.206, "rz": 0.152, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.86},
 		{"y": 0.06, "rx": 0.180, "rz": 0.132, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
@@ -278,11 +304,14 @@ static func build_torso_mesh(class_id: int) -> ArrayMesh:
 		{"y": 0.52, "rx": 0.308, "rz": 0.180, "p": 2.4, "col": c_lit, "side_ao": 0.08, "v": 0.15},
 		{"y": 0.59, "rx": 0.248, "rz": 0.150, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.06},
 		{"y": 0.64, "rx": 0.110, "rz": 0.102, "p": 2.0, "col": c_lit, "v": 0.00},
-	], 20)
+	], 20))
 
 
 ## Builds sculpted neck collar rim and open front V-lapels sealing the neck-to-torso transition.
 static func build_collar_lapels_mesh(class_id: int) -> ArrayMesh:
+	var k := "collar_%d" % class_id
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var col_rim := Color(0.95, 0.95, 0.98)
 	var col_lapel := Color.WHITE
 	var collar_top_y: float = 0.740 if class_id == 2 else (0.662 if class_id == 1 else 0.678)
@@ -312,11 +341,14 @@ static func build_collar_lapels_mesh(class_id: int) -> ArrayMesh:
 				{"y": lapel_h * 0.5, "rx": 0.036, "rz": 0.016, "p": 2.4, "col": col_lapel},
 			],
 		})
-	return _commit_lofts(parts)
+	return _store_mesh("collar_%d" % class_id, _commit_lofts(parts))
 
 
 ## Builds detailed 3D back gear per class (Soldier rucksack+bedroll, Gunner twin canisters, Commando satchel+coat flaps).
 static func build_backpack_mesh(class_id: int) -> ArrayMesh:
+	var k := "pack_%d" % class_id
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var c_pack := Color(0.95, 0.95, 0.92)
 	var c_flap := Color.WHITE
 	var c_strap := Color(0.30, 0.22, 0.16)
@@ -425,12 +457,14 @@ static func build_backpack_mesh(class_id: int) -> ArrayMesh:
 				{"y": 0.175, "rx": 0.056, "rz": 0.056, "p": 2.0, "col": Color(0.74, 0.76, 0.66)},
 			],
 		})
-	return _commit_lofts(parts)
+	return _store_mesh("pack_%d" % class_id, _commit_lofts(parts))
 
 
 ## Builds rear Commando trenchcoat box-pleat vent flap flush along the flared coat tail (rendered in coat cloth).
 static func build_coat_tail_flap_mesh() -> ArrayMesh:
-	return _commit_lofts([
+	if _mesh_cache.has("coat_flap"):
+		return _mesh_cache["coat_flap"] as ArrayMesh
+	return _store_mesh("coat_flap", _commit_lofts([
 		{
 			"seg": 10,
 			"xform": _xform(Vector3(0.0, -0.12, 0.192), Vector3(-0.295, 0.0, 0.0)),
@@ -439,12 +473,14 @@ static func build_coat_tail_flap_mesh() -> ArrayMesh:
 				{"y": 0.16, "rx": 0.042, "rz": 0.014, "p": 2.4, "col": Color(0.96, 0.96, 0.98)},
 			],
 		},
-	])
+	]))
 
 
 ## Builds a sculpted leather utility pouch with overhanging lid flap and brass stud.
 static func build_belt_pouch_mesh() -> ArrayMesh:
-	return _commit_lofts([
+	if _mesh_cache.has("belt_pouch"):
+		return _mesh_cache["belt_pouch"] as ArrayMesh
+	return _store_mesh("belt_pouch", _commit_lofts([
 		{
 			"seg": 12,
 			"rings": [
@@ -461,32 +497,40 @@ static func build_belt_pouch_mesh() -> ArrayMesh:
 				{"y": 0.012, "rx": 0.014, "rz": 0.008, "p": 2.2, "col": Color(0.98, 0.84, 0.36)},
 			],
 		},
-	])
+	]))
 
 
 ## Builds a tailored waist belt matching each class's waist contour.
 static func build_waist_belt_mesh(class_id: int) -> ArrayMesh:
+	var k := "belt_%d" % class_id
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var prof: Dictionary = get_torso_profile(class_id)
 	var wrx: float = float(prof["waist_rx"]) + 0.012
 	var wrz: float = float(prof["waist_rz"]) + 0.012
-	return make_loft([
+	return _store_mesh(k, make_loft([
 		{"y": 0.045, "rx": wrx, "rz": wrz, "p": 2.4, "col": Color(0.84, 0.84, 0.86)},
 		{"y": 0.075, "rx": wrx + 0.004, "rz": wrz + 0.004, "p": 2.4, "col": Color.WHITE},
 		{"y": 0.105, "rx": wrx, "rz": wrz, "p": 2.4, "col": Color(0.90, 0.90, 0.92)},
-	], 20)
+	], 20))
 
 
 ## Builds a gleaming sculpted front belt buckle plate.
 static func build_buckle_mesh() -> ArrayMesh:
-	return make_loft([
+	if _mesh_cache.has("buckle"):
+		return _mesh_cache["buckle"] as ArrayMesh
+	return _store_mesh("buckle", make_loft([
 		{"y": -0.036, "rx": 0.048, "rz": 0.014, "p": 2.8, "col": Color(0.88, 0.88, 0.92)},
 		{"y": 0.000, "rx": 0.052, "rz": 0.016, "p": 2.8, "col": Color.WHITE},
 		{"y": 0.036, "rx": 0.048, "rz": 0.014, "p": 2.8, "col": Color.WHITE},
-	], 12)
+	], 12))
 
 
 ## Builds snug chest/back leather Y-suspenders (Soldier) or diagonal ammo bandolier (Gunner/Commando).
 static func build_bandolier_mesh(class_id: int) -> ArrayMesh:
+	var k := "band_%d" % class_id
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var prof: Dictionary = get_torso_profile(class_id)
 	var crx: float = float(prof["chest_rx"])
 	var crz: float = float(prof["chest_rz"])
@@ -534,17 +578,20 @@ static func build_bandolier_mesh(class_id: int) -> ArrayMesh:
 				], 8, true, _xform(sp + Vector3(0.0, 0.0, -0.012), Vector3(0.0, 0.0, 0.62)), 10 + i0)
 
 	st.generate_normals()
-	return st.commit()
+	return _store_mesh("band_%d" % class_id, st.commit())
 
 
 static func build_epaulet_mesh(is_pauldron: bool = false) -> ArrayMesh:
+	var k := "epaulet_%s" % str(is_pauldron)
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	if is_pauldron:
-		return make_loft([
+		return _store_mesh(k, make_loft([
 			{"y": -0.032, "rx": 0.095, "rz": 0.125, "p": 2.4, "col": Color(0.84, 0.84, 0.88)},
 			{"y": 0.012, "rx": 0.098, "rz": 0.122, "p": 2.4, "col": Color.WHITE},
 			{"y": 0.036, "rx": 0.068, "rz": 0.088, "p": 2.2, "col": Color.WHITE},
-		], 14)
-	return _commit_lofts([
+		], 14))
+	return _store_mesh(k, _commit_lofts([
 		{
 			"seg": 10,
 			"rings": [
@@ -560,28 +607,36 @@ static func build_epaulet_mesh(is_pauldron: bool = false) -> ArrayMesh:
 				{"y": 0.008, "rx": 0.011, "rz": 0.011, "p": 2.0, "col": Color(1.0, 0.86, 0.36)},
 			],
 		},
-	])
+	]))
 
 
 static func build_rolled_sleeve_cap_mesh(r_top: float) -> ArrayMesh:
-	return make_loft([
+	var k := "rcap_%.4f" % r_top
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, make_loft([
 		{"y": -0.072, "rx": r_top * 1.12, "rz": r_top * 1.10, "p": 2.1, "col": Color(0.90, 0.90, 0.92)},
 		{"y": -0.036, "rx": r_top * 1.15, "rz": r_top * 1.12, "p": 2.1, "col": Color.WHITE},
 		{"y": 0.010, "rx": r_top * 1.06, "rz": r_top * 1.04, "p": 2.0, "col": Color.WHITE},
 		{"y": 0.056, "rx": r_top * 0.56, "rz": r_top * 0.56, "p": 2.0, "col": Color(0.94, 0.94, 0.96)},
-	], 14)
+	], 14))
 
 
 static func build_cuff_mesh(r_cuff: float) -> ArrayMesh:
-	return make_loft([
+	var k := "cuff_%.4f" % r_cuff
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, make_loft([
 		{"y": -0.022, "rx": r_cuff * 1.12, "rz": r_cuff * 1.10, "p": 2.2, "col": Color(0.86, 0.86, 0.90)},
 		{"y": 0.000, "rx": r_cuff * 1.16, "rz": r_cuff * 1.14, "p": 2.2, "col": Color.WHITE},
 		{"y": 0.022, "rx": r_cuff * 1.10, "rz": r_cuff * 1.08, "p": 2.2, "col": Color(0.94, 0.94, 0.96)},
-	], 14)
+	], 14))
 
 
 static func build_scarf_mesh() -> ArrayMesh:
-	return _commit_lofts([
+	if _mesh_cache.has("scarf"):
+		return _mesh_cache["scarf"] as ArrayMesh
+	return _store_mesh("scarf", _commit_lofts([
 		{
 			"seg": 16,
 			"rings": [
@@ -598,12 +653,14 @@ static func build_scarf_mesh() -> ArrayMesh:
 				{"y": 0.045, "rx": 0.046, "rz": 0.024, "p": 2.2, "col": Color.WHITE},
 			],
 		},
-	])
+	]))
 
 
 static func build_head_mesh() -> ArrayMesh:
+	if _mesh_cache.has("head"):
+		return _mesh_cache["head"] as ArrayMesh
 	# Smooth sculpted cartoon cranium with chiseled square jaw, cheekbones & brow ridge
-	return make_loft([
+	return _store_mesh("head", make_loft([
 		{"y": 0.000, "rx": 0.082, "rz": 0.078, "p": 2.0, "col": Color(0.84, 0.80, 0.78), "v": 1.00},
 		{"y": 0.080, "rx": 0.088, "rz": 0.084, "p": 2.1, "col": Color(0.90, 0.86, 0.84), "v": 0.80},
 		{"y": 0.115, "z": -0.018, "rx": 0.118, "rz": 0.122, "p": 3.2, "col": Color(0.95, 0.92, 0.90), "v": 0.68},
@@ -611,12 +668,14 @@ static func build_head_mesh() -> ArrayMesh:
 		{"y": 0.275, "z": -0.014, "rx": 0.126, "rz": 0.132, "p": 2.4, "col": Color.WHITE, "v": 0.30},
 		{"y": 0.345, "z": 0.002, "rx": 0.112, "rz": 0.120, "p": 2.0, "col": Color.WHITE, "v": 0.14},
 		{"y": 0.395, "z": 0.008, "rx": 0.068, "rz": 0.072, "p": 2.0, "col": Color.WHITE, "v": 0.00},
-	], 20)
+	], 20))
 
 
 static func build_hair_cap_mesh() -> ArrayMesh:
+	if _mesh_cache.has("hair_cap"):
+		return _mesh_cache["hair_cap"] as ArrayMesh
 	# Full temple/brow hairline & nape hair wrap visible under hats without exposed bald forehead
-	return _commit_lofts([
+	return _store_mesh("hair_cap", _commit_lofts([
 		{
 			"seg": 18,
 			"rings": [
@@ -635,26 +694,32 @@ static func build_hair_cap_mesh() -> ArrayMesh:
 				{"y": 0.022, "rx": 0.112, "rz": 0.022, "p": 2.4, "col": Color.WHITE},
 			],
 		},
-	])
+	]))
 
 
 static func build_ear_mesh() -> ArrayMesh:
-	return make_loft([
+	if _mesh_cache.has("ear"):
+		return _mesh_cache["ear"] as ArrayMesh
+	return _store_mesh("ear", make_loft([
 		{"y": -0.036, "rx": 0.018, "rz": 0.026, "p": 2.1, "col": Color(0.88, 0.84, 0.82)},
 		{"y": 0.0, "rx": 0.024, "rz": 0.034, "p": 2.1, "col": Color.WHITE},
 		{"y": 0.036, "rx": 0.016, "rz": 0.024, "p": 2.1, "col": Color.WHITE},
-	], 10)
+	], 10))
 
 
 static func build_nose_mesh() -> ArrayMesh:
-	return make_loft([
+	if _mesh_cache.has("nose"):
+		return _mesh_cache["nose"] as ArrayMesh
+	return _store_mesh("nose", make_loft([
 		{"y": -0.024, "z": -0.006, "rx": 0.024, "rz": 0.026, "p": 2.3, "col": Color(0.94, 0.88, 0.86)},
 		{"y": 0.006, "z": -0.002, "rx": 0.020, "rz": 0.022, "p": 2.2, "col": Color.WHITE},
 		{"y": 0.036, "z": 0.004, "rx": 0.013, "rz": 0.015, "p": 2.0, "col": Color.WHITE},
-	], 10)
+	], 10))
 
 
 static func build_eyes_mesh() -> ArrayMesh:
+	if _mesh_cache.has("eyes"):
+		return _mesh_cache["eyes"] as ArrayMesh
 	var parts: Array[Dictionary] = []
 	for sx in [-1.0, 1.0]:
 		parts.append({
@@ -682,11 +747,13 @@ static func build_eyes_mesh() -> ArrayMesh:
 				{"y": 0.006, "rx": 0.028, "rz": 0.012, "p": 2.5, "col": Color(0.36, 0.24, 0.16)},
 			],
 		})
-	return _commit_lofts(parts)
+	return _store_mesh("eyes", _commit_lofts(parts))
 
 
 ## Builds metal-rimmed aviator sunglasses with bridge bar and ear temples.
 static func build_sunglasses_mesh() -> ArrayMesh:
+	if _mesh_cache.has("shades"):
+		return _mesh_cache["shades"] as ArrayMesh
 	var frame_col := Color(0.84, 0.78, 0.64)
 	var lens_col := Color(0.26, 0.26, 0.30)
 	var parts: Array[Dictionary] = [
@@ -717,11 +784,14 @@ static func build_sunglasses_mesh() -> ArrayMesh:
 				{"y": 0.075, "rx": 0.005, "rz": 0.005, "p": 2.0, "col": frame_col},
 			],
 		})
-	return _commit_lofts(parts)
+	return _store_mesh("shades", _commit_lofts(parts))
 
 
 ## Builds sculpted cartoon facial hair: 0 = full beard+mustache, 1 = chevron mustache, 2 = goatee.
 static func build_beard_mesh(style: int = 0) -> ArrayMesh:
+	var k := "beard_%d" % style
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var parts: Array[Dictionary] = []
 	var c_dark := Color(0.84, 0.84, 0.86)
 	var c_lit := Color.WHITE
@@ -756,11 +826,14 @@ static func build_beard_mesh(style: int = 0) -> ArrayMesh:
 				{"y": 0.014, "rx": 0.042, "rz": 0.020, "p": 2.3, "col": c_lit},
 			],
 		})
-	return _commit_lofts(parts)
+	return _store_mesh("beard_%d" % style, _commit_lofts(parts))
 
 
 ## Builds domed M1 steel helmet (is_royal=true) or flared Stahlhelm (is_royal=false) with strap.
 static func build_helmet_mesh(is_royal: bool) -> ArrayMesh:
+	var k := "helmet_%s" % str(is_royal)
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var shell_col := Color(0.34, 0.40, 0.24) if is_royal else Color(0.30, 0.32, 0.36)
 	var c_band := shell_col.darkened(0.18)
 	var c_rim := shell_col.darkened(0.28)
@@ -801,12 +874,15 @@ static func build_helmet_mesh(is_royal: bool) -> ArrayMesh:
 				{"y": 0.090, "rx": 0.012, "rz": 0.014, "p": 2.2, "col": c_strap},
 			],
 		})
-	return _commit_lofts(parts)
+	return _store_mesh("helmet_%s" % str(is_royal), _commit_lofts(parts))
 
 
 ## Builds peaked National Officer Visor Cap with dark glossy brim, cap band, and brass cockade.
 static func build_officer_cap_mesh(crown_col: Color = Color(0.28, 0.30, 0.34)) -> ArrayMesh:
-	return _commit_lofts([
+	var k := "ocap_%s" % crown_col.to_html(false)
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, _commit_lofts([
 		{
 			"seg": 20,
 			"rings": [
@@ -833,30 +909,37 @@ static func build_officer_cap_mesh(crown_col: Color = Color(0.28, 0.30, 0.34)) -
 				{"y": 0.022, "rx": 0.030, "rz": 0.014, "p": 2.4, "col": Color(1.0, 0.88, 0.38)},
 			],
 		},
-	])
+	]))
 
 
 static func build_beret_mesh() -> ArrayMesh:
-	return make_loft([
+	if _mesh_cache.has("beret"):
+		return _mesh_cache["beret"] as ArrayMesh
+	return _store_mesh("beret", make_loft([
 		{"y": -0.008, "rx": 0.124, "rz": 0.130, "p": 2.1, "col": Color(0.26, 0.26, 0.28)},
 		{"y": 0.012, "rx": 0.128, "rz": 0.134, "p": 2.1, "col": Color(0.76, 0.76, 0.80)},
 		{"y": 0.042, "x": -0.026, "rx": 0.168, "rz": 0.162, "p": 2.0, "col": Color.WHITE},
 		{"y": 0.090, "x": -0.032, "rx": 0.156, "rz": 0.152, "p": 2.0, "col": Color.WHITE},
 		{"y": 0.118, "x": -0.020, "rx": 0.086, "rz": 0.086, "p": 2.0, "col": Color.WHITE},
-	], 18)
+	], 18))
 
 
 ## Builds sculpted heraldic crest badge for beret front.
 static func build_badge_mesh() -> ArrayMesh:
-	return make_loft([
+	if _mesh_cache.has("badge"):
+		return _mesh_cache["badge"] as ArrayMesh
+	return _store_mesh("badge", make_loft([
 		{"y": -0.022, "rx": 0.014, "rz": 0.010, "p": 2.4, "col": Color(0.86, 0.86, 0.90)},
 		{"y": 0.004, "rx": 0.024, "rz": 0.012, "p": 2.6, "col": Color.WHITE},
 		{"y": 0.022, "rx": 0.020, "rz": 0.010, "p": 2.5, "col": Color.WHITE},
-	], 10)
+	], 10))
 
 
 static func build_fedora_mesh(band_col: Color = Color(0.75, 0.20, 0.20), crown_col: Color = Color(0.14, 0.14, 0.16)) -> ArrayMesh:
-	return _commit_lofts([
+	var k := "fedora_%s_%s" % [band_col.to_html(false), crown_col.to_html(false)]
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, _commit_lofts([
 		{
 			"seg": 20,
 			"rings": [
@@ -874,16 +957,19 @@ static func build_fedora_mesh(band_col: Color = Color(0.75, 0.20, 0.20), crown_c
 				{"y": 0.052, "rx": 0.139, "rz": 0.149, "p": 2.1, "col": band_col.lightened(0.10)},
 			],
 		},
-	])
+	]))
 
 
 ## Builds upper arm with rounded deltoid cap (is_upper=true) or forearm overlapping inside elbow (is_upper=false).
 static func build_arm_segment_mesh(r_top: float, r_bot: float, length: float, is_upper: bool = false) -> ArrayMesh:
+	var k := "arm_%.4f_%.4f_%.4f_%s" % [r_top, r_bot, length, str(is_upper)]
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
 	var c_lit := Color.WHITE
 	var c_mid := Color(0.94, 0.94, 0.96)
 	var c_shade := Color(0.84, 0.84, 0.88)
 	if is_upper:
-		return make_loft([
+		return _store_mesh(k, make_loft([
 			{"y": -length - 0.030, "rx": r_bot * 0.74, "rz": r_bot * 0.74, "p": 2.0, "col": c_shade, "v": 1.00},
 			{"y": -length, "rx": r_bot, "rz": r_bot, "p": 2.0, "col": c_shade, "v": 0.90},
 			{"y": -length * 0.72, "rx": lerpf(r_top, r_bot, 0.70), "rz": lerpf(r_top, r_bot, 0.70), "p": 2.1, "col": c_mid, "v": 0.66},
@@ -891,20 +977,23 @@ static func build_arm_segment_mesh(r_top: float, r_bot: float, length: float, is
 			{"y": 0.000, "rx": r_top, "rz": r_top * 0.96, "p": 2.0, "col": c_lit, "v": 0.14},
 			{"y": 0.032, "rx": r_top * 0.84, "rz": r_top * 0.82, "p": 2.0, "col": c_lit, "v": 0.06},
 			{"y": 0.055, "rx": r_top * 0.48, "rz": r_top * 0.48, "p": 2.0, "col": c_mid, "v": 0.00},
-		], 16)
-	return make_loft([
+		], 16))
+	return _store_mesh(k, make_loft([
 		{"y": -length * 0.94, "rx": r_bot, "rz": r_bot * 0.96, "p": 2.1, "col": c_shade, "v": 1.00},
 		{"y": -length * 0.68, "rx": lerpf(r_top, r_bot, 0.64), "rz": lerpf(r_top, r_bot, 0.64), "p": 2.1, "col": c_mid, "v": 0.72},
 		{"y": -length * 0.28, "rx": r_top * 1.05, "rz": r_top * 1.02, "p": 2.1, "col": c_lit, "v": 0.34},
 		{"y": 0.000, "rx": r_top, "rz": r_top * 0.98, "p": 2.0, "col": c_lit, "v": 0.10},
 		{"y": 0.014, "rx": r_top * 0.90, "rz": r_top * 0.90, "p": 2.0, "col": c_mid, "v": 0.04},
 		{"y": 0.032, "rx": r_top * 0.56, "rz": r_top * 0.56, "p": 2.0, "col": c_shade, "v": 0.00},
-	], 16)
+	], 16))
 
 
 ## Builds sculpted chunky BFH fist/mitten palm + thumb ridge centered around Vector3.ZERO.
 static func build_hand_mesh(r_scale: float = 1.0) -> ArrayMesh:
-	return _commit_lofts([
+	var k := "hand_%.4f" % r_scale
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, _commit_lofts([
 		{
 			"seg": 14,
 			"rings": [
@@ -924,22 +1013,27 @@ static func build_hand_mesh(r_scale: float = 1.0) -> ArrayMesh:
 				{"y": 0.026 * r_scale, "rx": 0.020 * r_scale, "rz": 0.022 * r_scale, "p": 2.1, "col": Color(0.92, 0.92, 0.94)},
 			],
 		},
-	])
+	]))
 
 
 static func build_leg_mesh(thigh_r: float) -> ArrayMesh:
-	return make_loft([
+	var k := "leg_%.4f" % thigh_r
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, make_loft([
 		{"y": -0.58, "rx": thigh_r * 0.70, "rz": thigh_r * 0.72, "p": 2.1, "col": Color(0.80, 0.80, 0.84), "v": 1.00},
 		{"y": -0.39, "rx": thigh_r * 0.90, "rz": thigh_r * 0.92, "p": 2.1, "col": Color(0.92, 0.92, 0.96), "v": 0.66},
 		{"y": -0.33, "rx": thigh_r * 0.84, "rz": thigh_r * 0.86, "p": 2.2, "col": Color(0.84, 0.84, 0.88), "v": 0.56},
 		{"y": -0.22, "rx": thigh_r * 1.06, "rz": thigh_r * 1.08, "p": 2.2, "col": Color.WHITE, "v": 0.38},
 		{"y": -0.06, "rx": thigh_r * 1.02, "rz": thigh_r * 1.05, "p": 2.2, "col": Color.WHITE, "v": 0.14},
 		{"y": 0.05, "rx": thigh_r * 0.92, "rz": thigh_r * 0.96, "p": 2.1, "col": Color(0.92, 0.92, 0.94), "v": 0.00},
-	], 16)
+	], 16))
 
 
 static func build_boot_mesh() -> ArrayMesh:
-	return _commit_lofts([
+	if _mesh_cache.has("boot"):
+		return _mesh_cache["boot"] as ArrayMesh
+	return _store_mesh("boot", _commit_lofts([
 		{
 			"seg": 16,
 			"rings": [
@@ -958,21 +1052,29 @@ static func build_boot_mesh() -> ArrayMesh:
 				{"y": 0.020, "rx": 0.084, "rz": 0.088, "p": 2.1, "col": Color(0.92, 0.90, 0.88)},
 			],
 		},
-	])
+	]))
 
 
 static func _add_box_part(parent: Node3D, size: Vector3, pos: Vector3, rot: Vector3, mat: Material, parts: Array[MeshInstance3D]) -> MeshInstance3D:
-	var bm := BoxMesh.new()
-	bm.size = size
+	var key := "box|%.4f,%.4f,%.4f" % [size.x, size.y, size.z]
+	var bm: BoxMesh = _prim_cache.get(key)
+	if bm == null:
+		bm = BoxMesh.new()
+		bm.size = size
+		_prim_cache[key] = bm
 	return add_part(parent, bm, pos, rot, mat, parts)
 
 
 static func _add_cyl_part(parent: Node3D, r_top: float, r_bot: float, h: float, pos: Vector3, rot: Vector3, mat: Material, segs: int, parts: Array[MeshInstance3D]) -> MeshInstance3D:
-	var cm := CylinderMesh.new()
-	cm.top_radius = r_top
-	cm.bottom_radius = r_bot
-	cm.height = h
-	cm.radial_segments = segs
+	var key := "cyl|%.4f,%.4f,%.4f|%d" % [r_top, r_bot, h, segs]
+	var cm: CylinderMesh = _prim_cache.get(key)
+	if cm == null:
+		cm = CylinderMesh.new()
+		cm.top_radius = r_top
+		cm.bottom_radius = r_bot
+		cm.height = h
+		cm.radial_segments = segs
+		_prim_cache[key] = cm
 	return add_part(parent, cm, pos, rot, mat, parts)
 
 
@@ -984,7 +1086,24 @@ static func build_weapon_mesh(w_kind: int) -> Node3D:
 
 static func populate_weapon_root(root: Node3D, w_kind: int) -> Dictionary:
 	for c in root.get_children():
+		root.remove_child(c)
 		c.queue_free()
+
+	if _weapon_cache.has(w_kind):
+		var cached: Dictionary = _weapon_cache[w_kind]
+		var parts_tpl: Array = cached["parts"]
+		for p_dict in parts_tpl:
+			var mi := MeshInstance3D.new()
+			mi.mesh = p_dict["mesh"]
+			mi.position = p_dict["pos"]
+			mi.rotation = p_dict["rot"]
+			mi.material_override = p_dict["mat"]
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mi.visibility_range_end = 220.0
+			root.add_child(mi)
+		return (cached["info"] as Dictionary).duplicate()
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	var metal_mat := make_sculpted_mat(Color(0.20, 0.22, 0.26), "", 0.45, 0.35)
 	var blued_metal_mat := make_sculpted_mat(Color(0.16, 0.20, 0.25), "", 0.38, 0.45)
@@ -1223,4 +1342,18 @@ static func populate_weapon_root(root: Node3D, w_kind: int) -> Dictionary:
 			info["muzzle"] = Vector3(0.0, 0.035, -0.21)
 			info["two_handed"] = true
 
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	var cached_parts: Array[Dictionary] = []
+	for ch in root.get_children():
+		if ch is MeshInstance3D:
+			var mi := ch as MeshInstance3D
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mi.visibility_range_end = 220.0
+			cached_parts.append({
+				"mesh": mi.mesh,
+				"pos": mi.position,
+				"rot": mi.rotation,
+				"mat": mi.material_override,
+			})
+	_weapon_cache[w_kind] = {"info": info.duplicate(), "parts": cached_parts}
 	return info
