@@ -165,6 +165,7 @@ var _interact_lbl: Label
 var _defeat_lbl: Label
 var _killfeed_lbl: Label
 var _sixth_sense_layer: Control
+var _marker_pool: Array[Label] = []
 var _damage_numbers_layer: Control
 var _floating_dmgs: Array[Dictionary] = []
 
@@ -179,6 +180,11 @@ var _last_hud_vehicle_id: int = -1
 var _seat_diagram_panel: PanelContainer
 var _seat_slot_buttons: Array[Button] = []
 var _seat_slot_labels: Array[Label] = []
+var _seat_style_mine: StyleBoxFlat
+var _seat_style_occupied_royal: StyleBoxFlat
+var _seat_style_occupied_national: StyleBoxFlat
+var _seat_style_free: StyleBoxFlat
+var _last_seat_states: PackedStringArray = PackedStringArray()
 
 var _hitmarker_timer: float = 0.0
 var _damage_flash_timer: float = 0.0
@@ -191,6 +197,22 @@ var _last_highlighted_slot: int = -1
 var _last_gauge_xp: int = -1
 var _last_gauge_level: int = -1
 var _last_gauge_team: int = -1
+
+var _last_ping_ms: int = -1
+var _last_sim_lat_ms: int = -1
+var _last_royal_tickets: int = -1
+var _last_national_tickets: int = -1
+var _last_royal_mult: int = -1
+var _last_national_mult: int = -1
+var _last_flag_owners: PackedInt32Array = PackedInt32Array()
+var _last_hp_val: int = -1
+var _last_shield_val: int = -1
+var _last_ammo_key: String = ""
+var _last_interact_text: String = ""
+var _last_veh_name_type: int = -99
+var _last_veh_seat_txt: String = ""
+var _last_veh_hp: int = -1
+var _last_veh_max_hp: int = -1
 
 var _local_hero: HeroCharacter = null
 var _conquest: ConquestManager = null
@@ -249,6 +271,13 @@ func set_local_hero(hero: HeroCharacter) -> void:
 	_local_hero = hero
 	_prev_hp_observed = hero.hp if hero != null else -1
 	_last_portrait_key = ""
+	_last_highlighted_slot = -1
+	_last_gauge_level = -1
+	_last_hp_val = -1
+	_last_shield_val = -1
+	_last_ammo_key = ""
+	_last_interact_text = ""
+	_reset_seat_diagram_cache()
 	_crosshair_bloom = 0.0
 	_crosshair_spread_px = 6.0
 	_apply_crosshair_spread(_crosshair_spread_px)
@@ -299,23 +328,45 @@ func _style_label(lbl: Label, font_size: int, color: Color = Color.WHITE) -> voi
 	lbl.add_theme_constant_override("shadow_offset_y", 2)
 
 
-func _make_upgrade_button_style(bg_col: Color) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg_col
-	sb.border_color = Color(0.12, 0.08, 0.02, 0.95)
-	sb.border_width_left = 1
-	sb.border_width_right = 1
-	sb.border_width_top = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 4
-	sb.corner_radius_top_right = 4
-	sb.corner_radius_bottom_left = 4
-	sb.corner_radius_bottom_right = 4
-	sb.content_margin_left = 4.0
-	sb.content_margin_right = 4.0
-	sb.content_margin_top = 0.0
-	sb.content_margin_bottom = 0.0
-	return sb
+func _init_seat_styles() -> void:
+	if _seat_style_mine != null:
+		return
+	_seat_style_mine = StyleBoxFlat.new()
+	_seat_style_mine.set_corner_radius_all(4)
+	_seat_style_mine.set_border_width_all(2)
+	_seat_style_mine.bg_color = Color(0.85, 0.65, 0.14, 0.90)
+	_seat_style_mine.border_color = Color(1.0, 0.94, 0.45)
+
+	_seat_style_occupied_royal = StyleBoxFlat.new()
+	_seat_style_occupied_royal.set_corner_radius_all(4)
+	_seat_style_occupied_royal.set_border_width_all(1)
+	_seat_style_occupied_royal.bg_color = Color(0.18, 0.45, 0.85, 0.85)
+	_seat_style_occupied_royal.border_color = Color(0.82, 0.88, 0.96, 0.80)
+
+	_seat_style_occupied_national = StyleBoxFlat.new()
+	_seat_style_occupied_national.set_corner_radius_all(4)
+	_seat_style_occupied_national.set_border_width_all(1)
+	_seat_style_occupied_national.bg_color = Color(0.78, 0.22, 0.22, 0.85)
+	_seat_style_occupied_national.border_color = Color(0.82, 0.88, 0.96, 0.80)
+
+	_seat_style_free = StyleBoxFlat.new()
+	_seat_style_free.set_corner_radius_all(4)
+	_seat_style_free.set_border_width_all(1)
+	_seat_style_free.bg_color = Color(0.16, 0.20, 0.26, 0.82)
+	_seat_style_free.border_color = Color(0.45, 0.52, 0.62, 0.72)
+
+
+func _reset_seat_diagram_cache() -> void:
+	if _last_seat_states.size() != 4:
+		_last_seat_states.resize(4)
+	for i in range(4):
+		_last_seat_states[i] = ""
+
+
+func _hide_all_sixth_sense_markers() -> void:
+	for marker in _marker_pool:
+		if is_instance_valid(marker) and marker.visible:
+			marker.visible = false
 
 
 func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vector2) -> ColorRect:
@@ -411,6 +462,7 @@ func _build_hud() -> void:
 	_hero_pts_lbl = Label.new()
 	_hero_pts_lbl.position = Vector2(102.0, 26.0)
 	_hero_pts_lbl.text = ""
+	_hero_pts_lbl.visible = false
 	_style_label(_hero_pts_lbl, 14, Color(1.0, 0.88, 0.25))
 	tl_root.add_child(_hero_pts_lbl)
 
@@ -504,7 +556,9 @@ func _build_hud() -> void:
 	pips_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_anchor.add_child(pips_hbox)
 
+	_last_flag_owners.resize(6)
 	for i in range(6):
+		_last_flag_owners[i] = -99
 		var pip := ColorRect.new()
 		pip.custom_minimum_size = Vector2(14, 10)
 		pip.color = Color(0.85, 0.85, 0.85)
@@ -640,35 +694,14 @@ func _build_hud() -> void:
 		_weapon_slot_icons.append(icon)
 		_weapon_slot_keys.append(k_lbl)
 
-	# 6 Skill slots (up to 6 for Commando, 5 for Soldier/Gunner) with upgrade '+' buttons above
-	var upg_sb_normal := _make_upgrade_button_style(Color(0.96, 0.78, 0.18, 0.94))
-	var upg_sb_hover := _make_upgrade_button_style(Color(1.0, 0.88, 0.34, 0.98))
-	var upg_sb_pressed := _make_upgrade_button_style(Color(0.84, 0.62, 0.10, 0.98))
+	# 6 Skill slots (up to 6 for Commando, 5 for Soldier/Gunner; all start Rank 5, no '+' buttons)
 	_skill_slot_boxes.clear()
+	_upgrade_buttons.clear()
 	for s_idx in range(6):
 		var sv := VBoxContainer.new()
 		sv.alignment = BoxContainer.ALIGNMENT_END
 		sv.add_theme_constant_override("separation", 2)
 		sv.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-		var upg := Button.new()
-		upg.text = "+"
-		upg.custom_minimum_size = Vector2(34, 18)
-		upg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		upg.clip_text = true
-		upg.add_theme_font_size_override("font_size", 11)
-		upg.add_theme_color_override("font_color", Color(0.08, 0.06, 0.02))
-		upg.add_theme_color_override("font_hover_color", Color(0.05, 0.04, 0.01))
-		upg.add_theme_color_override("font_pressed_color", Color(0.05, 0.04, 0.01))
-		upg.add_theme_stylebox_override("normal", upg_sb_normal)
-		upg.add_theme_stylebox_override("hover", upg_sb_hover)
-		upg.add_theme_stylebox_override("pressed", upg_sb_pressed)
-		upg.add_theme_stylebox_override("focus", upg_sb_hover)
-		upg.visible = false
-		var captured: int = s_idx
-		upg.pressed.connect(func() -> void: upgrade_skill_requested.emit(captured))
-		sv.add_child(upg)
-		_upgrade_buttons.append(upg)
 
 		var bg := PanelContainer.new()
 		bg.custom_minimum_size = Vector2(38, 38)
@@ -970,6 +1003,8 @@ func _build_hud() -> void:
 	seat_hbox.add_theme_constant_override("separation", 6)
 	_seat_diagram_panel.add_child(seat_hbox)
 
+	_init_seat_styles()
+	_reset_seat_diagram_cache()
 	_seat_slot_buttons.clear()
 	_seat_slot_labels.clear()
 	for s_i in range(4):
@@ -1022,6 +1057,8 @@ func _hide_local_hud_overlays() -> void:
 		_veh_hp_panel.visible = false
 	if _seat_diagram_panel != null:
 		_seat_diagram_panel.visible = false
+	_reset_seat_diagram_cache()
+	_hide_all_sixth_sense_markers()
 
 
 func _refresh_hotbar_icons() -> void:
@@ -1059,28 +1096,48 @@ func _process(delta: float) -> void:
 		_damage_arc.flash_alpha = 0.0
 		_damage_arc.queue_redraw()
 
-	_ping_lbl.text = "Ping: %dms (Sim %.0fms) | F8: Lag | M: Música | ESC: Menu" % [int(NetworkManager.ema_rtt_ms), NetworkManager.sim_latency_ms * 2.0]
+	var ping_ms: int = int(NetworkManager.ema_rtt_ms)
+	var sim_ms: int = int(roundf(NetworkManager.sim_latency_ms * 2.0))
+	if ping_ms != _last_ping_ms or sim_ms != _last_sim_lat_ms:
+		_last_ping_ms = ping_ms
+		_last_sim_lat_ms = sim_ms
+		_ping_lbl.text = "Ping: %dms (Sim %dms) | F8: Lag | M: Música | ESC: Menu" % [ping_ms, sim_ms]
 
 	if _conquest != null:
-		_royal_ticket_lbl.text = "%d" % _conquest.royal_tickets
-		_national_ticket_lbl.text = "%d" % _conquest.national_tickets
+		if _conquest.royal_tickets != _last_royal_tickets:
+			_last_royal_tickets = _conquest.royal_tickets
+			_royal_ticket_lbl.text = "%d" % _conquest.royal_tickets
+		if _conquest.national_tickets != _last_national_tickets:
+			_last_national_tickets = _conquest.national_tickets
+			_national_ticket_lbl.text = "%d" % _conquest.national_tickets
 		var r_mult: int = _conquest.get_team_kill_multiplier(NetworkManager.TEAM_ROYAL)
+		if r_mult != _last_royal_mult:
+			_last_royal_mult = r_mult
+			_royal_mult_lbl.text = "%dx" % r_mult if r_mult > 0 else "0x"
 		var n_mult: int = _conquest.get_team_kill_multiplier(NetworkManager.TEAM_NATIONAL)
-		_royal_mult_lbl.text = "%dx" % r_mult if r_mult > 0 else "0x"
-		_national_mult_lbl.text = "%dx" % n_mult if n_mult > 0 else "0x"
+		if n_mult != _last_national_mult:
+			_last_national_mult = n_mult
+			_national_mult_lbl.text = "%dx" % n_mult if n_mult > 0 else "0x"
 
 		for i in range(_flag_pips.size()):
 			if i < _conquest.capture_points.size():
-				_flag_pips[i].visible = true
-				var cp: CapturePoint = _conquest.capture_points[i]
-				if cp.owner_team == NetworkManager.TEAM_ROYAL:
-					_flag_pips[i].color = Color(0.22, 0.55, 1.0)
-				elif cp.owner_team == NetworkManager.TEAM_NATIONAL:
-					_flag_pips[i].color = Color(0.92, 0.22, 0.22)
-				else:
-					_flag_pips[i].color = Color(0.85, 0.85, 0.85)
+				if not _flag_pips[i].visible:
+					_flag_pips[i].visible = true
+				var owner_t: int = _conquest.capture_points[i].owner_team
+				if i >= _last_flag_owners.size() or _last_flag_owners[i] != owner_t:
+					if i < _last_flag_owners.size():
+						_last_flag_owners[i] = owner_t
+					if owner_t == NetworkManager.TEAM_ROYAL:
+						_flag_pips[i].color = Color(0.22, 0.55, 1.0)
+					elif owner_t == NetworkManager.TEAM_NATIONAL:
+						_flag_pips[i].color = Color(0.92, 0.22, 0.22)
+					else:
+						_flag_pips[i].color = Color(0.85, 0.85, 0.85)
 			else:
-				_flag_pips[i].visible = false
+				if _flag_pips[i].visible:
+					_flag_pips[i].visible = false
+				if i < _last_flag_owners.size():
+					_last_flag_owners[i] = -99
 
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
@@ -1107,8 +1164,12 @@ func _process(delta: float) -> void:
 		_portrait_tex.texture = CartoonAssets.get_texture(p_key)
 		_refresh_hotbar_icons()
 
-	_hp_value_lbl.text = "%d" % _local_hero.hp
-	_shield_value_lbl.text = ("+%d ESCUDO" % _local_hero.shield) if _local_hero.shield > 0 else ""
+	if _local_hero.hp != _last_hp_val:
+		_last_hp_val = _local_hero.hp
+		_hp_value_lbl.text = "%d" % _local_hero.hp
+	if _local_hero.shield != _last_shield_val:
+		_last_shield_val = _local_hero.shield
+		_shield_value_lbl.text = ("+%d ESCUDO" % _local_hero.shield) if _local_hero.shield > 0 else ""
 
 	var is_scoped: bool = _local_hero.is_scoping or (_local_hero.hero_camera != null and _local_hero.hero_camera.is_scoped)
 	if _scope_overlay != null:
@@ -1156,15 +1217,18 @@ func _process(delta: float) -> void:
 				_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(i == slot))
 		var w: WeaponBase = _local_hero.weapons[slot] as WeaponBase
 		if w != null:
-			if w.is_melee:
-				_ammo_value_lbl.text = "∞"
-				_weapon_name_lbl.text = "%s (Faca)" % w.weapon_name
-			elif w.is_reloading:
-				_ammo_value_lbl.text = "..."
-				_weapon_name_lbl.text = "%s | RECARREGANDO" % w.weapon_name
-			else:
-				_ammo_value_lbl.text = "%d" % w.ammo_in_mag
-				_weapon_name_lbl.text = "%s | ∞" % w.weapon_name
+			var ammo_key: String = "%d|%s|%s|%s|%d" % [slot, w.weapon_name, str(w.is_melee), str(w.is_reloading), w.ammo_in_mag]
+			if ammo_key != _last_ammo_key:
+				_last_ammo_key = ammo_key
+				if w.is_melee:
+					_ammo_value_lbl.text = "∞"
+					_weapon_name_lbl.text = "%s (Faca)" % w.weapon_name
+				elif w.is_reloading:
+					_ammo_value_lbl.text = "..."
+					_weapon_name_lbl.text = "%s | RECARREGANDO" % w.weapon_name
+				else:
+					_ammo_value_lbl.text = "%d" % w.ammo_in_mag
+					_weapon_name_lbl.text = "%s | ∞" % w.weapon_name
 
 	# Update RPG Portrait ring, Skills & Widgets
 	if _local_hero.skill_manager != null and _local_hero.skill_manager is SkillManager:
@@ -1175,7 +1239,8 @@ func _process(delta: float) -> void:
 			_last_gauge_level = sm.level
 			_last_gauge_team = _local_hero.team
 			_level_lbl.text = "%d" % sm.level
-			_hero_pts_lbl.text = ("★ %d Hero Pts" % sm.hero_points) if sm.hero_points > 0 else ""
+			_hero_pts_lbl.text = ""
+			_hero_pts_lbl.visible = false
 			_portrait_gauge.team_id = _local_hero.team
 			_portrait_gauge.xp_ratio = float(sm.xp) / float(xp_next)
 			_portrait_gauge.queue_redraw()
@@ -1184,31 +1249,36 @@ func _process(delta: float) -> void:
 		var num_skills: int = sm.skill_ranks.size()
 		for i in range(_skill_slot_boxes.size()):
 			var has_slot: bool = i < num_skills
-			_skill_slot_boxes[i].visible = has_slot
+			if _skill_slot_boxes[i].visible != has_slot:
+				_skill_slot_boxes[i].visible = has_slot
 			if not has_slot:
-				_upgrade_buttons[i].visible = false
 				continue
 			var rank: int = sm.skill_ranks[i]
 			var cd: float = sm.skill_cooldowns[i]
+			var target_cd_txt: String
+			var target_col: Color
 			if rank <= 0:
-				_skill_slot_icons[i].modulate = Color(0.45, 0.45, 0.45, 0.55)
-				_skill_slot_cd_lbls[i].text = ""
+				target_col = Color(0.45, 0.45, 0.45, 0.55)
+				target_cd_txt = ""
 			elif cd > 0.0:
-				_skill_slot_icons[i].modulate = Color(0.55, 0.55, 0.55, 0.72)
-				_skill_slot_cd_lbls[i].text = "%.0fs" % ceilf(cd)
+				target_col = Color(0.55, 0.55, 0.55, 0.72)
+				target_cd_txt = "%.0fs" % ceilf(cd)
 			else:
-				_skill_slot_icons[i].modulate = Color.WHITE
-				_skill_slot_cd_lbls[i].text = "R%d" % rank
-			_upgrade_buttons[i].visible = sm.hero_points > 0 and rank < SkillManager.MAX_SKILL_RANK
+				target_col = Color.WHITE
+				target_cd_txt = "R%d" % rank
+			if _skill_slot_icons[i].modulate != target_col:
+				_skill_slot_icons[i].modulate = target_col
+			if _skill_slot_cd_lbls[i].text != target_cd_txt:
+				_skill_slot_cd_lbls[i].text = target_cd_txt
 
 		for j in range(mini(sm.widget_cooldowns.size(), _widget_slot_icons.size())):
 			var wcd: float = sm.widget_cooldowns[j]
-			if wcd > 0.0:
-				_widget_slot_icons[j].modulate = Color(0.55, 0.55, 0.55, 0.72)
-				_widget_slot_cd_lbls[j].text = "%.0fs" % ceilf(wcd)
-			else:
-				_widget_slot_icons[j].modulate = Color.WHITE
-				_widget_slot_cd_lbls[j].text = ""
+			var w_txt: String = "%.0fs" % ceilf(wcd) if wcd > 0.0 else ""
+			var w_col: Color = Color(0.55, 0.55, 0.55, 0.72) if wcd > 0.0 else Color.WHITE
+			if _widget_slot_icons[j].modulate != w_col:
+				_widget_slot_icons[j].modulate = w_col
+			if _widget_slot_cd_lbls[j].text != w_txt:
+				_widget_slot_cd_lbls[j].text = w_txt
 
 	_update_interact_prompt()
 	_update_vehicle_hp_panel(delta)
@@ -1301,14 +1371,17 @@ func _update_floating_damage_numbers(delta: float) -> void:
 func _update_interact_prompt() -> void:
 	if _local_hero == null or _interact_lbl == null:
 		return
+	var next_text: String = ""
 	if _local_hero.current_vehicle_id >= 0:
-		_interact_lbl.text = "[E] Sair do Veículo"
-		return
-	for v in _vehicles_ref:
-		if v != null and not v.is_destroyed and v.global_position.distance_to(_local_hero.global_position) <= 5.5:
-			_interact_lbl.text = "[E] Entrar no Veículo (HP %d)" % v.hp
-			return
-	_interact_lbl.text = ""
+		next_text = "[E] Sair do Veículo"
+	else:
+		for v in _vehicles_ref:
+			if v != null and not v.is_destroyed and v.global_position.distance_to(_local_hero.global_position) <= 5.5:
+				next_text = "[E] Entrar no Veículo (HP %d)" % v.hp
+				break
+	if next_text != _last_interact_text:
+		_last_interact_text = next_text
+		_interact_lbl.text = next_text
 
 
 func _update_vehicle_hp_panel(delta: float) -> void:
@@ -1318,6 +1391,7 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 		_veh_hp_panel.visible = false
 		if _seat_diagram_panel != null:
 			_seat_diagram_panel.visible = false
+		_reset_seat_diagram_cache()
 		_last_hud_vehicle_id = -1
 		return
 
@@ -1344,13 +1418,21 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 		_veh_hp_panel.visible = false
 		if _seat_diagram_panel != null:
 			_seat_diagram_panel.visible = false
+		_reset_seat_diagram_cache()
 		_last_hud_vehicle_id = -1
 		return
 
 	_veh_hp_panel.visible = true
-	_veh_name_lbl.text = get_vehicle_display_name(target_v.vehicle_type)
-	_veh_seat_lbl.text = seat_text
-	_veh_hp_lbl.text = "HP: %d / %d" % [target_v.hp, target_v.max_hp]
+	if target_v.vehicle_type != _last_veh_name_type:
+		_last_veh_name_type = target_v.vehicle_type
+		_veh_name_lbl.text = get_vehicle_display_name(target_v.vehicle_type)
+	if seat_text != _last_veh_seat_txt:
+		_last_veh_seat_txt = seat_text
+		_veh_seat_lbl.text = seat_text
+	if target_v.hp != _last_veh_hp or target_v.max_hp != _last_veh_max_hp:
+		_last_veh_hp = target_v.hp
+		_last_veh_max_hp = target_v.max_hp
+		_veh_hp_lbl.text = "HP: %d / %d" % [target_v.hp, target_v.max_hp]
 	_update_vehicle_seat_diagram(target_v)
 
 	var ratio: float = clampf(float(target_v.hp) / float(maxi(1, target_v.max_hp)), 0.0, 1.0)
@@ -1376,37 +1458,49 @@ func _update_vehicle_seat_diagram(target_v: VehicleBase) -> void:
 	var inside_this: bool = (_local_hero.current_vehicle_id == target_v.id)
 	_seat_diagram_panel.visible = inside_this
 	if not inside_this:
+		_reset_seat_diagram_cache()
 		return
+	if _seat_style_mine == null:
+		_init_seat_styles()
+	if _last_seat_states.size() != _seat_slot_buttons.size():
+		_last_seat_states.resize(_seat_slot_buttons.size())
+
 	var seat_count: int = target_v.seats.size()
 	for i in range(_seat_slot_buttons.size()):
 		var btn: Button = _seat_slot_buttons[i]
 		if i >= seat_count:
-			btn.visible = false
+			if btn.visible:
+				btn.visible = false
+			_last_seat_states[i] = "hidden"
 			continue
-		btn.visible = true
+		if not btn.visible:
+			btn.visible = true
 		var s: VehicleBase.SeatSlot = target_v.seats[i]
 		var role_txt: String = get_seat_display_name(s.seat_type)
 		var is_mine: bool = (s.occupant_id == _local_hero.entity_id)
 		var is_occupied: bool = (s.occupant_id >= 0)
 		var state_txt: String = "VOCÊ" if is_mine else ("OCUPADO" if is_occupied else "LIVRE")
-		btn.text = "[F%d] %s (%s)" % [i + 1, role_txt.left(5), state_txt]
-		_seat_slot_labels[i].text = btn.text
-		var sb := StyleBoxFlat.new()
-		sb.set_corner_radius_all(4)
-		sb.set_border_width_all(2 if is_mine else 1)
+		var btn_text: String = "[F%d] %s (%s)" % [i + 1, role_txt.left(5), state_txt]
+		var style_tag: String = "M" if is_mine else ("R" if (is_occupied and target_v.team == NetworkManager.TEAM_ROYAL) else ("N" if is_occupied else "F"))
+		var cache_key: String = "%d|%s|%s" % [target_v.id, style_tag, btn_text]
+		if _last_seat_states[i] == cache_key:
+			continue
+		_last_seat_states[i] = cache_key
+
+		btn.text = btn_text
+		_seat_slot_labels[i].text = btn_text
+		var sb: StyleBoxFlat
+		var font_col: Color
 		if is_mine:
-			sb.bg_color = Color(0.85, 0.65, 0.14, 0.90)
-			sb.border_color = Color(1.0, 0.94, 0.45)
-			btn.add_theme_color_override("font_color", Color(0.06, 0.05, 0.02))
+			sb = _seat_style_mine
+			font_col = Color(0.06, 0.05, 0.02)
 		elif is_occupied:
-			var ally_col: Color = Color(0.18, 0.45, 0.85, 0.85) if target_v.team == NetworkManager.TEAM_ROYAL else Color(0.78, 0.22, 0.22, 0.85)
-			sb.bg_color = ally_col
-			sb.border_color = Color(0.82, 0.88, 0.96, 0.80)
-			btn.add_theme_color_override("font_color", Color.WHITE)
+			sb = _seat_style_occupied_royal if target_v.team == NetworkManager.TEAM_ROYAL else _seat_style_occupied_national
+			font_col = Color.WHITE
 		else:
-			sb.bg_color = Color(0.16, 0.20, 0.26, 0.82)
-			sb.border_color = Color(0.45, 0.52, 0.62, 0.72)
-			btn.add_theme_color_override("font_color", Color(0.86, 0.90, 0.96))
+			sb = _seat_style_free
+			font_col = Color(0.86, 0.90, 0.96)
+		btn.add_theme_color_override("font_color", font_col)
 		btn.add_theme_stylebox_override("normal", sb)
 		btn.add_theme_stylebox_override("hover", sb)
 		btn.add_theme_stylebox_override("pressed", sb)
@@ -1415,14 +1509,12 @@ func _update_vehicle_seat_diagram(target_v: VehicleBase) -> void:
 func _update_sixth_sense_markers() -> void:
 	if _sixth_sense_layer == null:
 		return
-	for c in _sixth_sense_layer.get_children():
-		c.queue_free()
-	if _local_hero == null:
-		return
-	if _local_hero.hero_camera == null or _local_hero.hero_camera.camera == null:
+	if _local_hero == null or _local_hero.hero_camera == null or _local_hero.hero_camera.camera == null:
+		_hide_all_sixth_sense_markers()
 		return
 	var local_sixth_sense: bool = (_local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0
 	var cam: Camera3D = _local_hero.hero_camera.camera
+	var used_count: int = 0
 	for id_key in _heroes_ref.keys():
 		var enemy: HeroCharacter = _heroes_ref[id_key]
 		if enemy == null or enemy.is_defeated or enemy.team == _local_hero.team:
@@ -1434,8 +1526,22 @@ func _update_sixth_sense_markers() -> void:
 		if cam.is_position_behind(world_p):
 			continue
 		var screen_p: Vector2 = cam.unproject_position(world_p)
-		var marker := Label.new()
-		marker.text = "◎" if enemy_marked else "◆"
+		var marker: Label
+		if used_count < _marker_pool.size():
+			marker = _marker_pool[used_count]
+		else:
+			marker = Label.new()
+			marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_sixth_sense_layer.add_child(marker)
+			_marker_pool.append(marker)
+		var sym: String = "◎" if enemy_marked else "◆"
+		if marker.text != sym:
+			marker.text = sym
 		marker.modulate = Color(1.0, 0.22, 0.22)
-		marker.position = screen_p - Vector2(6, 10)
-		_sixth_sense_layer.add_child(marker)
+		marker.position = screen_p - Vector2(6.0, 10.0)
+		if not marker.visible:
+			marker.visible = true
+		used_count += 1
+	for k in range(used_count, _marker_pool.size()):
+		if _marker_pool[k].visible:
+			_marker_pool[k].visible = false

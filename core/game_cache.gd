@@ -28,7 +28,6 @@ const ALL_TEXTURE_KEYS: Array[String] = [
 	"flag_royal", "flag_national", "icon_hp", "icon_ammo",
 	"portrait_royal_0", "portrait_royal_1", "portrait_royal_2",
 	"portrait_national_0", "portrait_national_1", "portrait_national_2",
-	"icon_widget_bandage", "icon_widget_wrench", "icon_widget_tonic",
 ]
 
 const SHADER_PATHS: Array[String] = [
@@ -37,6 +36,7 @@ const SHADER_PATHS: Array[String] = [
 	"res://vfx_shaders/hero_cloak_shader.gdshader",
 	"res://vfx_shaders/toon_sky.gdshader",
 	"res://vfx_shaders/water_toon.gdshader",
+	"res://vfx_shaders/xray_silhouette.gdshader",
 ]
 
 
@@ -67,8 +67,10 @@ static func warm_textures() -> void:
 	for wk in range(9):
 		CartoonAssets.get_texture("icon_weapon_%d" % wk)
 	for cls in range(3):
-		for sk in range(5):
+		for sk in range(6):
 			CartoonAssets.get_texture("icon_skill_%d_%d" % [cls, sk])
+	for wi in range(4):
+		CartoonAssets.get_texture("icon_widget_%d" % wi)
 	_textures_warmed = true
 
 
@@ -127,6 +129,7 @@ static func warm_meshes() -> void:
 	for wk in range(9):
 		HeroMeshBuilder.populate_weapon_root(tmp_w, wk)
 	tmp_w.free()
+	StatusEffectsVFX.warm_shared_meshes()
 	_meshes_warmed = true
 
 

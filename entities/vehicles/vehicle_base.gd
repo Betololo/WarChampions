@@ -52,6 +52,8 @@ var spawn_transform: Transform3D = Transform3D.IDENTITY
 var seats: Array[SeatSlot] = []
 var snapshot_interpolator: SnapshotInterpolator = SnapshotInterpolator.new()
 var _visual_root: Node3D
+var _cached_visual_meshes: Array[MeshInstance3D] = []
+var _last_xray_state: int = -1
 var _turret_node: Node3D
 var _barrel_pivot: Node3D
 var _propeller_node: Node3D
@@ -95,9 +97,23 @@ func _ready() -> void:
 
 	_setup_vehicle_stats_and_seats()
 	_build_vehicle_mesh()
+	get_cached_visual_meshes()
 
 	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
 		freeze = true
+
+
+func get_cached_visual_meshes() -> Array[MeshInstance3D]:
+	if _cached_visual_meshes.is_empty() and _visual_root != null:
+		_collect_visual_meshes_recursive(_visual_root)
+	return _cached_visual_meshes
+
+
+func _collect_visual_meshes_recursive(node: Node) -> void:
+	if node is MeshInstance3D:
+		_cached_visual_meshes.append(node as MeshInstance3D)
+	for ch in node.get_children():
+		_collect_visual_meshes_recursive(ch)
 
 
 func is_aircraft() -> bool:
@@ -410,6 +426,9 @@ func _on_destroyed(attacker_id: int) -> void:
 
 func _respawn_vehicle() -> void:
 	is_destroyed = false
+	is_marked = false
+	marked_timer = 0.0
+	_last_xray_state = -1
 	hp = max_hp
 	_damage_smoke_timer = 0.0
 	_roadkill_cooldowns.clear()

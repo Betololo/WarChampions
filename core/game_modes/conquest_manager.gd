@@ -1,7 +1,7 @@
 class_name ConquestManager
 extends Node
 
-## Classic Battlefield Heroes Conquest Rules supporting 20 vs 20 (40 players):
+## Classic Battlefield Heroes Conquest Rules supporting 14 vs 14 (28 players):
 ## - Both teams start with 50 Tickets and 6 Capture Points.
 ## - Golden Rule: Killing an enemy subtracts victim tickets ONLY if killer's team holds >= flags than victim's team.
 ## - Holding majority 3 or 4+ flags activates ticket kill multipliers (2x / 3x) shown on HUD.
@@ -10,7 +10,7 @@ signal tickets_changed(royal_tickets: int, national_tickets: int)
 signal match_ended(winning_team: int)
 
 const STARTING_TICKETS: int = 50
-const MAX_PLAYERS_PER_TEAM: int = 20
+const MAX_PLAYERS_PER_TEAM: int = 14
 
 var royal_tickets: int = STARTING_TICKETS
 var national_tickets: int = STARTING_TICKETS

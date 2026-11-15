@@ -22,6 +22,7 @@ const BTN_EMOTE: int = 1 << 14
 
 const DEFAULT_SKILL_HOTKEYS: Array[int] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 const DEFAULT_WIDGET_HOTKEYS: Array[int] = [KEY_Z, KEY_X, KEY_V, KEY_B]
+const DEFAULT_HOTKEYS_PATH: String = "user://hotkeys.cfg"
 
 static var skill_hotkeys: Array[int] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 static var widget_hotkeys: Array[int] = [KEY_Z, KEY_X, KEY_V, KEY_B]
@@ -49,9 +50,70 @@ static func set_widget_key(slot_idx: int, keycode: int) -> void:
 		widget_hotkeys[slot_idx] = keycode
 
 
+static func assign_unique_key(kind: String, slot_idx: int, keycode: int) -> void:
+	if keycode == KEY_NONE:
+		return
+	var prev_key: int = KEY_NONE
+	if kind == "skill":
+		if slot_idx < 0 or slot_idx >= skill_hotkeys.size():
+			return
+		prev_key = skill_hotkeys[slot_idx]
+	elif kind == "widget":
+		if slot_idx < 0 or slot_idx >= widget_hotkeys.size():
+			return
+		prev_key = widget_hotkeys[slot_idx]
+	else:
+		return
+
+	if prev_key == keycode:
+		return
+
+	for i in range(skill_hotkeys.size()):
+		if not (kind == "skill" and i == slot_idx) and skill_hotkeys[i] == keycode:
+			skill_hotkeys[i] = prev_key
+	for j in range(widget_hotkeys.size()):
+		if not (kind == "widget" and j == slot_idx) and widget_hotkeys[j] == keycode:
+			widget_hotkeys[j] = prev_key
+
+	if kind == "skill":
+		skill_hotkeys[slot_idx] = keycode
+	else:
+		widget_hotkeys[slot_idx] = keycode
+
+
 static func reset_default_hotkeys() -> void:
 	skill_hotkeys = DEFAULT_SKILL_HOTKEYS.duplicate()
 	widget_hotkeys = DEFAULT_WIDGET_HOTKEYS.duplicate()
+
+
+static func save_hotkeys_to_config(path: String = DEFAULT_HOTKEYS_PATH) -> int:
+	if path.is_empty():
+		return OK
+	var cfg := ConfigFile.new()
+	for i in range(skill_hotkeys.size()):
+		cfg.set_value("hotkeys", "skill_%d" % i, skill_hotkeys[i])
+	for i in range(widget_hotkeys.size()):
+		cfg.set_value("hotkeys", "widget_%d" % i, widget_hotkeys[i])
+	return cfg.save(path)
+
+
+static func load_hotkeys_from_config(path: String = DEFAULT_HOTKEYS_PATH) -> bool:
+	if path.is_empty():
+		return false
+	var cfg := ConfigFile.new()
+	if cfg.load(path) != OK:
+		return false
+	for i in range(skill_hotkeys.size()):
+		var raw: Variant = cfg.get_value("hotkeys", "skill_%d" % i, skill_hotkeys[i])
+		var k: int = int(raw)
+		if k > 0 and k != KEY_ESCAPE:
+			skill_hotkeys[i] = k
+	for i in range(widget_hotkeys.size()):
+		var raw: Variant = cfg.get_value("hotkeys", "widget_%d" % i, widget_hotkeys[i])
+		var k: int = int(raw)
+		if k > 0 and k != KEY_ESCAPE:
+			widget_hotkeys[i] = k
+	return true
 
 
 static func is_key_assigned_anywhere(keycode: int) -> bool:

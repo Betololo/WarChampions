@@ -100,6 +100,8 @@ var _held_weapon_root: Node3D
 var _parachute_rig: Node3D
 var _defeat_prop: Node3D
 var _mesh_parts: Array[MeshInstance3D] = []
+var _last_vfx_key: String = ""
+var _speed_trail_timer: float = 0.0
 var _body_collision: CollisionShape3D
 var _capsule_shape: CapsuleShape3D
 var hero_camera: HeroCamera
@@ -455,6 +457,7 @@ func _rebuild_cartoon_visuals() -> void:
 	for child in visual_root.get_children():
 		child.queue_free()
 	_mesh_parts.clear()
+	_last_vfx_key = ""
 
 	var is_royal: bool = (team == NetworkManager.TEAM_ROYAL)
 	var style: Dictionary = _get_visual_style(is_royal)
@@ -599,6 +602,7 @@ func _rebuild_held_weapon_mesh() -> void:
 func apply_character_shader(shader: Shader) -> void:
 	if shader == null:
 		return
+	_last_vfx_key = ""
 	for mi in _mesh_parts:
 		if mi.material_override is ShaderMaterial:
 			var existing := mi.material_override as ShaderMaterial
@@ -868,6 +872,8 @@ func _animate_character(delta: float) -> void:
 	else:
 		_leg_l_pivot.rotation.x = stride * 0.72 + (-0.55 if is_crouching else 0.0)
 		_leg_r_pivot.rotation.x = -stride * 0.72 + (-0.55 if is_crouching else 0.0)
+		_leg_l_pivot.rotation.z = 0.0
+		_leg_r_pivot.rotation.z = 0.0
 		var counter_twist: float = -stride * 0.08 * (1.0 - fire_blend)
 		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0) - kick * 0.05
 		_torso_pivot.rotation.y = lerpf(counter_twist, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
@@ -886,7 +892,7 @@ func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
 			0: style = "raise_med"; dur = 0.70
 			1: style = "throw_overhead"; dur = 0.50
 			2: style = "flex_shield"; dur = 0.50
-			3: style = "charge_pump"; dur = 0.50
+			3: style = "raise_med"; dur = 0.50
 	else:
 		match p_class_id:
 			NetworkManager.CLASS_SOLDIER:
@@ -899,17 +905,17 @@ func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
 			NetworkManager.CLASS_GUNNER:
 				match slot_idx:
 					0: style = "flex_shield"; dur = 0.60
-					1: style = "charge_pump"; dur = 0.55
+					1: style = "sprint_boost"; dur = 0.55
 					2: style = "keg_throw"; dur = 0.68
 					3: style = "weapon_charge"; dur = 0.50
-					4: style = "flex_shield"; dur = 0.60
+					4: style = "chomp_absorb"; dur = 0.60
 			NetworkManager.CLASS_COMMANDO:
 				match slot_idx:
 					0: style = "cloak_sweep"; dur = 0.55
 					1: style = "weapon_charge"; dur = 0.50
 					2: style = "blade_coat"; dur = 0.58
 					3: style = "plant_kneel"; dur = 0.65
-					4: style = "charge_pump"; dur = 0.55
+					4: style = "sprint_boost"; dur = 0.55
 					5: style = "mark_point"; dur = 0.70
 	_skill_anim_style = style
 	last_skill_anim_name = style
@@ -970,7 +976,24 @@ func _pose_skill_animation(t: float) -> void:
 		"weapon_charge": # Burning Bullets / Piercing Shot / Frenzy Fire weapon chamber slam
 			_arm_l_pivot.rotation.x += 0.55 * pulse
 			_torso_pivot.rotation.x = -0.10 * pulse
-		_: # "charge_pump": Leg It / Elixir raised fist pump
+		"sprint_boost": # Leg It / Elixir: dynamic forward sprint lean & pumping elbows
+			var pump: float = sin(t * TAU * 1.5)
+			_torso_pivot.rotation.x = -0.28 * pulse
+			_arm_l_pivot.rotation = Vector3(1.15 * pulse + pump * 0.55, 0.0, 0.18)
+			_arm_r_pivot.rotation = Vector3(1.15 * pulse - pump * 0.55, 0.0, -0.18)
+			_forearm_l_pivot.rotation = Vector3(1.35 * pulse, 0.0, 0.0)
+			_forearm_r_pivot.rotation = Vector3(1.35 * pulse, 0.0, 0.0)
+		"chomp_absorb": # I Eat Grenades: bracing wide stance, arms scooping inward to chest
+			_hips_pivot.position.y = lerpf(_hips_pivot.position.y, 0.62, pulse)
+			_leg_l_pivot.rotation.z = -0.22 * pulse
+			_leg_r_pivot.rotation.z = 0.22 * pulse
+			_torso_pivot.rotation.x = 0.16 * pulse
+			var scoop: float = lerpf(0.95, 0.12, t)
+			_arm_l_pivot.rotation = Vector3(1.25 * pulse, -0.65 * pulse, scoop)
+			_arm_r_pivot.rotation = Vector3(1.25 * pulse, 0.65 * pulse, -scoop)
+			_forearm_l_pivot.rotation = Vector3(1.1 * pulse, 0.0, 0.0)
+			_forearm_r_pivot.rotation = Vector3(1.1 * pulse, 0.0, 0.0)
+		_: # "charge_pump": fallback raised fist pump
 			_arm_l_pivot.rotation = Vector3(2.55 * pulse, 0.0, 0.3 * pulse)
 			_forearm_l_pivot.rotation = Vector3(0.25, 0.0, 0.0)
 
@@ -1482,6 +1505,8 @@ func clear_vehicle_state() -> void:
 	_last_vehicle_id_for_cam = -1
 	_pred_error_offset = Vector3.ZERO
 	visual_error_offset = Vector3.ZERO
+	_last_vfx_key = ""
+	_speed_trail_timer = 0.0
 	if _body_collision != null:
 		_body_collision.disabled = false
 	if hero_camera != null:
@@ -1791,6 +1816,8 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	_curr_phys_pos = spawn_pos
 	_pred_error_offset = Vector3.ZERO
 	visual_error_offset = Vector3.ZERO
+	_last_vfx_key = ""
+	_speed_trail_timer = 0.0
 	if visual_root != null:
 		visual_root.global_position = spawn_pos
 	if hero_camera != null:

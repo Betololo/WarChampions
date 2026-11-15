@@ -1,7 +1,7 @@
 class_name MapSeasideFrontline
 extends Node3D
 
-## Large 2x Scale Coastal Island Map ("Seaside Frontline") for 12v12 Land, Air & Water combat.
+## Large 2x Scale Coastal Island Map ("Seaside Frontline") for 14v14 Land, Air & Water combat.
 ## Features 2400m x 2400m Ocean, 1600m x 1080m Coastal Island, sculpted Mediterranean architecture
 ## via BuildingMeshBuilder (Town Square CentralFountain, Mercadinho, ChurchChapel, Windmill,
 ## CoastalLighthouse + Keeper's Cottage, 34 sculpted houses, 6 climbable Watchtowers, 220m Spawn
@@ -872,8 +872,8 @@ func _build_capture_points(conquest: ConquestManager) -> void:
 func _build_spawn_points() -> void:
 	royal_spawns.clear()
 	national_spawns.clear()
-	# 20 Royal & 20 National spaced spawn pads RIGHT BESIDE their Airfields & Vehicle Pools (6.5m apart)
-	for i in range(20):
+	# 14 Royal & 14 National spaced spawn pads RIGHT BESIDE their Airfields & Vehicle Pools (6.5m apart)
+	for i in range(14):
 		var row: int = i / 4
 		var col: int = i % 4
 		royal_spawns.append(Vector3(-456.0 - float(row) * 6.5, 2.35, -9.0 + float(col) * 6.5))

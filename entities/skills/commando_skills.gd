@@ -10,7 +10,7 @@ var _active_traps: Array[TroopTrapEntity] = []
 func _ready() -> void:
 	super._ready()
 	skill_names = ["Stealth", "Piercing Shot", "Poisoned Blade", "Troop Trap", "Elixir", "Mark Target"]
-	skill_ranks = [1, 1, 1, 0, 0, 1]
+	skill_ranks = [5, 5, 5, 5, 5, 5]
 	skill_cooldowns = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	skill_max_cooldowns = [15.0, 14.0, 14.0, 16.0, 18.0, 20.0]
 

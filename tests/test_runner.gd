@@ -34,6 +34,9 @@ func _ready() -> void:
 	_test_phase4_spread_and_optimization()
 	await _test_phase5_vehicles_grass_and_precision()
 	await _test_phase6_skills_20v20_arsenal()
+	await _test_phase7_task1_skills_hud_pooling()
+	await _test_phase7_task2_hotkeys_menu()
+	await _test_phase7_task3_perf_cache_vfx()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -241,13 +244,22 @@ func _test_classes_skills_status_effects_and_rpg() -> void:
 	_assert(soldier.max_hp == 110 and gunner.max_hp == 150 and commando.max_hp == 80, "Class base HP matches spec (110/150/80)")
 	_assert(soldier.weapons.size() == 4 and gunner.weapons.size() == 3 and commando.weapons.size() == 4, "Class weapon loadouts equipped")
 
-	# RPG Leveling 1..30 & Hero Points every 2 levels
+	# All skills start unlocked at Rank 5 (MAX_SKILL_RANK) with 0 hero_points & upgrade_skill() disabled
 	var sm: SkillManager = soldier.skill_manager as SkillManager
-	var start_pts: int = sm.hero_points
+	var gsm: SkillManager = gunner.skill_manager as SkillManager
+	var csm: SkillManager = commando.skill_manager as SkillManager
+	var all_rank5: bool = sm.skill_ranks.size() == 5 and gsm.skill_ranks.size() == 5 and csm.skill_ranks.size() == 6
+	for r in sm.skill_ranks:
+		all_rank5 = all_rank5 and (r == SkillManager.MAX_SKILL_RANK)
+	for r in gsm.skill_ranks:
+		all_rank5 = all_rank5 and (r == SkillManager.MAX_SKILL_RANK)
+	for r in csm.skill_ranks:
+		all_rank5 = all_rank5 and (r == SkillManager.MAX_SKILL_RANK)
+	_assert(all_rank5, "All Soldier (5), Gunner (5) & Commando (6) skills start unlocked at Rank 5")
+	_assert(sm.hero_points == 0 and gsm.hero_points == 0 and csm.hero_points == 0, "Hero Points start at 0 across all classes")
+	_assert(not sm.upgrade_skill(0), "upgrade_skill(0) returns false when all skills are max Rank 5")
 	sm.award_xp(400)
-	_assert(sm.level >= 2 and sm.hero_points > start_pts, "RPG leveling grants Hero Points every 2 levels")
-	var pre_rank: int = sm.skill_ranks[2]
-	_assert(sm.upgrade_skill(2) and sm.skill_ranks[2] == pre_rank + 1, "Hero Point upgrades skill rank")
+	_assert(sm.level > 5 and sm.hero_points == 0, "Combat Mastery XP levels up cleanly without granting Hero Points")
 
 	# Combat Medicine & Blasting Strike
 	gunner.hp = 60
@@ -259,18 +271,15 @@ func _test_classes_skills_status_effects_and_rpg() -> void:
 	commando.global_position = Vector3(5.0, 0.0, 0.0)
 	var cmd := InputCmd.new()
 	_assert(sm.try_activate_skill(0, cmd, ctx) and gunner.hp > 60, "Soldier Combat Medicine heals nearby allies")
-	sm.skill_ranks[3] = 1
-	_assert(sm.try_activate_skill(3, cmd, ctx) and commando.velocity.length() > 8.0, "Soldier Blasting Strike knocks back enemies")
+	_assert(sm.try_activate_skill(3, cmd, ctx) and commando.velocity.length() > 8.0, "Soldier Blasting Strike knocks back enemies at Rank 5")
 
 	# Grenade Spam spawns >= 2 grenades
 	var before_proj: int = proj_root.get_child_count()
 	_assert(sm.try_activate_skill(2, cmd, ctx) and proj_root.get_child_count() >= before_proj + 2, "Soldier Grenade Spam spawns multiple grenades")
 
 	# Gunner Hero Shield & I Eat Grenades
-	var gsm: SkillManager = gunner.skill_manager as SkillManager
 	_assert(gsm.try_activate_skill(0, cmd, ctx) and gunner.shield > 0, "Gunner Hero Shield absorbs damage")
-	gsm.skill_ranks[4] = 1
-	_assert(gsm.try_activate_skill(4, cmd, ctx) and gunner.status_effects.can_eat_grenades(), "Gunner I Eat Grenades activates explosive heal state")
+	_assert(gsm.try_activate_skill(4, cmd, ctx) and gunner.status_effects.can_eat_grenades(), "Gunner I Eat Grenades activates explosive heal state at Rank 5")
 
 	# Split Widgets: Widget 2 (Fireproof) cleanses Burn + grants fire immunity; Widget 3 (Antidote) cleanses Poison DoT
 	soldier.status_effects.apply_burn(12, 10.0, 5.0)
@@ -629,7 +638,7 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	add_child(game)
 	_assert(game.map_instance != null, "Seaside Frontline map instantiates inside MainGame")
 	_assert(game.map_instance.capture_points.size() == 6, "Map creates all 6 Capture Points (4 central + 2 outer)")
-	_assert(game.map_instance.royal_spawns.size() == 20 and game.map_instance.national_spawns.size() == 20, "Map defines 20 Royal + 20 National spawn slots (20v20)")
+	_assert(game.map_instance.royal_spawns.size() == 14 and game.map_instance.national_spawns.size() == 14, "Map defines 14 Royal + 14 National spawn slots (14v14)")
 
 	var has_jeep: bool = false
 	var has_tank: bool = false
@@ -651,11 +660,11 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	_assert(game.heroes_by_id.size() == 1 and game.bot_brains.is_empty(), "Host Online starts with 1 human hero and 0 forced bots")
 	NetworkManager.shutdown_network()
 
-	# 2. Launch Optional Offline 20v20 Bots Match and verify 40 spaced combatants (20 Royal vs 20 National)
+	# 2. Launch Optional Offline 14v14 Bots Match and verify 28 spaced combatants (14 Royal vs 14 National)
 	game._on_play_offline_bots(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER)
-	_assert(NetworkManager.is_solo_bot_mode and NetworkManager.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Offline 20v20 Bots uses isolated OfflineMultiplayerPeer without binding UDP port")
+	_assert(NetworkManager.is_solo_bot_mode and NetworkManager.multiplayer.multiplayer_peer is OfflineMultiplayerPeer, "Offline 14v14 Bots uses isolated OfflineMultiplayerPeer without binding UDP port")
 	var counts: Vector2i = NetworkManager.get_team_counts()
-	_assert(counts.x == 20 and counts.y == 20 and game.heroes_by_id.size() == 40, "20v20 Bots match spawns 20 Royal + 20 National (40 heroes)")
+	_assert(counts.x == 14 and counts.y == 14 and game.heroes_by_id.size() == 28, "14v14 Bots match spawns 14 Royal + 14 National (28 heroes)")
 
 	var positions: Array[Vector3] = []
 	for hid in game.heroes_by_id.keys():
@@ -664,7 +673,7 @@ func _test_seaside_map_and_12v12_bots_integration() -> void:
 	for a in range(positions.size()):
 		for b in range(a + 1, positions.size()):
 			min_spawn_dist = minf(min_spawn_dist, Vector2(positions[a].x, positions[a].z).distance_to(Vector2(positions[b].x, positions[b].z)))
-	_assert(min_spawn_dist >= 3.0, "No overlapping spawn positions across 40 combatants (min XZ separation %.2fm)" % min_spawn_dist)
+	_assert(min_spawn_dist >= 3.0, "No overlapping spawn positions across 28 combatants (min XZ separation %.2fm)" % min_spawn_dist)
 
 	NetworkManager.shutdown_network()
 	SoundSynthesizer.stop_whistle_theme()
@@ -1571,11 +1580,11 @@ func _test_double_map_architecture_and_landmarks() -> void:
 	_assert(river_boats_ready >= 4, "At least 4 Patrol Boats float inside central river channel (%d ready)" % river_boats_ready)
 	_assert(boats.size() >= 10, "Map spawns >= 10 Patrol Boats total (found %d)" % boats.size())
 
-	# 7. Verify all 24 spawn pads are >= 3.0m apart and clear >= 4.5m horizontally of vertical obstacles
+	# 7. Verify all 28 spawn pads are >= 3.0m apart and clear >= 4.5m horizontally of vertical obstacles
 	var all_spawns: Array[Vector3] = []
 	all_spawns.append_array(map.royal_spawns)
 	all_spawns.append_array(map.national_spawns)
-	_assert(all_spawns.size() == 40, "Map provides 40 spawn positions (20 Royal + 20 National)")
+	_assert(all_spawns.size() == 28, "Map provides 28 spawn positions (14 Royal + 14 National)")
 	var min_pad_sep: float = 999.0
 	for i in range(all_spawns.size()):
 		for j in range(i + 1, all_spawns.size()):
@@ -1716,7 +1725,7 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 	hud._process(0.016)
 	await _flush_deferred()
 
-	# 1. HUD Bottom Hotbar Unclipped at 1280x720 with Level-2 Soldier '+' Upgrade Buttons
+	# 1. HUD Bottom Hotbar Unclipped at 1280x720 (No '+' Upgrade Buttons, All Rank 5)
 	var vp_h: float = float(hud.get_viewport().get_visible_rect().size.y)
 	var upg_visible_count: int = 0
 	for b in hud._upgrade_buttons:
@@ -1739,8 +1748,8 @@ func _test_hud_crosshair_and_aim_convergence() -> void:
 		if rect.position.y < 0.0 or rect.end.y > vp_h - 6.0:
 			all_keys_unclipped = false
 	_assert(
-		upg_visible_count == 5 and all_keys_unclipped and visible_key_count == 13 and all_key_lbls.size() == 14,
-		"Soldier HUD displays 13 unclipped hotbar keys (max end.y=%.1f <= %.1f, total slots=%d) with %d '+' upgrade buttons visible" % [max_key_end_y, vp_h - 6.0, all_key_lbls.size(), upg_visible_count]
+		hud._upgrade_buttons.is_empty() and upg_visible_count == 0 and all_keys_unclipped and visible_key_count == 13 and all_key_lbls.size() == 14,
+		"Soldier HUD displays 13 unclipped hotbar keys (max end.y=%.1f <= %.1f, total slots=%d) with 0 '+' upgrade buttons" % [max_key_end_y, vp_h - 6.0, all_key_lbls.size()]
 	)
 
 	# 2. Crisp Vertical Bullet Icon & Balanced Bottom-Right Ammo Alignment
@@ -2530,6 +2539,7 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 
 	# --- 3. Multi-Screen Menu & Settings Verification ---
 	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys.cfg"
 	add_child(menu)
 
 	# Screen switching
@@ -3239,8 +3249,8 @@ func _test_phase5_vehicles_grass_and_precision() -> void:
 
 
 func _test_phase6_skills_20v20_arsenal() -> void:
-	# 1. 20v20 Network/Conquest Capacity, 6-Flag Multipliers & 40-Hero + 6-Flag Snapshot Roundtrip
-	_assert(NetworkManager.MAX_PLAYERS == 40 and ConquestManager.MAX_PLAYERS_PER_TEAM == 20, "20v20 capacity limits enforced (MAX_PLAYERS=40, MAX_PER_TEAM=20)")
+	# 1. 14v14 Network/Conquest Capacity, 6-Flag Multipliers & 40-Hero + 6-Flag Snapshot Roundtrip
+	_assert(NetworkManager.MAX_PLAYERS == 28 and ConquestManager.MAX_PLAYERS_PER_TEAM == 14, "14v14 capacity limits enforced (MAX_PLAYERS=28, MAX_PER_TEAM=14)")
 
 	var cm6 := ConquestManager.new()
 	add_child(cm6)
@@ -3306,6 +3316,7 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 
 	# 2. Custom Weapon Variants per Class Slot + Q Last-Weapon Toggle
 	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys.cfg"
 	add_child(menu)
 	menu.select_class(NetworkManager.CLASS_SOLDIER)
 	menu.select_weapon_variant(NetworkManager.CLASS_SOLDIER, 0, NetworkManager.ARCHETYPE_SLOW_LONG)
@@ -3532,6 +3543,7 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 	_assert(tint_while_poisoned and not tint_after_antidote, "HUD green poison screen tint activates when poisoned & clears immediately with Antidote")
 
 	# Custom Hotkey UI rebinding -> HUD updates -> Reset defaults
+	menu.hotkeys_config_path = "user://test_hotkeys.cfg"
 	menu.assign_hotkey_from_ui("skill", 5, KEY_H)
 	menu.assign_hotkey_from_ui("widget", 3, KEY_N)
 	await _flush_deferred()
@@ -3540,6 +3552,8 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 		"Custom Skill/Widget hotkeys update HUD hotbar labels live (%s / %s)" % [hud6._skill_slot_keys[5].text, hud6._widget_slot_keys[3].text]
 	)
 	InputCmd.reset_default_hotkeys()
+	if FileAccess.file_exists("user://test_hotkeys.cfg"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_hotkeys.cfg"))
 	hud6.refresh_hotkey_labels()
 	# Also verify Commando 6-skill + 4-weapon + 4-widget = 14 visible slots stay completely unclipped at 1280x720
 	var cmd_vis_keys: int = 0
@@ -3657,3 +3671,423 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 	p6_proj.queue_free()
 	p6_vfx.queue_free()
 	p6_floor.queue_free()
+
+
+func _test_phase7_task1_skills_hud_pooling() -> void:
+	# 1. HUD has no '+' upgrade buttons, Hero Pts hidden, Rank 5 skills show "R5" brightly
+	var hud7 := HUDController.new()
+	add_child(hud7)
+	var hero7 := HeroCharacter.new()
+	hero7.setup_identity(710, "HudPoolTester", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	add_child(hero7)
+	hero7.global_position = Vector3.ZERO
+	hero7.hero_camera.yaw = 0.0
+	hero7.hero_camera.pitch = 0.0
+	hero7.hero_camera.set_active_camera(true)
+
+	var enemy_a := HeroCharacter.new()
+	enemy_a.setup_identity(711, "MarkedEnemyA", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(enemy_a)
+	enemy_a.global_position = Vector3(-2.0, 0.0, -12.0)
+
+	var enemy_b := HeroCharacter.new()
+	enemy_b.setup_identity(712, "MarkedEnemyB", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	add_child(enemy_b)
+	enemy_b.global_position = Vector3(2.0, 0.0, -14.0)
+
+	var heroes_map7: Dictionary = {710: hero7, 711: enemy_a, 712: enemy_b}
+	var jeep7 := VehicleJeep.new()
+	jeep7.id = 791
+	jeep7.team = NetworkManager.TEAM_ROYAL
+	add_child(jeep7)
+	jeep7.freeze = true
+	jeep7.global_position = Vector3(10.0, 0.5, 0.0)
+	await get_tree().process_frame
+
+	enemy_a.status_effects.apply_marked(10.0)
+	enemy_b.status_effects.apply_marked(10.0)
+	enemy_a.active_flags |= NetSerializer.SNAP_MARKED_TARGET
+	enemy_b.active_flags |= NetSerializer.SNAP_MARKED_TARGET
+
+	var vehs7: Array[VehicleBase] = [jeep7]
+	hud7.bind_context(null, vehs7, heroes_map7)
+	hud7.set_local_hero(hero7)
+	hud7._process(0.016)
+
+	var all_r5_bright: bool = true
+	for i in range(6):
+		if hud7._skill_slot_cd_lbls[i].text != "R5" or hud7._skill_slot_icons[i].modulate != Color.WHITE:
+			all_r5_bright = false
+	_assert(
+		hud7._upgrade_buttons.is_empty() and not hud7._hero_pts_lbl.visible and all_r5_bright,
+		"HUD has 0 '+' upgrade buttons, Hero Pts hidden, and all 6 Rank-5 skills show 'R5' brightly"
+	)
+
+	# 2. Sixth-sense / Mark Target marker pooling across 6 consecutive frames without child growth
+	for _f in range(6):
+		hud7._update_sixth_sense_markers()
+	var pool_children_after_6: int = hud7._sixth_sense_layer.get_child_count()
+	var visible_markers_active: int = 0
+	for m in hud7._marker_pool:
+		if m.visible:
+			visible_markers_active += 1
+
+	enemy_a.status_effects.marked_timer = 0.0
+	enemy_b.status_effects.marked_timer = 0.0
+	enemy_a.active_flags &= ~NetSerializer.SNAP_MARKED_TARGET
+	enemy_b.active_flags &= ~NetSerializer.SNAP_MARKED_TARGET
+	hud7._update_sixth_sense_markers()
+	var visible_markers_cleared: int = 0
+	for m in hud7._marker_pool:
+		if m.visible:
+			visible_markers_cleared += 1
+	_assert(
+		pool_children_after_6 == 2 and hud7._marker_pool.size() == 2 and visible_markers_active == 2 and visible_markers_cleared == 0,
+		"Sixth-sense markers reuse pool across frames (children=%d, active=%d, cleared=%d)" % [pool_children_after_6, visible_markers_active, visible_markers_cleared]
+	)
+
+	# 3. Seat diagram reuses cached StyleBoxFlat instances across frames
+	jeep7.try_enter_hero(hero7)
+	hud7._update_vehicle_seat_diagram(jeep7)
+	var style_seat0_f1: StyleBox = hud7._seat_slot_buttons[0].get_theme_stylebox("normal")
+	var style_seat1_f1: StyleBox = hud7._seat_slot_buttons[1].get_theme_stylebox("normal")
+	for _sf in range(5):
+		hud7._update_vehicle_seat_diagram(jeep7)
+	var style_seat0_f6: StyleBox = hud7._seat_slot_buttons[0].get_theme_stylebox("normal")
+	var style_seat1_f6: StyleBox = hud7._seat_slot_buttons[1].get_theme_stylebox("normal")
+	_assert(
+		style_seat0_f1 != null and style_seat0_f1 == style_seat0_f6 and style_seat1_f1 != null and style_seat1_f1 == style_seat1_f6,
+		"Vehicle seat diagram reuses cached StyleBoxFlat instances across frames"
+	)
+
+	jeep7.exit_hero(hero7)
+	hud7.queue_free()
+	hero7.queue_free()
+	enemy_a.queue_free()
+	enemy_b.queue_free()
+	jeep7.queue_free()
+
+
+func _test_phase7_task2_hotkeys_menu() -> void:
+	var cfg_path: String = "user://test_phase7_hotkeys.cfg"
+	InputCmd.reset_default_hotkeys()
+
+	# 1. InputCmd.assign_unique_key swaps conflicting keys cleanly without duplicates
+	var orig_s0: int = InputCmd.get_skill_key(0)
+	var orig_s1: int = InputCmd.get_skill_key(1)
+	InputCmd.assign_unique_key("skill", 0, orig_s1)
+	var skill_swapped: bool = InputCmd.get_skill_key(0) == orig_s1 and InputCmd.get_skill_key(1) == orig_s0
+
+	var orig_w0: int = InputCmd.get_widget_key(0)
+	var cur_s0: int = InputCmd.get_skill_key(0)
+	InputCmd.assign_unique_key("widget", 0, cur_s0)
+	var cross_swapped: bool = InputCmd.get_widget_key(0) == cur_s0 and InputCmd.get_skill_key(0) == orig_w0
+	_assert(
+		skill_swapped and cross_swapped,
+		"InputCmd.assign_unique_key swaps conflicting skill and widget keys cleanly without duplicates"
+	)
+
+	# 2. Save / Reset / Load ConfigFile persistence roundtrip
+	InputCmd.reset_default_hotkeys()
+	InputCmd.assign_unique_key("skill", 2, KEY_G)
+	InputCmd.assign_unique_key("widget", 1, KEY_J)
+	var expected_skills: Array[int] = InputCmd.skill_hotkeys.duplicate()
+	var expected_widgets: Array[int] = InputCmd.widget_hotkeys.duplicate()
+	var save_err: int = InputCmd.save_hotkeys_to_config(cfg_path)
+	InputCmd.reset_default_hotkeys()
+	var loaded_ok: bool = InputCmd.load_hotkeys_from_config(cfg_path)
+	_assert(
+		save_err == OK and loaded_ok and InputCmd.skill_hotkeys == expected_skills and InputCmd.widget_hotkeys == expected_widgets,
+		"InputCmd save_hotkeys_to_config / load_hotkeys_from_config roundtrips custom Skill & Widget binds"
+	)
+
+	# 3. ClassSelectMenu 14v14 copy, collapsed MP drawer, Hub/Armory Hotkeys navigation & _ready() load
+	InputCmd.reset_default_hotkeys()
+	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = cfg_path
+	add_child(menu)
+	await _flush_deferred()
+
+	var loaded_on_ready: bool = InputCmd.get_skill_key(2) == KEY_G and InputCmd.get_widget_key(1) == KEY_J and menu._skill_hotkey_buttons[2].text.ends_with("G") and menu._widget_hotkey_buttons[1].text.ends_with("J")
+	var found_14v14_texts: int = 0
+	var found_stale_text: bool = false
+	for node in menu.find_children("*", "Label", true, false):
+		var lbl := node as Label
+		if lbl.text.contains("14v14"):
+			found_14v14_texts += 1
+		if lbl.text.contains("20v20") or lbl.text.contains("12v12"):
+			found_stale_text = true
+	for node in menu.find_children("*", "Button", true, false):
+		var btn := node as Button
+		if btn.text.contains("14v14"):
+			found_14v14_texts += 1
+		if btn.text.contains("20v20") or btn.text.contains("12v12"):
+			found_stale_text = true
+
+	var mp_starts_collapsed: bool = menu._mp_card != null and not menu._mp_card.visible and menu._mp_drawer.visible
+	_assert(
+		loaded_on_ready and found_14v14_texts >= 3 and not found_stale_text and mp_starts_collapsed,
+		"Menu loads saved hotkeys on launch, uses 14v14 copy (%d labels), and collapses _mp_card by default" % found_14v14_texts
+	)
+
+	# Hub -> Settings -> Back to Hub
+	var hub_btn_ok: bool = menu._hub_settings_btn != null and menu._hub_settings_btn.visible and menu._hub_settings_btn.text == "Atalhos (Hotkeys) & Config"
+	menu._hub_settings_btn.pressed.emit()
+	var hub_to_settings_ok: bool = menu.current_screen == "settings" and menu._settings_back_btn.text == "<- Voltar ao Hub"
+	menu._settings_back_btn.pressed.emit()
+	var back_to_hub_ok: bool = menu.current_screen == "hub"
+
+	# Armory -> Settings -> Back to Armory
+	menu.show_screen("armory")
+	var arm_btn_ok: bool = menu._armory_settings_btn != null and menu._armory_settings_btn.visible and menu._armory_settings_btn.text == "Atalhos (Hotkeys)"
+	menu._armory_settings_btn.pressed.emit()
+	var arm_to_settings_ok: bool = menu.current_screen == "settings" and menu._settings_back_btn.text == "<- Voltar ao Arsenal"
+	menu._settings_back_btn.pressed.emit()
+	var back_to_arm_ok: bool = menu.current_screen == "armory"
+	_assert(
+		hub_btn_ok and hub_to_settings_ok and back_to_hub_ok and arm_btn_ok and arm_to_settings_ok and back_to_arm_ok,
+		"Hub & Armory Atalhos buttons open Settings and return cleanly to their origin screen"
+	)
+
+	# Listening state & hint label guard
+	menu.show_screen("settings")
+	var listen_idle: bool = not menu.is_listening_hotkey()
+	menu._begin_hotkey_listen("skill", 0)
+	var listen_active: bool = menu.is_listening_hotkey() and menu._hotkey_hint_lbl.text.contains("Pressione a nova tecla")
+	menu._cancel_hotkey_listen()
+	var listen_cancelled: bool = not menu.is_listening_hotkey() and menu._hotkey_hint_lbl.text.contains("Clique em qualquer botão")
+	_assert(
+		listen_idle and listen_active and listen_cancelled,
+		"is_listening_hotkey() and _hotkey_hint_lbl track listen/cancel state cleanly"
+	)
+
+	# Cleanup test config & restore defaults
+	menu.queue_free()
+	if FileAccess.file_exists(cfg_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(cfg_path))
+	InputCmd.reset_default_hotkeys()
+
+
+func _test_phase7_task3_perf_cache_vfx() -> void:
+	# 1. GameCache completeness: skill_2_5, all 4 widgets, xray shader, shared VFX meshes
+	GameCache.clear_all()
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
+	var has_no_dead_widget_keys: bool = (
+		not GameCache.ALL_TEXTURE_KEYS.has("icon_widget_bandage")
+		and not GameCache.ALL_TEXTURE_KEYS.has("icon_widget_wrench")
+		and not GameCache.ALL_TEXTURE_KEYS.has("icon_widget_tonic")
+	)
+	var has_xray_path: bool = GameCache.SHADER_PATHS.has("res://vfx_shaders/xray_silhouette.gdshader")
+	var xray_loaded: Shader = load("res://vfx_shaders/xray_silhouette.gdshader") as Shader
+	var cached_s25: bool = CartoonAssets._cache.has("icon_skill_2_5") and CartoonAssets.get_texture("icon_skill_2_5") != null
+	var cached_widgets: bool = true
+	for wi in range(4):
+		if not CartoonAssets._cache.has("icon_widget_%d" % wi) or CartoonAssets.get_texture("icon_widget_%d" % wi) == null:
+			cached_widgets = false
+			break
+	var shared_meshes_warmed: bool = StatusEffectsVFX._shared_meshes.size() >= 5
+	_assert(
+		has_no_dead_widget_keys and has_xray_path and xray_loaded != null and cached_s25 and cached_widgets and shared_meshes_warmed,
+		"GameCache warms icon_skill_2_5, icon_widget_0..3, xray_silhouette.gdshader, and StatusEffectsVFX shared meshes"
+	)
+
+	var prewarm_host := Node3D.new()
+	add_child(prewarm_host)
+	var prewarm_node: Node3D = GameCache.prewarm_gpu_pipelines(prewarm_host)
+	_assert(prewarm_node != null and GameCache.is_gpu_warmed(), "GameCache.prewarm_gpu_pipelines compiles SHADER_PATHS cleanly")
+	GameCache.cleanup_prewarm(prewarm_node)
+	prewarm_host.queue_free()
+
+	# 2. Dirty-state VFX cache invalidation on HeroCharacter & VehicleBase
+	var local_v := HeroCharacter.new()
+	local_v.setup_identity(7301, "VfxLocal", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var enemy_v := HeroCharacter.new()
+	enemy_v.setup_identity(7302, "VfxEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(local_v)
+	add_child(enemy_v)
+	local_v.global_position = Vector3.ZERO
+	enemy_v.global_position = Vector3(4.0, 0.0, 0.0)
+
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var clean_key: String = enemy_v._last_vfx_key
+	var clean_mat := (enemy_v._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial
+	var clean_ok: bool = not clean_key.is_empty() and (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay == null and enemy_v.visual_root.visible
+
+	# Burn on -> off
+	enemy_v.active_flags = NetSerializer.SNAP_BURNING
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var burn_key: String = enemy_v._last_vfx_key
+	var burn_rim: Color = clean_mat.get_shader_parameter("rim_color")
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var post_burn_key: String = enemy_v._last_vfx_key
+
+	# Shield on -> off
+	enemy_v.active_flags = NetSerializer.SNAP_SHIELDED
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var shield_key: String = enemy_v._last_vfx_key
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+
+	# Marked X-Ray on -> off
+	enemy_v.active_flags = NetSerializer.SNAP_MARKED_TARGET
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var mark_ov: Material = (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var cleared_ov: Material = (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay
+
+	# Stealth on (within radius -> beyond radius -> off)
+	enemy_v.is_stealthed = true
+	enemy_v.active_flags = NetSerializer.SNAP_STEALTHED
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var cloak_close_ok: bool = enemy_v.visual_root.visible and clean_mat.shader == StatusEffectsVFX.HERO_CLOAK_SHADER
+	enemy_v.global_position = Vector3(30.0, 0.0, 0.0)
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var cloak_far_hidden: bool = not enemy_v.visual_root.visible
+	enemy_v.is_stealthed = false
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var uncloak_restored: bool = (
+		enemy_v.visual_root.visible
+		and clean_mat.shader == StatusEffectsVFX.HERO_SHADER
+		and (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay == null
+		and enemy_v._last_vfx_key == clean_key
+	)
+	_assert(
+		clean_ok and burn_key != clean_key and burn_rim.r > 0.9 and post_burn_key == clean_key and shield_key != clean_key and mark_ov != null and cleared_ov == null and cloak_close_ok and cloak_far_hidden and uncloak_restored,
+		"StatusEffectsVFX dirty cache updates on burn/shield/mark/stealth and restores clean defaults when cleared"
+	)
+
+	# VehicleBase _cached_visual_meshes & _last_xray_state
+	var vfx_jeep := VehicleJeep.new()
+	vfx_jeep.id = 7390
+	vfx_jeep.team = NetworkManager.TEAM_NATIONAL
+	add_child(vfx_jeep)
+	StatusEffectsVFX.update_vehicle_client_visuals(vfx_jeep, local_v)
+	var veh_init_ok: bool = vfx_jeep._cached_visual_meshes.size() > 0 and vfx_jeep._last_xray_state == 0 and vfx_jeep._cached_visual_meshes[0].material_overlay == null
+	vfx_jeep.is_marked = true
+	StatusEffectsVFX.update_vehicle_client_visuals(vfx_jeep, local_v)
+	var veh_mark_ok: bool = vfx_jeep._last_xray_state == 1 and vfx_jeep._cached_visual_meshes[0].material_overlay == StatusEffectsVFX._get_xray_material()
+	vfx_jeep.is_marked = false
+	StatusEffectsVFX.update_vehicle_client_visuals(vfx_jeep, local_v)
+	var veh_clear_ok: bool = vfx_jeep._last_xray_state == 0 and vfx_jeep._cached_visual_meshes[0].material_overlay == null
+	_assert(veh_init_ok and veh_mark_ok and veh_clear_ok, "VehicleBase caches visual meshes and toggles _last_xray_state cleanly (0 -> 1 -> 0)")
+
+	# 3. BotController nearest-visible sorting (ignores defeated & wall-occluded closer enemies)
+	var bot_h := HeroCharacter.new()
+	bot_h.setup_identity(7310, "SortBot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	var occ_enemy := HeroCharacter.new()
+	occ_enemy.setup_identity(7311, "OccEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var dead_enemy := HeroCharacter.new()
+	dead_enemy.setup_identity(7312, "DeadEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var mid_enemy := HeroCharacter.new()
+	mid_enemy.setup_identity(7313, "MidEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var far_enemy := HeroCharacter.new()
+	far_enemy.setup_identity(7314, "FarEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var los_wall := StaticBody3D.new()
+	los_wall.collision_layer = 1
+	var los_col := CollisionShape3D.new()
+	var los_box := BoxShape3D.new()
+	los_box.size = Vector3(8.0, 5.0, 1.0)
+	los_col.shape = los_box
+	los_wall.add_child(los_col)
+	add_child(los_wall)
+	add_child(bot_h)
+	add_child(occ_enemy)
+	add_child(dead_enemy)
+	add_child(mid_enemy)
+	add_child(far_enemy)
+
+	bot_h.global_position = Vector3(100.0, 0.0, 0.0)
+	los_wall.global_position = Vector3(100.0, 2.0, -5.0)
+	occ_enemy.global_position = Vector3(100.0, 0.0, -10.0) # 10m away but behind wall
+	dead_enemy.global_position = Vector3(106.0, 0.0, 0.0) # 6m away in LOS but defeated
+	dead_enemy.is_defeated = true
+	mid_enemy.global_position = Vector3(120.0, 0.0, 0.0) # 20m away in clear LOS
+	far_enemy.global_position = Vector3(138.0, 0.0, 0.0) # 38m away in clear LOS
+	await get_tree().physics_frame
+
+	var bot_ai := BotController.new()
+	bot_ai.setup(bot_h)
+	add_child(bot_ai)
+	var sort_map: Dictionary = {7310: bot_h, 7311: occ_enemy, 7312: dead_enemy, 7313: mid_enemy, 7314: far_enemy}
+	var chosen_enemy: HeroCharacter = bot_ai._find_nearest_visible_enemy(sort_map, bot_h.get_world_3d().direct_space_state)
+	_assert(chosen_enemy == mid_enemy, "BotController._find_nearest_visible_enemy skips defeated/occluded targets and picks closest visible enemy")
+
+	# 4. All 16 Skills + 4 Widgets thematic multi-part 3D VFX & procedural poses
+	var vfx_stage := Node3D.new()
+	vfx_stage.name = "Phase7Task3VfxStage"
+	add_child(vfx_stage)
+
+	var anim_hero := HeroCharacter.new()
+	anim_hero.setup_identity(7320, "VfxCaster", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(anim_hero)
+
+	var shared_mesh_vals: Array = StatusEffectsVFX._shared_meshes.values()
+	var vfx_specs: Array = []
+	for cls_id in range(3):
+		var n_sk: int = 6 if cls_id == NetworkManager.CLASS_COMMANDO else 5
+		for sk_i in range(n_sk):
+			var exp_pose: String = ""
+			if cls_id == NetworkManager.CLASS_GUNNER and sk_i == 1:
+				exp_pose = "sprint_boost"
+			elif cls_id == NetworkManager.CLASS_GUNNER and sk_i == 4:
+				exp_pose = "chomp_absorb"
+			elif cls_id == NetworkManager.CLASS_COMMANDO and sk_i == 4:
+				exp_pose = "sprint_boost"
+			vfx_specs.append([cls_id, sk_i, exp_pose])
+	for w_i in range(4):
+		var exp_w_pose: String = "raise_med" if w_i == 3 else ""
+		vfx_specs.append([0, 100 + w_i, exp_w_pose])
+
+	var total_checked: int = 0
+	var all_multipart_ok: bool = true
+	var all_noshadow_ok: bool = true
+	var all_shared_ok: bool = true
+	var all_poses_ok: bool = true
+
+	for spec in vfx_specs:
+		var cls_id: int = int(spec[0])
+		var slot_id: int = int(spec[1])
+		var expected_pose: String = str(spec[2])
+		total_checked += 1
+		anim_hero.trigger_skill_visual(cls_id, slot_id)
+		if anim_hero.last_skill_anim_name.is_empty():
+			all_poses_ok = false
+		if not expected_pose.is_empty() and anim_hero.last_skill_anim_name != expected_pose:
+			all_poses_ok = false
+		StatusEffectsVFX.spawn_skill_vfx(vfx_stage, cls_id, slot_id, Vector3(float(total_checked) * 2.0, 0.0, 0.0), 0.5)
+		var vfx_name: String = "SkillVFX_%d_%d" % [cls_id, slot_id]
+		var node_vfx: Node = vfx_stage.get_node_or_null(vfx_name)
+		if node_vfx == null or node_vfx.get_child_count() < 2:
+			all_multipart_ok = false
+			continue
+		var meshes_found: Array[MeshInstance3D] = []
+		_collect_mesh_instances(node_vfx, meshes_found)
+		if meshes_found.size() < 2:
+			all_multipart_ok = false
+		for mi in meshes_found:
+			if mi.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				all_noshadow_ok = false
+			if not shared_mesh_vals.has(mi.mesh):
+				all_shared_ok = false
+
+	_assert(
+		total_checked == 20 and all_multipart_ok and all_noshadow_ok and all_shared_ok and all_poses_ok,
+		"All 16 skills + 4 widgets (%d total) spawn multi-part shadow-off shared-mesh 3D VFX & distinct poses (sprint_boost, chomp_absorb)" % total_checked
+	)
+
+	vfx_stage.queue_free()
+	anim_hero.queue_free()
+	bot_ai.queue_free()
+	bot_h.queue_free()
+	occ_enemy.queue_free()
+	dead_enemy.queue_free()
+	mid_enemy.queue_free()
+	far_enemy.queue_free()
+	los_wall.queue_free()
+	vfx_jeep.queue_free()
+	local_v.queue_free()
+	enemy_v.queue_free()
