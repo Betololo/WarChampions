@@ -2,7 +2,7 @@ class_name SkillManager
 extends Node
 
 ## Manages RPG Levels (1..30), Hero Points (earned every 2 levels),
-## 5 Class Skills (ranks 1..5), and 3 Widgets (Bandages, Wrench, Fireproof/Antidote).
+## 5-6 Class Skills (ranks 1..5), and 4 Widgets (Bandages, Wrench, Fireproof, Antidote).
 
 signal progression_changed(level: int, xp: int, xp_next: int, hero_points: int)
 signal skill_activated(slot_idx: int, cooldown: float)
@@ -10,6 +10,20 @@ signal widget_activated(widget_idx: int, cooldown: float)
 
 const MAX_LEVEL: int = 30
 const MAX_SKILL_RANK: int = 5
+const SKILL_BUTTON_FLAGS: Array[int] = [
+	InputCmd.BTN_SKILL_1,
+	InputCmd.BTN_SKILL_2,
+	InputCmd.BTN_SKILL_3,
+	InputCmd.BTN_SKILL_4,
+	InputCmd.BTN_SKILL_5,
+	InputCmd.BTN_SKILL_6,
+]
+const WIDGET_BUTTON_FLAGS: Array[int] = [
+	InputCmd.BTN_WIDGET_1,
+	InputCmd.BTN_WIDGET_2,
+	InputCmd.BTN_WIDGET_3,
+	InputCmd.BTN_WIDGET_4,
+]
 
 var owner_hero: HeroCharacter = null
 
@@ -17,15 +31,15 @@ var owner_hero: HeroCharacter = null
 var level: int = 1
 var xp: int = 0
 var hero_points: int = 2 # Starting Hero Points to customize initial build
-var skill_ranks: Array[int] = [1, 1, 1, 0, 0] # Ranks 0..5 for skills 1..5
+var skill_ranks: Array[int] = [1, 1, 1, 0, 0] # Ranks 0..5
 var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
 var skill_max_cooldowns: Array[float] = [14.0, 16.0, 18.0, 14.0, 20.0]
 var skill_names: Array[String] = ["Skill 1", "Skill 2", "Skill 3", "Skill 4", "Skill 5"]
 
-## 3 Consumable Widgets: 0 = Bandages, 1 = Wrench, 2 = Fireproof Underwear / Antidote
-var widget_cooldowns: Array[float] = [0.0, 0.0, 0.0]
-var widget_max_cooldowns: Array[float] = [12.0, 8.0, 14.0]
-var widget_names: Array[String] = ["Bandages", "Wrench", "Antidote/Underwear"]
+## 4 Consumable Widgets: 0 = Bandages, 1 = Wrench, 2 = Fireproof Underwear, 3 = Antidote
+var widget_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var widget_max_cooldowns: Array[float] = [15.0, 8.0, 14.0, 14.0]
+var widget_names: Array[String] = ["Bandages", "Wrench", "Fireproof", "Antidote"]
 
 var _prev_skill_btns: int = 0
 var _prev_widget_btns: int = 0
@@ -53,7 +67,7 @@ func award_xp(amount: int) -> void:
 
 
 func upgrade_skill(slot_idx: int) -> bool:
-	if slot_idx < 0 or slot_idx >= 5:
+	if slot_idx < 0 or slot_idx >= skill_ranks.size():
 		return false
 	if hero_points <= 0 or skill_ranks[slot_idx] >= MAX_SKILL_RANK:
 		return false
@@ -63,53 +77,66 @@ func upgrade_skill(slot_idx: int) -> bool:
 	return true
 
 
+func start_stealth_exit_cooldown() -> void:
+	if skill_cooldowns.size() > 0:
+		skill_cooldowns[0] = skill_max_cooldowns[0]
+		skill_activated.emit(0, skill_cooldowns[0])
+
+
 func step_server(delta: float, cmd: InputCmd, context: Dictionary) -> void:
-	for i in range(5):
+	var n_skills: int = mini(skill_ranks.size(), SKILL_BUTTON_FLAGS.size())
+	for i in range(n_skills):
 		if skill_cooldowns[i] > 0.0:
 			skill_cooldowns[i] = maxf(0.0, skill_cooldowns[i] - delta)
-	for j in range(3):
+	for j in range(4):
 		if widget_cooldowns[j] > 0.0:
 			widget_cooldowns[j] = maxf(0.0, widget_cooldowns[j] - delta)
 
 	if owner_hero == null or owner_hero.is_defeated:
 		return
 
-	var skill_flags: Array[int] = [
-		InputCmd.BTN_SKILL_1,
-		InputCmd.BTN_SKILL_2,
-		InputCmd.BTN_SKILL_3,
-		InputCmd.BTN_SKILL_4,
-		InputCmd.BTN_SKILL_5,
-	]
-	for i in range(5):
-		var pressed: bool = cmd.has_button(skill_flags[i])
-		var was_pressed: bool = (_prev_skill_btns & skill_flags[i]) != 0
-		if pressed and not was_pressed:
-			try_activate_skill(i, cmd, context)
-	_prev_skill_btns = cmd.buttons & (InputCmd.BTN_SKILL_1 | InputCmd.BTN_SKILL_2 | InputCmd.BTN_SKILL_3 | InputCmd.BTN_SKILL_4 | InputCmd.BTN_SKILL_5)
+	var next_skill_btns: int = 0
+	for i in range(n_skills):
+		var flag: int = SKILL_BUTTON_FLAGS[i]
+		var pressed: bool = cmd.has_button(flag)
+		var was_pressed: bool = (_prev_skill_btns & flag) != 0
+		if pressed:
+			next_skill_btns |= flag
+			if not was_pressed:
+				try_activate_skill(i, cmd, context)
+	_prev_skill_btns = next_skill_btns
 
-	var widget_flags: Array[int] = [InputCmd.BTN_WIDGET_1, InputCmd.BTN_WIDGET_2, InputCmd.BTN_WIDGET_3]
-	for j in range(3):
-		var pressed_w: bool = cmd.has_button(widget_flags[j])
-		var was_pressed_w: bool = (_prev_widget_btns & widget_flags[j]) != 0
-		if pressed_w and not was_pressed_w:
-			try_activate_widget(j, context)
-	_prev_widget_btns = cmd.buttons & (InputCmd.BTN_WIDGET_1 | InputCmd.BTN_WIDGET_2 | InputCmd.BTN_WIDGET_3)
+	var next_widget_btns: int = 0
+	for j in range(4):
+		var w_flag: int = WIDGET_BUTTON_FLAGS[j]
+		var pressed_w: bool = cmd.has_button(w_flag)
+		var was_pressed_w: bool = (_prev_widget_btns & w_flag) != 0
+		if pressed_w:
+			next_widget_btns |= w_flag
+			if not was_pressed_w:
+				try_activate_widget(j, context)
+	_prev_widget_btns = next_widget_btns
+
+
+func _defers_cooldown_until_exit(_slot_idx: int) -> bool:
+	return false
 
 
 func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bool:
-	if slot_idx < 0 or slot_idx >= 5:
+	if slot_idx < 0 or slot_idx >= skill_ranks.size():
 		return false
 	var rank: int = skill_ranks[slot_idx]
 	if rank <= 0 or skill_cooldowns[slot_idx] > 0.0:
 		return false
 	if _execute_class_skill(slot_idx, rank, cmd, context):
-		skill_cooldowns[slot_idx] = skill_max_cooldowns[slot_idx]
-		skill_activated.emit(slot_idx, skill_cooldowns[slot_idx])
+		var cd_val: float = 0.0 if _defers_cooldown_until_exit(slot_idx) else skill_max_cooldowns[slot_idx]
+		skill_cooldowns[slot_idx] = cd_val
+		skill_activated.emit(slot_idx, cd_val)
 		NetworkManager.broadcast_game_event("skill_vfx", {
 			"hero_id": owner_hero.entity_id,
 			"slot": slot_idx,
 			"class_id": owner_hero.class_id,
+			"skill_name": skill_names[slot_idx] if slot_idx < skill_names.size() else "Skill",
 			"pos": owner_hero.global_position,
 		})
 		return true
@@ -117,24 +144,37 @@ func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bo
 
 
 func try_activate_widget(widget_idx: int, context: Dictionary) -> bool:
-	if widget_idx < 0 or widget_idx >= 3 or owner_hero == null:
+	if widget_idx < 0 or widget_idx >= 4 or owner_hero == null:
 		return false
 	if widget_cooldowns[widget_idx] > 0.0:
 		return false
 
 	match widget_idx:
-		0: # Bandages: Instant HP heal
-			owner_hero.heal_server(40)
+		0: # Bandages: 2.0s channel healing +40 HP (interrupted if victim takes direct damage)
+			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("start_bandage_channel"):
+				owner_hero.status_effects.start_bandage_channel(40, 2.0)
+			else:
+				owner_hero.heal_server(40)
 		1: # Wrench: Repair nearest allied vehicle (including vehicle hero is riding!)
 			var repaired: bool = _repair_nearest_vehicle(context)
 			if not repaired:
 				return false
-		2: # Fireproof Underwear / Antidote: Cleanse burn & poison immediately
-			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("cleanse_burn_and_poison"):
-				owner_hero.status_effects.cleanse_burn_and_poison()
+		2: # Fireproof Underwear: Cleanse burn + 2.0s fire immunity
+			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("cleanse_burn_and_grant_immunity"):
+				owner_hero.status_effects.cleanse_burn_and_grant_immunity(2.0)
+		3: # Antidote: Cleanse poison + remove green screen tint immediately
+			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("cleanse_poison"):
+				owner_hero.status_effects.cleanse_poison()
 
 	widget_cooldowns[widget_idx] = widget_max_cooldowns[widget_idx]
 	widget_activated.emit(widget_idx, widget_cooldowns[widget_idx])
+	NetworkManager.broadcast_game_event("skill_vfx", {
+		"hero_id": owner_hero.entity_id,
+		"slot": 100 + widget_idx,
+		"class_id": owner_hero.class_id,
+		"skill_name": widget_names[widget_idx],
+		"pos": owner_hero.global_position,
+	})
 	return true
 
 

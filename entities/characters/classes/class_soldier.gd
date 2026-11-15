@@ -5,7 +5,7 @@ extends Node
 static func configure_hero(hero: HeroCharacter) -> void:
 	hero.max_hp = 110
 	hero.hp = 110
-	hero.base_move_speed = 7.8
+	hero.base_move_speed = 6.3
 	hero.capsule_radius = 0.42
 
 	var se := StatusEffectContainer.new()
@@ -19,13 +19,14 @@ static func configure_hero(hero: HeroCharacter) -> void:
 	hero.skill_manager = sm
 
 	hero.weapons.clear()
-	for kind in [WeaponBase.WeaponKind.SMG, WeaponBase.WeaponKind.SHOTGUN, WeaponBase.WeaponKind.PISTOL]:
+	var kinds: Array[int] = [WeaponBase.WeaponKind.SMG, WeaponBase.WeaponKind.SHOTGUN, WeaponBase.WeaponKind.PISTOL]
+	for s_idx in range(kinds.size()):
 		var w := HitscanWeapon.new()
-		w.configure(hero, kind, hero.archetype)
+		w.configure(hero, kinds[s_idx], int(hero.weapon_slot_archetypes.get(s_idx, hero.archetype)))
 		hero.add_child(w)
 		hero.weapons.append(w)
 
 	var tnt := ProjectileWeapon.new()
-	tnt.configure(hero, WeaponBase.WeaponKind.TNT, hero.archetype)
+	tnt.configure(hero, WeaponBase.WeaponKind.TNT, int(hero.weapon_slot_archetypes.get(3, hero.archetype)))
 	hero.add_child(tnt)
 	hero.weapons.append(tnt)

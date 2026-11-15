@@ -65,7 +65,7 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 				driver.entity_id,
 				driver.team,
 				muzzle_pos,
-				fire_dir * SHELL_SPEED + Vector3(0.0, 1.2, 0.0),
+				fire_dir * SHELL_SPEED,
 				context,
 				-1.0,
 				get_parent()

@@ -1,13 +1,22 @@
 class_name CommandoSkills
 extends SkillManager
 
-## Commando's 5 Heroic Skills:
-## 0: Stealth, 1: Piercing Shot, 2: Poisoned Blade, 3: Troop Trap, 4: Elixir
+## Commando's 6 Heroic Skills:
+## 0: Stealth, 1: Piercing Shot, 2: Poisoned Blade, 3: Troop Trap, 4: Elixir, 5: Mark Target
+
+var _active_traps: Array[TroopTrapEntity] = []
+
 
 func _ready() -> void:
 	super._ready()
-	skill_names = ["Stealth", "Piercing Shot", "Poisoned Blade", "Troop Trap", "Elixir"]
-	skill_max_cooldowns = [15.0, 14.0, 14.0, 16.0, 18.0]
+	skill_names = ["Stealth", "Piercing Shot", "Poisoned Blade", "Troop Trap", "Elixir", "Mark Target"]
+	skill_ranks = [1, 1, 1, 0, 0, 1]
+	skill_cooldowns = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	skill_max_cooldowns = [15.0, 14.0, 14.0, 16.0, 18.0, 20.0]
+
+
+func _defers_cooldown_until_exit(slot_idx: int) -> bool:
+	return slot_idx == 0
 
 
 class TroopTrapEntity extends Node3D:
@@ -16,6 +25,7 @@ class TroopTrapEntity extends Node3D:
 	var damage: int = 65
 	var trigger_radius: float = 2.4
 	var arm_timer: float = 1.0
+	var lifetime_remaining: float = 60.0
 	var _context: Dictionary = {}
 	var _detonated: bool = false
 
@@ -33,6 +43,10 @@ class TroopTrapEntity extends Node3D:
 
 	func _physics_process(delta: float) -> void:
 		if _detonated:
+			return
+		lifetime_remaining -= delta
+		if lifetime_remaining <= 0.0:
+			queue_free()
 			return
 		if arm_timer > 0.0:
 			arm_timer -= delta
@@ -74,46 +88,70 @@ class TroopTrapEntity extends Node3D:
 		queue_free()
 
 
-func _execute_class_skill(slot_idx: int, rank: int, _cmd: InputCmd, context: Dictionary) -> bool:
+func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dictionary) -> bool:
 	if owner_hero == null:
 		return false
 
 	match slot_idx:
-		0: # Stealth: Detection radius drops from 12m (rank 1) down to 4m (rank 5)
+		0: # Stealth: Infinite duration until attack, >15 dmg, or Mark Target (cooldown starts on exit)
+			if owner_hero.is_stealthed:
+				return false
+			if owner_hero.status_effects != null and owner_hero.status_effects.is_marked():
+				return false
 			var detect_r: float = maxf(4.0, 12.0 - float(rank - 1) * 2.0)
 			if owner_hero.status_effects != null:
-				owner_hero.status_effects.activate_stealth(detect_r, 8.0 + float(rank) * 2.5)
-				return true
+				owner_hero.status_effects.activate_stealth(detect_r, -1.0)
+				return owner_hero.is_stealthed
 			return false
 
-		1: # Piercing Shot: Boosts Sniper Rifle damage significantly
+		1: # Piercing Shot: Sniper Rifle pierces multiple aligned enemies + boosted damage
 			if owner_hero.status_effects != null:
 				owner_hero.status_effects.activate_piercing_shot(1.35 + float(rank) * 0.15, 5.0 + float(rank))
 				return true
 			return false
 
-		2: # Poisoned Blade: Coats Knife with intense green DoT
+		2: # Poisoned Blade: Coats Knife with intense green DoT (12 dmg/s * 6s = 72)
 			if owner_hero.status_effects != null:
-				owner_hero.status_effects.activate_poisoned_blade(10.0 + float(rank) * 3.0, 6.0 + float(rank))
+				owner_hero.status_effects.activate_poisoned_blade(9.0 + float(rank) * 3.0, 6.0 + float(rank))
 				return true
 			return false
 
-		3: # Troop Trap: Plants mechanical proximity landmine
+		3: # Troop Trap: Max 2 active mines per Commando (60s lifetime)
+			var valid_traps: Array[TroopTrapEntity] = []
+			for existing in _active_traps:
+				if is_instance_valid(existing) and not existing._detonated and not existing.is_queued_for_deletion():
+					valid_traps.append(existing)
+			_active_traps = valid_traps
+			while _active_traps.size() >= 2:
+				var oldest: TroopTrapEntity = _active_traps.pop_front()
+				if is_instance_valid(oldest):
+					oldest.queue_free()
+
 			var trap := TroopTrapEntity.new()
 			trap.owner_id = owner_hero.entity_id
 			trap.owner_team = owner_hero.team
 			trap.damage = 55 + rank * 12
+			trap.lifetime_remaining = 60.0
 			trap._context = context
 			trap.position = owner_hero.global_position + Vector3(0.0, 0.06, 0.0)
 			var projectiles_root: Node = context.get("projectiles_root", owner_hero.get_parent())
 			if projectiles_root != null:
 				projectiles_root.add_child(trap)
+			_active_traps.append(trap)
 			return true
 
 		4: # Elixir: Burst speed + small absorption shield
 			if owner_hero.status_effects != null:
 				owner_hero.status_effects.apply_speed_boost(1.45 + float(rank) * 0.06, 4.5 + float(rank) * 0.6)
 				owner_hero.status_effects.apply_shield(20 + rank * 8, 4.5 + float(rank) * 0.6)
+				return true
+			return false
+
+		5: # Mark Target: 5.0s sweep window (120m LOS) marks enemies & vehicles globally for 12s & breaks Stealth
+			if owner_hero.status_effects != null:
+				var sweep_dur: float = 4.0 + float(rank) * 0.5
+				var sweep_range: float = 100.0 + float(rank) * 10.0
+				owner_hero.status_effects.activate_mark_target_window(sweep_dur, sweep_range, context, cmd.aim_yaw, cmd.aim_pitch)
 				return true
 			return false
 

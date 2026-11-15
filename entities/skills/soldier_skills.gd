@@ -16,15 +16,20 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 
 	match slot_idx:
-		0: # Combat Medicine: AoE instant heal to self + nearby allies
-			var heal_amt: int = 26 + rank * 10
-			var radius: float = 9.0 + float(rank) * 1.0
-			owner_hero.heal_server(heal_amt)
+		0: # Combat Medicine: +40 instant + 20 HoT over 3s (60 HP total) to self + allies in 8m+ radius
+			var instant_heal: int = 35 + rank * 5
+			var hot_heal: int = 16 + rank * 4
+			var radius: float = 8.0 + float(rank - 1) * 1.0
+			owner_hero.heal_server(instant_heal)
+			if owner_hero.status_effects != null:
+				owner_hero.status_effects.apply_heal_over_time(hot_heal, 3.0)
 			for id_key in heroes_by_id.keys():
 				var ally: HeroCharacter = heroes_by_id[id_key]
 				if ally != null and ally != owner_hero and not ally.is_defeated and ally.team == owner_hero.team:
 					if ally.global_position.distance_to(owner_hero.global_position) <= radius:
-						ally.heal_server(heal_amt)
+						ally.heal_server(instant_heal)
+						if ally.status_effects != null:
+							ally.status_effects.apply_heal_over_time(hot_heal, 3.0)
 			return true
 
 		1: # Burning Bullets: Incendiary DoT for SMG / Pistol

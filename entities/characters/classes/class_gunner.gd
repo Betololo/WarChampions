@@ -5,7 +5,7 @@ extends Node
 static func configure_hero(hero: HeroCharacter) -> void:
 	hero.max_hp = 150
 	hero.hp = 150
-	hero.base_move_speed = 6.4
+	hero.base_move_speed = 5.4
 	hero.capsule_radius = 0.56
 
 	var se := StatusEffectContainer.new()
@@ -19,13 +19,14 @@ static func configure_hero(hero: HeroCharacter) -> void:
 	hero.skill_manager = sm
 
 	hero.weapons.clear()
-	for kind in [WeaponBase.WeaponKind.MG, WeaponBase.WeaponKind.SHOTGUN]:
+	var kinds: Array[int] = [WeaponBase.WeaponKind.MG, WeaponBase.WeaponKind.SHOTGUN]
+	for s_idx in range(kinds.size()):
 		var w := HitscanWeapon.new()
-		w.configure(hero, kind, hero.archetype)
+		w.configure(hero, kinds[s_idx], int(hero.weapon_slot_archetypes.get(s_idx, hero.archetype)))
 		hero.add_child(w)
 		hero.weapons.append(w)
 
 	var bazooka := ProjectileWeapon.new()
-	bazooka.configure(hero, WeaponBase.WeaponKind.BAZOOKA, hero.archetype)
+	bazooka.configure(hero, WeaponBase.WeaponKind.BAZOOKA, int(hero.weapon_slot_archetypes.get(2, hero.archetype)))
 	hero.add_child(bazooka)
 	hero.weapons.append(bazooka)

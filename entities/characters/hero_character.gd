@@ -29,6 +29,7 @@ var hero_name: String = "Hero"
 var team: int = 0 # 0 = Royal, 1 = National
 var class_id: int = 0 # 0 = Soldier, 1 = Gunner, 2 = Commando
 var archetype: int = 0
+var weapon_slot_archetypes: Dictionary = {}
 var is_local_player: bool = false
 var is_bot: bool = false
 
@@ -36,7 +37,7 @@ var is_bot: bool = false
 var max_hp: int = 110
 var hp: int = 110
 var shield: int = 0
-var base_move_speed: float = 7.8
+var base_move_speed: float = 6.3
 var speed_multiplier: float = 1.0
 var capsule_radius: float = 0.42
 
@@ -54,6 +55,8 @@ var prev_jump_held: bool = false
 var aim_yaw: float = 0.0
 var aim_pitch: float = 0.0
 var selected_weapon_slot: int = 0
+var _last_weapon_slot: int = 1
+var _prev_seat_keys: int = 0
 var current_vehicle_id: int = -1
 var current_seat_index: int = -1
 var current_seat_enclosed: bool = false
@@ -104,6 +107,10 @@ var hero_camera: HeroCamera
 var _walk_phase: float = 0.0
 var _weapon_recoil_anim: float = 0.0
 var _fire_pose_timer: float = 0.0
+var _skill_anim_timer: float = 0.0
+var _skill_anim_duration: float = 0.55
+var _skill_anim_style: String = ""
+var last_skill_anim_name: String = ""
 var _shown_weapon_kind: int = -1
 var _prev_q_held: bool = false
 var _upper_arm_len: float = 0.30
@@ -141,12 +148,13 @@ func _ready() -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
-func setup_identity(p_entity_id: int, p_name: String, p_team: int, p_class_id: int, p_archetype: int, p_local: bool, p_bot: bool) -> void:
+func setup_identity(p_entity_id: int, p_name: String, p_team: int, p_class_id: int, p_archetype: int, p_local: bool, p_bot: bool, p_slot_archetypes: Dictionary = {}) -> void:
 	entity_id = p_entity_id
 	hero_name = p_name
 	team = p_team
 	class_id = p_class_id
 	archetype = p_archetype
+	weapon_slot_archetypes = p_slot_archetypes.duplicate()
 	is_local_player = p_local
 	is_bot = p_bot
 	aim_yaw = -PI * 0.5 if team == NetworkManager.TEAM_ROYAL else PI * 0.5
@@ -196,15 +204,15 @@ func _apply_class_defaults() -> void:
 	match class_id:
 		NetworkManager.CLASS_SOLDIER:
 			max_hp = 110
-			base_move_speed = 7.8
+			base_move_speed = 6.3
 			capsule_radius = 0.42
 		NetworkManager.CLASS_GUNNER:
 			max_hp = 150
-			base_move_speed = 6.4
+			base_move_speed = 5.4
 			capsule_radius = 0.54
 		NetworkManager.CLASS_COMMANDO:
 			max_hp = 80
-			base_move_speed = 9.0
+			base_move_speed = 7.2
 			capsule_radius = 0.36
 	hp = max_hp
 	if _capsule_shape != null:
@@ -704,6 +712,7 @@ func _animate_character(delta: float) -> void:
 
 	_weapon_recoil_anim = maxf(0.0, _weapon_recoil_anim - 7.5 * delta)
 	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
+	_skill_anim_timer = maxf(0.0, _skill_anim_timer - delta)
 
 	if not is_defeated:
 		_defeat_elapsed = 0.0
@@ -864,6 +873,106 @@ func _animate_character(delta: float) -> void:
 		_torso_pivot.rotation.y = lerpf(counter_twist, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
 		_head_pivot.rotation.x = aim_pitch * 0.35
 		_pose_held_weapon_and_arms(stride, fire_blend, kick, reloading)
+		if _skill_anim_timer > 0.0:
+			var s_t: float = 1.0 - clampf(_skill_anim_timer / maxf(0.05, _skill_anim_duration), 0.0, 1.0)
+			_pose_skill_animation(s_t)
+
+
+func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
+	var style: String = "charge_pump"
+	var dur: float = 0.55
+	if slot_idx >= 100:
+		match slot_idx - 100:
+			0: style = "raise_med"; dur = 0.70
+			1: style = "throw_overhead"; dur = 0.50
+			2: style = "flex_shield"; dur = 0.50
+			3: style = "charge_pump"; dur = 0.50
+	else:
+		match p_class_id:
+			NetworkManager.CLASS_SOLDIER:
+				match slot_idx:
+					0: style = "raise_med"; dur = 0.65
+					1: style = "weapon_charge"; dur = 0.50
+					2: style = "throw_overhead"; dur = 0.55
+					3: style = "clap_strike"; dur = 0.60
+					4: style = "radar_temple"; dur = 0.65
+			NetworkManager.CLASS_GUNNER:
+				match slot_idx:
+					0: style = "flex_shield"; dur = 0.60
+					1: style = "charge_pump"; dur = 0.55
+					2: style = "keg_throw"; dur = 0.68
+					3: style = "weapon_charge"; dur = 0.50
+					4: style = "flex_shield"; dur = 0.60
+			NetworkManager.CLASS_COMMANDO:
+				match slot_idx:
+					0: style = "cloak_sweep"; dur = 0.55
+					1: style = "weapon_charge"; dur = 0.50
+					2: style = "blade_coat"; dur = 0.58
+					3: style = "plant_kneel"; dur = 0.65
+					4: style = "charge_pump"; dur = 0.55
+					5: style = "mark_point"; dur = 0.70
+	_skill_anim_style = style
+	last_skill_anim_name = style
+	_skill_anim_duration = dur
+	_skill_anim_timer = dur
+
+
+func _pose_skill_animation(t: float) -> void:
+	var pulse: float = sin(t * PI)
+	match _skill_anim_style:
+		"clap_strike": # Blasting Strike: dramatic two-palm shockwave clap forward
+			_torso_pivot.rotation.x = -0.18 * pulse
+			_arm_l_pivot.rotation = Vector3(1.55 * pulse, -0.45 * pulse, lerpf(1.2, 0.08, t))
+			_arm_r_pivot.rotation = Vector3(1.55 * pulse, 0.45 * pulse, lerpf(-1.2, -0.08, t))
+			_forearm_l_pivot.rotation = Vector3(0.25, 0.0, 0.0)
+			_forearm_r_pivot.rotation = Vector3(0.25, 0.0, 0.0)
+		"keg_throw": # Explosive Keg: two-hand overhead barrel heave forward
+			var arc: float = lerpf(2.85, 0.95, t)
+			_torso_pivot.rotation.x = lerpf(0.22, -0.26, t) * pulse
+			_arm_l_pivot.rotation = Vector3(arc, 0.0, 0.22)
+			_arm_r_pivot.rotation = Vector3(arc, 0.0, -0.22)
+			_forearm_l_pivot.rotation = Vector3(0.35, 0.0, 0.0)
+			_forearm_r_pivot.rotation = Vector3(0.35, 0.0, 0.0)
+		"throw_overhead": # Grenade Spam / Wrench swing
+			var swing: float = lerpf(2.6, 0.55, t)
+			_torso_pivot.rotation.y = -0.35 * cos(t * PI)
+			_arm_l_pivot.rotation = Vector3(swing, 0.0, 0.25)
+			_forearm_l_pivot.rotation = Vector3(0.4, 0.0, 0.0)
+		"raise_med": # Combat Medicine / Bandages raise
+			_arm_l_pivot.rotation = Vector3(2.45 * pulse, 0.0, 0.35 * pulse)
+			_forearm_l_pivot.rotation = Vector3(0.45 * pulse, 0.0, 0.0)
+			_torso_pivot.rotation.x = 0.08 * pulse
+		"radar_temple": # Sixth Sense hand-to-temple scanner salute
+			_arm_l_pivot.rotation = Vector3(1.85 * pulse, 0.0, 0.55 * pulse)
+			_forearm_l_pivot.rotation = Vector3(1.75 * pulse, 0.0, -0.45 * pulse)
+			_head_pivot.rotation.y = sin(t * TAU) * 0.28
+		"mark_point": # Mark Target laser spotter point forward
+			_arm_l_pivot.rotation = Vector3(1.55 * pulse, 0.0, 0.12)
+			_forearm_l_pivot.rotation = Vector3(0.15, 0.0, 0.0)
+			_torso_pivot.rotation.y = 0.20 * pulse
+		"plant_kneel": # Troop Trap crouch & ground plant
+			_hips_pivot.position.y = lerpf(_hips_pivot.position.y, 0.44, pulse)
+			_leg_l_pivot.rotation.x = -0.75 * pulse
+			_leg_r_pivot.rotation.x = -0.75 * pulse
+			_torso_pivot.rotation.x = -0.38 * pulse
+			_arm_l_pivot.rotation = Vector3(1.1 * pulse, 0.0, 0.15)
+		"cloak_sweep": # Stealth arm sweep across cloak
+			_arm_l_pivot.rotation = Vector3(1.25 * pulse, -0.75 * pulse, 0.3)
+			_forearm_l_pivot.rotation = Vector3(1.1 * pulse, 0.0, 0.0)
+		"blade_coat": # Poisoned Blade vial coat across weapon
+			_arm_l_pivot.rotation = Vector3(1.15 * pulse, -0.45 * pulse, 0.1)
+			_forearm_l_pivot.rotation = Vector3(0.85 * pulse, 0.0, 0.0)
+			_arm_r_pivot.rotation = Vector3(1.05 * pulse, 0.35 * pulse, -0.1)
+		"flex_shield": # Hero Shield / Eat Grenades chest slam
+			_torso_pivot.rotation.x = 0.18 * pulse
+			_arm_l_pivot.rotation = Vector3(1.35 * pulse, -0.35 * pulse, 0.45 * pulse)
+			_arm_r_pivot.rotation = Vector3(1.35 * pulse, 0.35 * pulse, -0.45 * pulse)
+		"weapon_charge": # Burning Bullets / Piercing Shot / Frenzy Fire weapon chamber slam
+			_arm_l_pivot.rotation.x += 0.55 * pulse
+			_torso_pivot.rotation.x = -0.10 * pulse
+		_: # "charge_pump": Leg It / Elixir raised fist pump
+			_arm_l_pivot.rotation = Vector3(2.55 * pulse, 0.0, 0.3 * pulse)
+			_forearm_l_pivot.rotation = Vector3(0.25, 0.0, 0.0)
 
 
 func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, reloading: bool) -> void:
@@ -1036,19 +1145,36 @@ func _sample_local_input() -> InputCmd:
 		cmd.aim_yaw = hero_camera.yaw
 		cmd.aim_pitch = hero_camera.pitch
 
-	# Weapon slots 1, 2, 3 (+ Q cycle) matching BFH hotbar
+	# Weapon slots 1..4 + Q last-weapon quick-switch (across ALL equipped slots)
+	var next_slot: int = selected_weapon_slot
 	if Input.is_key_pressed(KEY_1):
-		selected_weapon_slot = 0
+		next_slot = 0
 	elif Input.is_key_pressed(KEY_2) and weapons.size() > 1:
-		selected_weapon_slot = 1
+		next_slot = 1
 	elif Input.is_key_pressed(KEY_3) and weapons.size() > 2:
-		selected_weapon_slot = 2
+		next_slot = 2
 	elif Input.is_key_pressed(KEY_4) and weapons.size() > 3:
-		selected_weapon_slot = 3
+		next_slot = 3
+	if next_slot != selected_weapon_slot:
+		switch_weapon_slot(next_slot)
+
 	var q_held: bool = Input.is_key_pressed(KEY_Q)
 	if q_held and not _prev_q_held:
-		selected_weapon_slot = (selected_weapon_slot + 1) % maxi(1, weapons.size())
+		quick_switch_last_weapon()
 	_prev_q_held = q_held
+
+	# F1..F4 seat switching when inside a vehicle
+	if current_vehicle_id >= 0:
+		var seat_keys: Array[int] = [KEY_F1, KEY_F2, KEY_F3, KEY_F4]
+		var cur_seat_mask: int = 0
+		for sk_i in range(4):
+			if Input.is_key_pressed(seat_keys[sk_i]):
+				cur_seat_mask |= (1 << sk_i)
+				if (_prev_seat_keys & (1 << sk_i)) == 0:
+					NetworkManager.request_seat_switch(sk_i)
+		_prev_seat_keys = cur_seat_mask
+	else:
+		_prev_seat_keys = 0
 
 	cmd.set_button(InputCmd.BTN_JUMP, Input.is_key_pressed(KEY_SPACE))
 	cmd.set_button(InputCmd.BTN_CROUCH, Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_C))
@@ -1056,19 +1182,43 @@ func _sample_local_input() -> InputCmd:
 	cmd.set_button(InputCmd.BTN_AIM, Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))
 	cmd.set_button(InputCmd.BTN_RELOAD, Input.is_key_pressed(KEY_R))
 	cmd.set_button(InputCmd.BTN_INTERACT, Input.is_key_pressed(KEY_E))
-	cmd.set_button(InputCmd.BTN_SKILL_1, Input.is_key_pressed(KEY_5) or Input.is_key_pressed(KEY_F))
-	cmd.set_button(InputCmd.BTN_SKILL_2, Input.is_key_pressed(KEY_6) or Input.is_key_pressed(KEY_G))
-	cmd.set_button(InputCmd.BTN_SKILL_3, Input.is_key_pressed(KEY_7))
-	cmd.set_button(InputCmd.BTN_SKILL_4, Input.is_key_pressed(KEY_8))
-	cmd.set_button(InputCmd.BTN_SKILL_5, Input.is_key_pressed(KEY_9))
-	cmd.set_button(InputCmd.BTN_WIDGET_1, Input.is_key_pressed(KEY_Z) or Input.is_key_pressed(KEY_0))
-	cmd.set_button(InputCmd.BTN_WIDGET_2, Input.is_key_pressed(KEY_X))
-	cmd.set_button(InputCmd.BTN_WIDGET_3, Input.is_key_pressed(KEY_V))
+
+	var s1_pressed: bool = Input.is_key_pressed(InputCmd.get_skill_key(0)) or (not InputCmd.is_key_assigned_anywhere(KEY_F) and Input.is_key_pressed(KEY_F))
+	var s2_pressed: bool = Input.is_key_pressed(InputCmd.get_skill_key(1)) or (not InputCmd.is_key_assigned_anywhere(KEY_G) and Input.is_key_pressed(KEY_G))
+	cmd.set_button(InputCmd.BTN_SKILL_1, s1_pressed)
+	cmd.set_button(InputCmd.BTN_SKILL_2, s2_pressed)
+	cmd.set_button(InputCmd.BTN_SKILL_3, Input.is_key_pressed(InputCmd.get_skill_key(2)))
+	cmd.set_button(InputCmd.BTN_SKILL_4, Input.is_key_pressed(InputCmd.get_skill_key(3)))
+	cmd.set_button(InputCmd.BTN_SKILL_5, Input.is_key_pressed(InputCmd.get_skill_key(4)))
+	cmd.set_button(InputCmd.BTN_SKILL_6, Input.is_key_pressed(InputCmd.get_skill_key(5)))
+	cmd.set_button(InputCmd.BTN_WIDGET_1, Input.is_key_pressed(InputCmd.get_widget_key(0)))
+	cmd.set_button(InputCmd.BTN_WIDGET_2, Input.is_key_pressed(InputCmd.get_widget_key(1)))
+	cmd.set_button(InputCmd.BTN_WIDGET_3, Input.is_key_pressed(InputCmd.get_widget_key(2)))
+	cmd.set_button(InputCmd.BTN_WIDGET_4, Input.is_key_pressed(InputCmd.get_widget_key(3)))
 	cmd.set_button(InputCmd.BTN_EMOTE, Input.is_key_pressed(KEY_T))
 
 	cmd.selected_weapon_slot = selected_weapon_slot
 	cmd.view_interp_tick_delta = NetworkManager.get_view_interp_tick_delta()
 	return cmd
+
+
+func switch_weapon_slot(new_slot: int) -> void:
+	var max_slot: int = maxi(0, weapons.size() - 1)
+	var clamped: int = clampi(new_slot, 0, max_slot)
+	if clamped == selected_weapon_slot:
+		return
+	_last_weapon_slot = selected_weapon_slot
+	selected_weapon_slot = clamped
+
+
+func quick_switch_last_weapon() -> void:
+	var w_count: int = weapons.size()
+	if w_count <= 1:
+		return
+	var target: int = clampi(_last_weapon_slot, 0, w_count - 1)
+	if target == selected_weapon_slot:
+		target = (selected_weapon_slot + 1) % w_count
+	switch_weapon_slot(target)
 
 
 func can_open_parachute() -> bool:
@@ -1558,11 +1708,16 @@ func apply_knockback(impulse: Vector3) -> void:
 	knockback_seq = (knockback_seq + 1) & 0xFF
 
 
-func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = false, bypass_enclosure: bool = false) -> int:
+func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = false, bypass_enclosure: bool = false, is_dot_tick: bool = false) -> int:
 	if is_defeated or amount <= 0:
 		return 0
 	if current_vehicle_id >= 0 and current_seat_enclosed and not bypass_enclosure:
 		return 0
+	if not is_dot_tick and status_effects != null:
+		if status_effects.has_method("interrupt_bandage_channel"):
+			status_effects.interrupt_bandage_channel()
+		if amount > 15 and status_effects.has_method("break_stealth"):
+			status_effects.break_stealth()
 	var remaining: int = amount
 	if shield > 0:
 		var absorbed: int = mini(shield, remaining)
