@@ -36,6 +36,7 @@ func _ready() -> void:
 	await _test_phase6_skills_20v20_arsenal()
 	await _test_phase7_task1_skills_hud_pooling()
 	await _test_phase7_task2_hotkeys_menu()
+	await _test_phase7_task3_perf_cache_vfx()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -3865,3 +3866,228 @@ func _test_phase7_task2_hotkeys_menu() -> void:
 	if FileAccess.file_exists(cfg_path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(cfg_path))
 	InputCmd.reset_default_hotkeys()
+
+
+func _test_phase7_task3_perf_cache_vfx() -> void:
+	# 1. GameCache completeness: skill_2_5, all 4 widgets, xray shader, shared VFX meshes
+	GameCache.clear_all()
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
+	var has_no_dead_widget_keys: bool = (
+		not GameCache.ALL_TEXTURE_KEYS.has("icon_widget_bandage")
+		and not GameCache.ALL_TEXTURE_KEYS.has("icon_widget_wrench")
+		and not GameCache.ALL_TEXTURE_KEYS.has("icon_widget_tonic")
+	)
+	var has_xray_path: bool = GameCache.SHADER_PATHS.has("res://vfx_shaders/xray_silhouette.gdshader")
+	var xray_loaded: Shader = load("res://vfx_shaders/xray_silhouette.gdshader") as Shader
+	var cached_s25: bool = CartoonAssets._cache.has("icon_skill_2_5") and CartoonAssets.get_texture("icon_skill_2_5") != null
+	var cached_widgets: bool = true
+	for wi in range(4):
+		if not CartoonAssets._cache.has("icon_widget_%d" % wi) or CartoonAssets.get_texture("icon_widget_%d" % wi) == null:
+			cached_widgets = false
+			break
+	var shared_meshes_warmed: bool = StatusEffectsVFX._shared_meshes.size() >= 5
+	_assert(
+		has_no_dead_widget_keys and has_xray_path and xray_loaded != null and cached_s25 and cached_widgets and shared_meshes_warmed,
+		"GameCache warms icon_skill_2_5, icon_widget_0..3, xray_silhouette.gdshader, and StatusEffectsVFX shared meshes"
+	)
+
+	var prewarm_host := Node3D.new()
+	add_child(prewarm_host)
+	var prewarm_node: Node3D = GameCache.prewarm_gpu_pipelines(prewarm_host)
+	_assert(prewarm_node != null and GameCache.is_gpu_warmed(), "GameCache.prewarm_gpu_pipelines compiles SHADER_PATHS cleanly")
+	GameCache.cleanup_prewarm(prewarm_node)
+	prewarm_host.queue_free()
+
+	# 2. Dirty-state VFX cache invalidation on HeroCharacter & VehicleBase
+	var local_v := HeroCharacter.new()
+	local_v.setup_identity(7301, "VfxLocal", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	var enemy_v := HeroCharacter.new()
+	enemy_v.setup_identity(7302, "VfxEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(local_v)
+	add_child(enemy_v)
+	local_v.global_position = Vector3.ZERO
+	enemy_v.global_position = Vector3(4.0, 0.0, 0.0)
+
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var clean_key: String = enemy_v._last_vfx_key
+	var clean_mat := (enemy_v._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial
+	var clean_ok: bool = not clean_key.is_empty() and (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay == null and enemy_v.visual_root.visible
+
+	# Burn on -> off
+	enemy_v.active_flags = NetSerializer.SNAP_BURNING
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var burn_key: String = enemy_v._last_vfx_key
+	var burn_rim: Color = clean_mat.get_shader_parameter("rim_color")
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var post_burn_key: String = enemy_v._last_vfx_key
+
+	# Shield on -> off
+	enemy_v.active_flags = NetSerializer.SNAP_SHIELDED
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var shield_key: String = enemy_v._last_vfx_key
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+
+	# Marked X-Ray on -> off
+	enemy_v.active_flags = NetSerializer.SNAP_MARKED_TARGET
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var mark_ov: Material = (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var cleared_ov: Material = (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay
+
+	# Stealth on (within radius -> beyond radius -> off)
+	enemy_v.is_stealthed = true
+	enemy_v.active_flags = NetSerializer.SNAP_STEALTHED
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var cloak_close_ok: bool = enemy_v.visual_root.visible and clean_mat.shader == StatusEffectsVFX.HERO_CLOAK_SHADER
+	enemy_v.global_position = Vector3(30.0, 0.0, 0.0)
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var cloak_far_hidden: bool = not enemy_v.visual_root.visible
+	enemy_v.is_stealthed = false
+	enemy_v.active_flags = 0
+	StatusEffectsVFX.update_hero_client_visuals(enemy_v, local_v, 0.016)
+	var uncloak_restored: bool = (
+		enemy_v.visual_root.visible
+		and clean_mat.shader == StatusEffectsVFX.HERO_SHADER
+		and (enemy_v._mesh_parts[0] as MeshInstance3D).material_overlay == null
+		and enemy_v._last_vfx_key == clean_key
+	)
+	_assert(
+		clean_ok and burn_key != clean_key and burn_rim.r > 0.9 and post_burn_key == clean_key and shield_key != clean_key and mark_ov != null and cleared_ov == null and cloak_close_ok and cloak_far_hidden and uncloak_restored,
+		"StatusEffectsVFX dirty cache updates on burn/shield/mark/stealth and restores clean defaults when cleared"
+	)
+
+	# VehicleBase _cached_visual_meshes & _last_xray_state
+	var vfx_jeep := VehicleJeep.new()
+	vfx_jeep.id = 7390
+	vfx_jeep.team = NetworkManager.TEAM_NATIONAL
+	add_child(vfx_jeep)
+	StatusEffectsVFX.update_vehicle_client_visuals(vfx_jeep, local_v)
+	var veh_init_ok: bool = vfx_jeep._cached_visual_meshes.size() > 0 and vfx_jeep._last_xray_state == 0 and vfx_jeep._cached_visual_meshes[0].material_overlay == null
+	vfx_jeep.is_marked = true
+	StatusEffectsVFX.update_vehicle_client_visuals(vfx_jeep, local_v)
+	var veh_mark_ok: bool = vfx_jeep._last_xray_state == 1 and vfx_jeep._cached_visual_meshes[0].material_overlay == StatusEffectsVFX._get_xray_material()
+	vfx_jeep.is_marked = false
+	StatusEffectsVFX.update_vehicle_client_visuals(vfx_jeep, local_v)
+	var veh_clear_ok: bool = vfx_jeep._last_xray_state == 0 and vfx_jeep._cached_visual_meshes[0].material_overlay == null
+	_assert(veh_init_ok and veh_mark_ok and veh_clear_ok, "VehicleBase caches visual meshes and toggles _last_xray_state cleanly (0 -> 1 -> 0)")
+
+	# 3. BotController nearest-visible sorting (ignores defeated & wall-occluded closer enemies)
+	var bot_h := HeroCharacter.new()
+	bot_h.setup_identity(7310, "SortBot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	var occ_enemy := HeroCharacter.new()
+	occ_enemy.setup_identity(7311, "OccEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var dead_enemy := HeroCharacter.new()
+	dead_enemy.setup_identity(7312, "DeadEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var mid_enemy := HeroCharacter.new()
+	mid_enemy.setup_identity(7313, "MidEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var far_enemy := HeroCharacter.new()
+	far_enemy.setup_identity(7314, "FarEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var los_wall := StaticBody3D.new()
+	los_wall.collision_layer = 1
+	var los_col := CollisionShape3D.new()
+	var los_box := BoxShape3D.new()
+	los_box.size = Vector3(8.0, 5.0, 1.0)
+	los_col.shape = los_box
+	los_wall.add_child(los_col)
+	add_child(los_wall)
+	add_child(bot_h)
+	add_child(occ_enemy)
+	add_child(dead_enemy)
+	add_child(mid_enemy)
+	add_child(far_enemy)
+
+	bot_h.global_position = Vector3(100.0, 0.0, 0.0)
+	los_wall.global_position = Vector3(100.0, 2.0, -5.0)
+	occ_enemy.global_position = Vector3(100.0, 0.0, -10.0) # 10m away but behind wall
+	dead_enemy.global_position = Vector3(106.0, 0.0, 0.0) # 6m away in LOS but defeated
+	dead_enemy.is_defeated = true
+	mid_enemy.global_position = Vector3(120.0, 0.0, 0.0) # 20m away in clear LOS
+	far_enemy.global_position = Vector3(138.0, 0.0, 0.0) # 38m away in clear LOS
+	await get_tree().physics_frame
+
+	var bot_ai := BotController.new()
+	bot_ai.setup(bot_h)
+	add_child(bot_ai)
+	var sort_map: Dictionary = {7310: bot_h, 7311: occ_enemy, 7312: dead_enemy, 7313: mid_enemy, 7314: far_enemy}
+	var chosen_enemy: HeroCharacter = bot_ai._find_nearest_visible_enemy(sort_map, bot_h.get_world_3d().direct_space_state)
+	_assert(chosen_enemy == mid_enemy, "BotController._find_nearest_visible_enemy skips defeated/occluded targets and picks closest visible enemy")
+
+	# 4. All 16 Skills + 4 Widgets thematic multi-part 3D VFX & procedural poses
+	var vfx_stage := Node3D.new()
+	vfx_stage.name = "Phase7Task3VfxStage"
+	add_child(vfx_stage)
+
+	var anim_hero := HeroCharacter.new()
+	anim_hero.setup_identity(7320, "VfxCaster", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	add_child(anim_hero)
+
+	var shared_mesh_vals: Array = StatusEffectsVFX._shared_meshes.values()
+	var vfx_specs: Array = []
+	for cls_id in range(3):
+		var n_sk: int = 6 if cls_id == NetworkManager.CLASS_COMMANDO else 5
+		for sk_i in range(n_sk):
+			var exp_pose: String = ""
+			if cls_id == NetworkManager.CLASS_GUNNER and sk_i == 1:
+				exp_pose = "sprint_boost"
+			elif cls_id == NetworkManager.CLASS_GUNNER and sk_i == 4:
+				exp_pose = "chomp_absorb"
+			elif cls_id == NetworkManager.CLASS_COMMANDO and sk_i == 4:
+				exp_pose = "sprint_boost"
+			vfx_specs.append([cls_id, sk_i, exp_pose])
+	for w_i in range(4):
+		var exp_w_pose: String = "raise_med" if w_i == 3 else ""
+		vfx_specs.append([0, 100 + w_i, exp_w_pose])
+
+	var total_checked: int = 0
+	var all_multipart_ok: bool = true
+	var all_noshadow_ok: bool = true
+	var all_shared_ok: bool = true
+	var all_poses_ok: bool = true
+
+	for spec in vfx_specs:
+		var cls_id: int = int(spec[0])
+		var slot_id: int = int(spec[1])
+		var expected_pose: String = str(spec[2])
+		total_checked += 1
+		anim_hero.trigger_skill_visual(cls_id, slot_id)
+		if anim_hero.last_skill_anim_name.is_empty():
+			all_poses_ok = false
+		if not expected_pose.is_empty() and anim_hero.last_skill_anim_name != expected_pose:
+			all_poses_ok = false
+		StatusEffectsVFX.spawn_skill_vfx(vfx_stage, cls_id, slot_id, Vector3(float(total_checked) * 2.0, 0.0, 0.0), 0.5)
+		var vfx_name: String = "SkillVFX_%d_%d" % [cls_id, slot_id]
+		var node_vfx: Node = vfx_stage.get_node_or_null(vfx_name)
+		if node_vfx == null or node_vfx.get_child_count() < 2:
+			all_multipart_ok = false
+			continue
+		var meshes_found: Array[MeshInstance3D] = []
+		_collect_mesh_instances(node_vfx, meshes_found)
+		if meshes_found.size() < 2:
+			all_multipart_ok = false
+		for mi in meshes_found:
+			if mi.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+				all_noshadow_ok = false
+			if not shared_mesh_vals.has(mi.mesh):
+				all_shared_ok = false
+
+	_assert(
+		total_checked == 20 and all_multipart_ok and all_noshadow_ok and all_shared_ok and all_poses_ok,
+		"All 16 skills + 4 widgets (%d total) spawn multi-part shadow-off shared-mesh 3D VFX & distinct poses (sprint_boost, chomp_absorb)" % total_checked
+	)
+
+	vfx_stage.queue_free()
+	anim_hero.queue_free()
+	bot_ai.queue_free()
+	bot_h.queue_free()
+	occ_enemy.queue_free()
+	dead_enemy.queue_free()
+	mid_enemy.queue_free()
+	far_enemy.queue_free()
+	los_wall.queue_free()
+	vfx_jeep.queue_free()
+	local_v.queue_free()
+	enemy_v.queue_free()

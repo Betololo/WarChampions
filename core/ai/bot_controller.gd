@@ -79,9 +79,9 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 	if bot_hero.is_inside_tree() and bot_hero.get_world_3d() != null:
 		space_state = bot_hero.get_world_3d().direct_space_state
 
-	# 1. Look for nearest visible enemy hero (stagger full scan every 3rd tick per bot; validate engaged target in between)
+	# 1. Look for nearest visible enemy hero (stagger full scan every 6th tick per bot; validate engaged target in between)
 	var target_enemy: HeroCharacter = null
-	var do_full_scan: bool = (_ai_tick == 1) or (((_ai_tick + bot_hero.entity_id) % 3) == 0)
+	var do_full_scan: bool = (_ai_tick == 1) or (((_ai_tick + bot_hero.entity_id) % 6) == 0)
 	if not do_full_scan and _engaged_target_id >= 0:
 		var cand: HeroCharacter = heroes_by_id.get(_engaged_target_id) as HeroCharacter
 		if cand != null and is_instance_valid(cand) and not cand.is_defeated and cand.team != bot_hero.team:
@@ -207,23 +207,30 @@ func _pick_objective(capture_points: Array[CapturePoint]) -> void:
 
 
 func _find_nearest_visible_enemy(heroes_by_id: Dictionary, space_state: PhysicsDirectSpaceState3D = null) -> HeroCharacter:
-	var best: HeroCharacter = null
-	var best_dist: float = MAX_DETECT_RANGE
+	var max_range_sq: float = MAX_DETECT_RANGE * MAX_DETECT_RANGE
 	var bot_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
+	var candidates: Array = []
 	for id_key in heroes_by_id.keys():
-		var h: HeroCharacter = heroes_by_id[id_key]
-		if h == null or h.is_defeated or h.team == bot_hero.team:
+		var h: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+		if h == null or not is_instance_valid(h) or h.is_defeated or h.team == bot_hero.team:
 			continue
 		var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
-		var d: float = h_pos.distance_to(bot_pos)
-		if d >= best_dist:
+		var dist_sq: float = h_pos.distance_squared_to(bot_pos)
+		if dist_sq > max_range_sq:
 			continue
 		if h.is_stealthed:
 			var detect_r: float = h.status_effects.stealth_detection_radius if h.status_effects != null else 8.0
-			if d > detect_r:
+			if dist_sq > detect_r * detect_r:
 				continue
-		if not has_line_of_sight(space_state, h):
-			continue
-		best_dist = d
-		best = h
-	return best
+		candidates.append([dist_sq, h])
+
+	if candidates.size() > 1:
+		candidates.sort_custom(func(a: Array, b: Array) -> bool:
+			return float(a[0]) < float(b[0])
+		)
+
+	for entry in candidates:
+		var cand: HeroCharacter = entry[1] as HeroCharacter
+		if has_line_of_sight(space_state, cand):
+			return cand
+	return null
