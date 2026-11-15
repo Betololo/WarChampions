@@ -6,6 +6,16 @@ extends Node3D
 
 const HERO_SHADER: Shader = preload("res://vfx_shaders/hero_cel_shader.gdshader")
 const HERO_CLOAK_SHADER: Shader = preload("res://vfx_shaders/hero_cloak_shader.gdshader")
+const XRAY_SHADER: Shader = preload("res://vfx_shaders/xray_silhouette.gdshader")
+
+static var _xray_mat: ShaderMaterial = null
+
+
+static func _get_xray_material() -> ShaderMaterial:
+	if _xray_mat == null:
+		_xray_mat = ShaderMaterial.new()
+		_xray_mat.shader = XRAY_SHADER
+	return _xray_mat
 
 
 static func attach_hero_vfx_and_shader(hero: HeroCharacter) -> void:
@@ -65,8 +75,13 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var poisoned: bool = (hero.active_flags & NetSerializer.SNAP_POISONED) != 0
 	var shielded: bool = (hero.active_flags & NetSerializer.SNAP_SHIELDED) != 0
 	var target_shader: Shader = HERO_CLOAK_SHADER if cloak_val > 0.01 else HERO_SHADER
+	var marked_enemy: bool = is_enemy and ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0)
+	var sensed_enemy: bool = is_enemy and local_hero != null and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (hero.global_position.distance_to(local_hero.global_position) <= 55.0)
+	var show_xray: bool = (marked_enemy or sensed_enemy) and not hero.is_defeated
+	var xray_ov: ShaderMaterial = _get_xray_material() if show_xray else null
 
 	for part in hero._mesh_parts:
+		part.material_overlay = xray_ov
 		if part.material_override is ShaderMaterial:
 			var smat := part.material_override as ShaderMaterial
 			if smat.shader != target_shader:
@@ -78,12 +93,32 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 			elif poisoned:
 				smat.set_shader_parameter("rim_color", Color(0.25, 0.95, 0.25))
 				smat.set_shader_parameter("rim_strength", 1.8)
+			elif marked_enemy:
+				smat.set_shader_parameter("rim_color", Color(1.0, 0.16, 0.12))
+				smat.set_shader_parameter("rim_strength", 2.0)
 			elif shielded:
 				smat.set_shader_parameter("rim_color", Color(0.25, 0.72, 1.0))
 				smat.set_shader_parameter("rim_strength", 1.65)
 			else:
 				smat.set_shader_parameter("rim_color", Color(1.0, 0.95, 0.82))
 				smat.set_shader_parameter("rim_strength", 0.42)
+
+
+static func update_vehicle_client_visuals(veh: VehicleBase, local_hero: HeroCharacter) -> void:
+	if veh == null or veh.is_destroyed or veh._visual_root == null:
+		return
+	var is_enemy: bool = local_hero != null and veh.team >= 0 and veh.team != local_hero.team
+	var local_senses: bool = is_enemy and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (veh.global_position.distance_to(local_hero.global_position) <= 55.0)
+	var show_xray: bool = is_enemy and (veh.is_marked or local_senses)
+	var xray_ov: ShaderMaterial = _get_xray_material() if show_xray else null
+	_apply_overlay_recursive(veh._visual_root, xray_ov)
+
+
+static func _apply_overlay_recursive(node: Node, mat: Material) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_overlay = mat
+	for ch in node.get_children():
+		_apply_overlay_recursive(ch, mat)
 
 
 static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, radius: float = 1.0) -> void:
@@ -245,3 +280,74 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 
 static func spawn_bullet_tracer(parent: Node, start_pos: Vector3, end_pos: Vector3, weapon_kind: int) -> void:
 	spawn_curved_tracer(parent, PackedVector3Array([start_pos, end_pos]), weapon_kind)
+
+
+## Spawns unmistakable world VFX for every one of the 16 heroic skills and 4 widgets.
+static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_pos: Vector3, aim_yaw: float = 0.0) -> void:
+	if parent == null or DisplayServer.get_name().contains("headless"):
+		return
+	var color := Color(0.3, 0.95, 0.45, 0.85)
+	var max_scale: float = 2.6
+	var is_ring: bool = true
+	var dur: float = 0.48
+	var y_offset: float = 1.05
+
+	if slot_idx >= 100:
+		match slot_idx - 100:
+			0: color = Color(0.25, 0.96, 0.45, 0.82) # Bandages
+			1: color = Color(0.95, 0.82, 0.22, 0.88) # Wrench
+			2: color = Color(0.35, 0.78, 1.0, 0.85)  # Fireproof Underwear
+			3: color = Color(0.22, 1.0, 0.62, 0.85)  # Antidote
+	else:
+		match class_id:
+			NetworkManager.CLASS_SOLDIER:
+				match slot_idx:
+					0: color = Color(0.22, 0.95, 0.45, 0.85); max_scale = 5.5; y_offset = 0.25 # Combat Medicine aura
+					1: color = Color(1.0, 0.42, 0.08, 0.90); max_scale = 2.0; y_offset = 1.25 # Burning Bullets
+					2: color = Color(0.95, 0.65, 0.15, 0.85); max_scale = 2.4; y_offset = 1.35 # Grenade Spam
+					3: color = Color(1.0, 0.55, 0.12, 0.92); max_scale = 7.5; y_offset = 0.45 # Blasting Strike shockwave
+					4: color = Color(1.0, 0.86, 0.22, 0.72); max_scale = 9.0; is_ring = false; y_offset = 1.1; dur = 0.55 # Sixth Sense radar dome
+			NetworkManager.CLASS_GUNNER:
+				match slot_idx:
+					0: color = Color(0.22, 0.68, 1.0, 0.78); max_scale = 3.2; is_ring = false; y_offset = 1.0 # Hero Shield dome
+					1: color = Color(0.25, 0.92, 1.0, 0.88); max_scale = 3.8; y_offset = 0.2 # Leg It speed ring
+					2: color = Color(0.95, 0.35, 0.12, 0.86); max_scale = 2.8; y_offset = 1.2 # Explosive Keg launch
+					3: color = Color(1.0, 0.78, 0.18, 0.90); max_scale = 2.4; y_offset = 1.2 # Frenzy Fire
+					4: color = Color(0.32, 1.0, 0.38, 0.85); max_scale = 4.5; y_offset = 0.8 # I Eat Grenades
+			NetworkManager.CLASS_COMMANDO:
+				match slot_idx:
+					0: color = Color(0.75, 0.85, 0.95, 0.55); max_scale = 2.6; y_offset = 1.0 # Stealth smoke veil
+					1: color = Color(1.0, 0.22, 0.22, 0.92); max_scale = 2.2; y_offset = 1.3 # Piercing Shot
+					2: color = Color(0.25, 1.0, 0.25, 0.90); max_scale = 2.2; y_offset = 1.2 # Poisoned Blade
+					3: color = Color(0.65, 0.58, 0.45, 0.82); max_scale = 2.2; y_offset = 0.15 # Troop Trap plant
+					4: color = Color(0.55, 0.88, 1.0, 0.88); max_scale = 3.4; y_offset = 0.3 # Elixir surge
+					5: color = Color(1.0, 0.18, 0.18, 0.88); max_scale = 6.0; y_offset = 1.5; dur = 0.65 # Mark Target laser sweep
+
+	var vfx := MeshInstance3D.new()
+	if is_ring:
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.65
+		cyl.bottom_radius = 0.75
+		cyl.height = 0.14
+		vfx.mesh = cyl
+	else:
+		var sph := SphereMesh.new()
+		sph.radius = 0.65
+		sph.height = 1.3
+		vfx.mesh = sph
+
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.albedo_color = color
+	vfx.material_override = mat
+	vfx.position = world_pos + Vector3(0.0, y_offset, 0.0)
+	vfx.rotation.y = aim_yaw
+	parent.add_child(vfx)
+
+	var tw: Tween = parent.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(vfx, "scale", Vector3(max_scale, 1.5 if is_ring else max_scale, max_scale), dur)
+	tw.tween_property(mat, "albedo_color:a", 0.0, dur)
+	tw.chain().tween_callback(vfx.queue_free)

@@ -943,6 +943,7 @@ static func _sprite_skill(slot_str: String) -> ImageTexture:
 		Color(0.95, 0.80, 0.20),
 		Color(0.35, 0.72, 1.0),
 		Color(0.85, 0.35, 0.95),
+		Color(0.96, 0.22, 0.22),
 	]
 	var c: Color = colors[posmod(idx, colors.size())]
 	_draw_circle(img, 20, 20, 16.0, Color(0.12, 0.15, 0.20, 0.85))
@@ -961,8 +962,11 @@ static func _sprite_widget(slot_str: String) -> ImageTexture:
 	elif idx == 1: # Wrench
 		_draw_line(img, Vector2(10, 30), Vector2(30, 10), 6.0, Color(0.85, 0.88, 0.92))
 		_draw_circle(img, 30, 10, 6.0, Color(0.75, 0.80, 0.88))
-	else: # Antidote / Fireproof
-		_draw_rect(img, 13, 12, 14, 22, Color(0.25, 0.85, 0.95))
+	elif idx == 2: # Fireproof
+		_draw_rect(img, 11, 10, 18, 22, Color(0.25, 0.78, 0.96))
+		_draw_circle(img, 20, 21, 5.5, Color(1.0, 0.56, 0.14))
+	else: # Antidote
+		_draw_rect(img, 13, 12, 14, 22, Color(0.24, 0.88, 0.42))
 		_draw_rect(img, 16, 6, 8, 6, Color(0.85, 0.65, 0.35))
 	return ImageTexture.create_from_image(img)
 
