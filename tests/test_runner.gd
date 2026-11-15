@@ -35,6 +35,7 @@ func _ready() -> void:
 	await _test_phase5_vehicles_grass_and_precision()
 	await _test_phase6_skills_20v20_arsenal()
 	await _test_phase7_task1_skills_hud_pooling()
+	await _test_phase7_task2_hotkeys_menu()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -2537,6 +2538,7 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 
 	# --- 3. Multi-Screen Menu & Settings Verification ---
 	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys.cfg"
 	add_child(menu)
 
 	# Screen switching
@@ -3313,6 +3315,7 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 
 	# 2. Custom Weapon Variants per Class Slot + Q Last-Weapon Toggle
 	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys.cfg"
 	add_child(menu)
 	menu.select_class(NetworkManager.CLASS_SOLDIER)
 	menu.select_weapon_variant(NetworkManager.CLASS_SOLDIER, 0, NetworkManager.ARCHETYPE_SLOW_LONG)
@@ -3539,6 +3542,7 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 	_assert(tint_while_poisoned and not tint_after_antidote, "HUD green poison screen tint activates when poisoned & clears immediately with Antidote")
 
 	# Custom Hotkey UI rebinding -> HUD updates -> Reset defaults
+	menu.hotkeys_config_path = "user://test_hotkeys.cfg"
 	menu.assign_hotkey_from_ui("skill", 5, KEY_H)
 	menu.assign_hotkey_from_ui("widget", 3, KEY_N)
 	await _flush_deferred()
@@ -3547,6 +3551,8 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 		"Custom Skill/Widget hotkeys update HUD hotbar labels live (%s / %s)" % [hud6._skill_slot_keys[5].text, hud6._widget_slot_keys[3].text]
 	)
 	InputCmd.reset_default_hotkeys()
+	if FileAccess.file_exists("user://test_hotkeys.cfg"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://test_hotkeys.cfg"))
 	hud6.refresh_hotkey_labels()
 	# Also verify Commando 6-skill + 4-weapon + 4-widget = 14 visible slots stay completely unclipped at 1280x720
 	var cmd_vis_keys: int = 0
@@ -3759,3 +3765,103 @@ func _test_phase7_task1_skills_hud_pooling() -> void:
 	enemy_a.queue_free()
 	enemy_b.queue_free()
 	jeep7.queue_free()
+
+
+func _test_phase7_task2_hotkeys_menu() -> void:
+	var cfg_path: String = "user://test_phase7_hotkeys.cfg"
+	InputCmd.reset_default_hotkeys()
+
+	# 1. InputCmd.assign_unique_key swaps conflicting keys cleanly without duplicates
+	var orig_s0: int = InputCmd.get_skill_key(0)
+	var orig_s1: int = InputCmd.get_skill_key(1)
+	InputCmd.assign_unique_key("skill", 0, orig_s1)
+	var skill_swapped: bool = InputCmd.get_skill_key(0) == orig_s1 and InputCmd.get_skill_key(1) == orig_s0
+
+	var orig_w0: int = InputCmd.get_widget_key(0)
+	var cur_s0: int = InputCmd.get_skill_key(0)
+	InputCmd.assign_unique_key("widget", 0, cur_s0)
+	var cross_swapped: bool = InputCmd.get_widget_key(0) == cur_s0 and InputCmd.get_skill_key(0) == orig_w0
+	_assert(
+		skill_swapped and cross_swapped,
+		"InputCmd.assign_unique_key swaps conflicting skill and widget keys cleanly without duplicates"
+	)
+
+	# 2. Save / Reset / Load ConfigFile persistence roundtrip
+	InputCmd.reset_default_hotkeys()
+	InputCmd.assign_unique_key("skill", 2, KEY_G)
+	InputCmd.assign_unique_key("widget", 1, KEY_J)
+	var expected_skills: Array[int] = InputCmd.skill_hotkeys.duplicate()
+	var expected_widgets: Array[int] = InputCmd.widget_hotkeys.duplicate()
+	var save_err: int = InputCmd.save_hotkeys_to_config(cfg_path)
+	InputCmd.reset_default_hotkeys()
+	var loaded_ok: bool = InputCmd.load_hotkeys_from_config(cfg_path)
+	_assert(
+		save_err == OK and loaded_ok and InputCmd.skill_hotkeys == expected_skills and InputCmd.widget_hotkeys == expected_widgets,
+		"InputCmd save_hotkeys_to_config / load_hotkeys_from_config roundtrips custom Skill & Widget binds"
+	)
+
+	# 3. ClassSelectMenu 14v14 copy, collapsed MP drawer, Hub/Armory Hotkeys navigation & _ready() load
+	InputCmd.reset_default_hotkeys()
+	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = cfg_path
+	add_child(menu)
+	await _flush_deferred()
+
+	var loaded_on_ready: bool = InputCmd.get_skill_key(2) == KEY_G and InputCmd.get_widget_key(1) == KEY_J and menu._skill_hotkey_buttons[2].text.ends_with("G") and menu._widget_hotkey_buttons[1].text.ends_with("J")
+	var found_14v14_texts: int = 0
+	var found_stale_text: bool = false
+	for node in menu.find_children("*", "Label", true, false):
+		var lbl := node as Label
+		if lbl.text.contains("14v14"):
+			found_14v14_texts += 1
+		if lbl.text.contains("20v20") or lbl.text.contains("12v12"):
+			found_stale_text = true
+	for node in menu.find_children("*", "Button", true, false):
+		var btn := node as Button
+		if btn.text.contains("14v14"):
+			found_14v14_texts += 1
+		if btn.text.contains("20v20") or btn.text.contains("12v12"):
+			found_stale_text = true
+
+	var mp_starts_collapsed: bool = menu._mp_card != null and not menu._mp_card.visible and menu._mp_drawer.visible
+	_assert(
+		loaded_on_ready and found_14v14_texts >= 3 and not found_stale_text and mp_starts_collapsed,
+		"Menu loads saved hotkeys on launch, uses 14v14 copy (%d labels), and collapses _mp_card by default" % found_14v14_texts
+	)
+
+	# Hub -> Settings -> Back to Hub
+	var hub_btn_ok: bool = menu._hub_settings_btn != null and menu._hub_settings_btn.visible and menu._hub_settings_btn.text == "Atalhos (Hotkeys) & Config"
+	menu._hub_settings_btn.pressed.emit()
+	var hub_to_settings_ok: bool = menu.current_screen == "settings" and menu._settings_back_btn.text == "<- Voltar ao Hub"
+	menu._settings_back_btn.pressed.emit()
+	var back_to_hub_ok: bool = menu.current_screen == "hub"
+
+	# Armory -> Settings -> Back to Armory
+	menu.show_screen("armory")
+	var arm_btn_ok: bool = menu._armory_settings_btn != null and menu._armory_settings_btn.visible and menu._armory_settings_btn.text == "Atalhos (Hotkeys)"
+	menu._armory_settings_btn.pressed.emit()
+	var arm_to_settings_ok: bool = menu.current_screen == "settings" and menu._settings_back_btn.text == "<- Voltar ao Arsenal"
+	menu._settings_back_btn.pressed.emit()
+	var back_to_arm_ok: bool = menu.current_screen == "armory"
+	_assert(
+		hub_btn_ok and hub_to_settings_ok and back_to_hub_ok and arm_btn_ok and arm_to_settings_ok and back_to_arm_ok,
+		"Hub & Armory Atalhos buttons open Settings and return cleanly to their origin screen"
+	)
+
+	# Listening state & hint label guard
+	menu.show_screen("settings")
+	var listen_idle: bool = not menu.is_listening_hotkey()
+	menu._begin_hotkey_listen("skill", 0)
+	var listen_active: bool = menu.is_listening_hotkey() and menu._hotkey_hint_lbl.text.contains("Pressione a nova tecla")
+	menu._cancel_hotkey_listen()
+	var listen_cancelled: bool = not menu.is_listening_hotkey() and menu._hotkey_hint_lbl.text.contains("Clique em qualquer botão")
+	_assert(
+		listen_idle and listen_active and listen_cancelled,
+		"is_listening_hotkey() and _hotkey_hint_lbl track listen/cancel state cleanly"
+	)
+
+	# Cleanup test config & restore defaults
+	menu.queue_free()
+	if FileAccess.file_exists(cfg_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(cfg_path))
+	InputCmd.reset_default_hotkeys()

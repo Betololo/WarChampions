@@ -304,6 +304,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if k.keycode == KEY_ESCAPE and class_menu != null:
+			if class_menu.is_listening_hotkey():
+				return
 			var in_active_match: bool = heroes_by_id.has(NetworkManager.local_peer_id)
 			if class_menu.visible:
 				if in_active_match:

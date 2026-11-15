@@ -2,7 +2,7 @@ class_name ClassSelectMenu
 extends CanvasLayer
 
 ## War Champions Multi-Screen Menu & In-Game Pause System:
-## - HubScreen: War Champions 20v20 Cartoon Warfare, Quick Offline Bots, Multiplayer Drawer.
+## - HubScreen: War Champions 14v14 Cartoon Warfare, Quick Offline Bots, Multiplayer Drawer.
 ## - ArmoryScreen: Royal (Azure) vs National (Crimson) Factions, Exclusive Class loadouts, Weapon Variants & 5-6 skills.
 ## - SettingsScreen: Master/SFX/Music sliders, Mouse Sensitivity, Custom Skill/Widget Hotkeys, In-match Pause.
 
@@ -19,6 +19,13 @@ signal class_selected(class_id: int)
 signal resume_match_requested()
 signal leave_match_requested()
 
+const HOTKEY_HINT_DEFAULT: String = "Clique em qualquer botão e pressione a tecla desejada (ESC cancela):"
+const HOTKEY_HINT_LISTENING: String = "Pressione a nova tecla agora... (ESC cancela)"
+const HOTKEY_HINT_COLOR_DEFAULT: Color = Color(0.74, 0.84, 0.94)
+const HOTKEY_HINT_COLOR_LISTENING: Color = Color(1.0, 0.86, 0.24)
+
+@export var hotkeys_config_path: String = InputCmd.DEFAULT_HOTKEYS_PATH
+
 static var current_mouse_sensitivity: float = 0.0024
 
 var selected_team: int = NetworkManager.TEAM_ROYAL
@@ -26,6 +33,7 @@ var selected_class: int = NetworkManager.CLASS_SOLDIER
 var current_screen: String = "hub"
 var _in_match_mode: bool = false
 var _pending_mode: String = "bots" # "bots", "host", "join"
+var _settings_return_screen: String = "hub"
 
 ## Screens
 var _hub_screen: Control
@@ -49,7 +57,10 @@ var _class_buttons: Array[Button] = []
 var _class_cards: Array[PanelContainer] = []
 var _lag_btn: Button
 var _deploy_btn: Button
+var _mp_card: PanelContainer
 var _mp_drawer: VBoxContainer
+var _hub_settings_btn: Button
+var _armory_settings_btn: Button
 var _weapon_variant_row: HBoxContainer
 var _weapon_variant_selectors: Array[OptionButton] = []
 
@@ -62,6 +73,7 @@ var _resume_btn: Button
 var _leave_btn: Button
 var _settings_back_btn: Button
 var _settings_title: Label
+var _hotkey_hint_lbl: Label
 var _skill_hotkey_buttons: Array[Button] = []
 var _widget_hotkey_buttons: Array[Button] = []
 var _reset_hotkeys_btn: Button
@@ -72,6 +84,7 @@ var _listening_hotkey_slot: int = -1
 func _ready() -> void:
 	layer = 20
 	set_process_input(true)
+	InputCmd.load_hotkeys_from_config(hotkeys_config_path)
 	_build_ui()
 	_refresh_summary()
 	show_screen("hub")
@@ -177,7 +190,7 @@ func _build_hub_screen(parent: Control) -> void:
 	title_box.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "20v20 Cartoon Warfare — Seaside Frontline"
+	subtitle.text = "14v14 Cartoon Warfare — Seaside Frontline"
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_font_size_override("font_size", 16)
 	subtitle.add_theme_color_override("font_color", Color(0.48, 0.88, 1.0))
@@ -190,7 +203,7 @@ func _build_hub_screen(parent: Control) -> void:
 	_hub_screen.add_child(mode_box)
 
 	var solo_btn := Button.new()
-	solo_btn.text = "Treino Offline 20v20 Bots"
+	solo_btn.text = "Treino Offline 14v14 Bots"
 	solo_btn.custom_minimum_size = Vector2(480, 46)
 	solo_btn.pressed.connect(func() -> void:
 		_pending_mode = "bots"
@@ -202,28 +215,29 @@ func _build_hub_screen(parent: Control) -> void:
 	mp_toggle_btn.text = "Multiplayer Online"
 	mp_toggle_btn.custom_minimum_size = Vector2(480, 46)
 	mp_toggle_btn.pressed.connect(func() -> void:
-		_mp_drawer.visible = not _mp_drawer.visible
+		_mp_card.visible = not _mp_card.visible
 	)
 	mode_box.add_child(mp_toggle_btn)
 
 	# 3. Multiplayer Drawer Panel
-	var mp_card := PanelContainer.new()
-	mp_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.06, 0.16, 0.26, 0.92), Color(0.30, 0.72, 1.0), 2))
-	mode_box.add_child(mp_card)
+	_mp_card = PanelContainer.new()
+	_mp_card.visible = false
+	_mp_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.06, 0.16, 0.26, 0.92), Color(0.30, 0.72, 1.0), 2))
+	mode_box.add_child(_mp_card)
 
 	var mp_m := MarginContainer.new()
 	mp_m.add_theme_constant_override("margin_left", 14)
 	mp_m.add_theme_constant_override("margin_right", 14)
 	mp_m.add_theme_constant_override("margin_top", 10)
 	mp_m.add_theme_constant_override("margin_bottom", 10)
-	mp_card.add_child(mp_m)
+	_mp_card.add_child(mp_m)
 
 	_mp_drawer = VBoxContainer.new()
 	_mp_drawer.add_theme_constant_override("separation", 8)
 	mp_m.add_child(_mp_drawer)
 
 	var mp_hdr := Label.new()
-	mp_hdr.text = "CONEXÃO MULTIPLAYER ONLINE (12v12 Servidor Dedicado)"
+	mp_hdr.text = "CONEXÃO MULTIPLAYER ONLINE (14v14 Servidor Dedicado)"
 	mp_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mp_hdr.add_theme_font_size_override("font_size", 15)
 	mp_hdr.add_theme_color_override("font_color", Color(0.50, 0.90, 1.0))
@@ -306,13 +320,14 @@ func _build_hub_screen(parent: Control) -> void:
 	)
 	nav_row.add_child(armory_btn)
 
-	var settings_btn := Button.new()
-	settings_btn.text = "Configurações / Controles"
-	settings_btn.custom_minimum_size = Vector2(235, 40)
-	settings_btn.pressed.connect(func() -> void:
+	_hub_settings_btn = Button.new()
+	_hub_settings_btn.text = "Atalhos (Hotkeys) & Config"
+	_hub_settings_btn.custom_minimum_size = Vector2(235, 40)
+	_hub_settings_btn.pressed.connect(func() -> void:
+		_settings_return_screen = "hub"
 		show_screen("settings")
 	)
-	nav_row.add_child(settings_btn)
+	nav_row.add_child(_hub_settings_btn)
 
 	_lag_btn = Button.new()
 	_lag_btn.text = "Simulador de Lag: OFF (0ms)"
@@ -355,9 +370,14 @@ func _build_armory_screen(parent: Control) -> void:
 	arm_title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.24))
 	arm_top.add_child(arm_title)
 
-	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(160, 36)
-	arm_top.add_child(spacer)
+	_armory_settings_btn = Button.new()
+	_armory_settings_btn.text = "Atalhos (Hotkeys)"
+	_armory_settings_btn.custom_minimum_size = Vector2(180, 36)
+	_armory_settings_btn.pressed.connect(func() -> void:
+		_settings_return_screen = "armory"
+		show_screen("settings")
+	)
+	arm_top.add_child(_armory_settings_btn)
 
 	# Faction Picker Row
 	var fac_box := HBoxContainer.new()
@@ -543,14 +563,14 @@ func _build_settings_screen(parent: Control) -> void:
 
 	_settings_back_btn = Button.new()
 	_settings_back_btn.text = "<- Voltar ao Hub"
-	_settings_back_btn.custom_minimum_size = Vector2(160, 36)
+	_settings_back_btn.custom_minimum_size = Vector2(180, 36)
 	_settings_back_btn.pressed.connect(func() -> void:
-		show_screen("hub")
+		show_screen(_settings_return_screen if _settings_return_screen == "armory" else "hub")
 	)
 	st_top.add_child(_settings_back_btn)
 
 	_settings_title = Label.new()
-	_settings_title.text = "CONFIGURAÇÕES & CONTROLES"
+	_settings_title.text = "CONFIGURAÇÕES & ATALHOS (HOTKEYS)"
 	_settings_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_settings_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_settings_title.add_theme_font_size_override("font_size", 22)
@@ -558,7 +578,7 @@ func _build_settings_screen(parent: Control) -> void:
 	st_top.add_child(_settings_title)
 
 	var st_spacer := Control.new()
-	st_spacer.custom_minimum_size = Vector2(160, 36)
+	st_spacer.custom_minimum_size = Vector2(180, 36)
 	st_top.add_child(st_spacer)
 
 	# Sliders & Controls layout
@@ -668,7 +688,7 @@ func _build_settings_screen(parent: Control) -> void:
 	right_card.add_child(rm)
 
 	var rv := VBoxContainer.new()
-	rv.add_theme_constant_override("separation", 6)
+	rv.add_theme_constant_override("separation", 5)
 	rm.add_child(rv)
 
 	var bind_hdr_row := HBoxContainer.new()
@@ -686,22 +706,29 @@ func _build_settings_screen(parent: Control) -> void:
 	_reset_hotkeys_btn.custom_minimum_size = Vector2(138, 26)
 	_reset_hotkeys_btn.pressed.connect(func() -> void:
 		InputCmd.reset_default_hotkeys()
+		InputCmd.save_hotkeys_to_config(hotkeys_config_path)
 		_cancel_hotkey_listen()
 		_refresh_hotkey_buttons()
 		_notify_hud_hotkeys_changed()
 	)
 	bind_hdr_row.add_child(_reset_hotkeys_btn)
 
+	_hotkey_hint_lbl = Label.new()
+	_hotkey_hint_lbl.add_theme_font_size_override("font_size", 11)
+	_hotkey_hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_set_hotkey_hint(false)
+	rv.add_child(_hotkey_hint_lbl)
+
 	var sk_grid := GridContainer.new()
 	sk_grid.columns = 3
 	sk_grid.add_theme_constant_override("h_separation", 8)
-	sk_grid.add_theme_constant_override("v_separation", 6)
+	sk_grid.add_theme_constant_override("v_separation", 5)
 	rv.add_child(sk_grid)
 
 	_skill_hotkey_buttons.clear()
 	for s_i in range(6):
 		var btn := Button.new()
-		btn.custom_minimum_size = Vector2(146, 30)
+		btn.custom_minimum_size = Vector2(144, 28)
 		var captured_s: int = s_i
 		btn.pressed.connect(func() -> void:
 			_begin_hotkey_listen("skill", captured_s)
@@ -712,13 +739,13 @@ func _build_settings_screen(parent: Control) -> void:
 	var wd_grid := GridContainer.new()
 	wd_grid.columns = 2
 	wd_grid.add_theme_constant_override("h_separation", 8)
-	wd_grid.add_theme_constant_override("v_separation", 6)
+	wd_grid.add_theme_constant_override("v_separation", 5)
 	rv.add_child(wd_grid)
 
 	_widget_hotkey_buttons.clear()
 	for w_i in range(4):
 		var wbtn := Button.new()
-		wbtn.custom_minimum_size = Vector2(224, 30)
+		wbtn.custom_minimum_size = Vector2(220, 28)
 		var captured_w: int = w_i
 		wbtn.pressed.connect(func() -> void:
 			_begin_hotkey_listen("widget", captured_w)
@@ -777,6 +804,8 @@ func _build_settings_screen(parent: Control) -> void:
 
 func show_screen(screen_name: String) -> void:
 	current_screen = screen_name
+	if screen_name != "settings" and is_listening_hotkey():
+		_cancel_hotkey_listen()
 	if _hub_screen != null:
 		_hub_screen.visible = (screen_name == "hub")
 	if _armory_screen != null:
@@ -785,6 +814,9 @@ func show_screen(screen_name: String) -> void:
 		_settings_screen.visible = (screen_name == "settings")
 	if screen_name == "armory":
 		_refresh_summary()
+	elif screen_name == "settings":
+		if _settings_back_btn != null:
+			_settings_back_btn.text = "<- Voltar ao Arsenal" if _settings_return_screen == "armory" else "<- Voltar ao Hub"
 
 
 func set_in_match_mode(in_match: bool) -> void:
@@ -796,7 +828,7 @@ func set_in_match_mode(in_match: bool) -> void:
 	if _settings_back_btn != null:
 		_settings_back_btn.visible = not in_match
 	if _settings_title != null:
-		_settings_title.text = "PAUSA — CONFIGURAÇÕES" if in_match else "CONFIGURAÇÕES & CONTROLES"
+		_settings_title.text = "PAUSA — CONFIGURAÇÕES" if in_match else "CONFIGURAÇÕES & ATALHOS (HOTKEYS)"
 
 
 func select_team(p_team: int) -> void:
@@ -903,9 +935,21 @@ func _rebuild_weapon_variant_selectors() -> void:
 		_weapon_variant_selectors.append(opt)
 
 
+func is_listening_hotkey() -> bool:
+	return not _listening_hotkey_kind.is_empty()
+
+
+func _set_hotkey_hint(listening: bool) -> void:
+	if _hotkey_hint_lbl == null:
+		return
+	_hotkey_hint_lbl.text = HOTKEY_HINT_LISTENING if listening else HOTKEY_HINT_DEFAULT
+	_hotkey_hint_lbl.add_theme_color_override("font_color", HOTKEY_HINT_COLOR_LISTENING if listening else HOTKEY_HINT_COLOR_DEFAULT)
+
+
 func _begin_hotkey_listen(kind: String, slot_idx: int) -> void:
 	_listening_hotkey_kind = kind
 	_listening_hotkey_slot = slot_idx
+	_set_hotkey_hint(true)
 	_refresh_hotkey_buttons()
 	if kind == "skill" and slot_idx >= 0 and slot_idx < _skill_hotkey_buttons.size():
 		_skill_hotkey_buttons[slot_idx].text = "Sk%d: [Tecla...]" % (slot_idx + 1)
@@ -916,16 +960,16 @@ func _begin_hotkey_listen(kind: String, slot_idx: int) -> void:
 func _cancel_hotkey_listen() -> void:
 	_listening_hotkey_kind = ""
 	_listening_hotkey_slot = -1
+	_set_hotkey_hint(false)
 	_refresh_hotkey_buttons()
 
 
 func assign_hotkey_from_ui(kind: String, slot_idx: int, keycode: int) -> void:
-	if kind == "skill":
-		InputCmd.set_skill_key(slot_idx, keycode)
-	elif kind == "widget":
-		InputCmd.set_widget_key(slot_idx, keycode)
+	InputCmd.assign_unique_key(kind, slot_idx, keycode)
+	InputCmd.save_hotkeys_to_config(hotkeys_config_path)
 	_listening_hotkey_kind = ""
 	_listening_hotkey_slot = -1
+	_set_hotkey_hint(false)
 	_refresh_hotkey_buttons()
 	_notify_hud_hotkeys_changed()
 
