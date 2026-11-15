@@ -849,10 +849,14 @@ func _build_destructible_props(combat_context: Dictionary) -> void:
 
 
 func _build_capture_points(conquest: ConquestManager) -> void:
+	var orchard_y: float = get_terrain_height(-388.0, -262.0) + 0.08
+	var fazenda_y: float = get_terrain_height(338.0, 240.0) + 0.08
 	var specs: Array[Dictionary] = [
 		{"name": "Lighthouse Cove", "pos": Vector3(-335.0, 2.15, 290.0), "owner": NetworkManager.TEAM_ROYAL},
+		{"name": "North Orchard", "pos": Vector3(-388.0, orchard_y, -262.0), "owner": -1},
 		{"name": "Windmill Hill", "pos": Vector3(-210.0, 12.15, -220.0), "owner": -1},
 		{"name": "Town Square", "pos": Vector3(-15.0, 2.28, 40.0), "owner": -1},
+		{"name": "East Fazenda", "pos": Vector3(338.0, fazenda_y, 240.0), "owner": -1},
 		{"name": "Harbor Ruins", "pos": Vector3(280.0, 7.65, -230.0), "owner": NetworkManager.TEAM_NATIONAL},
 	]
 	capture_points.clear()
@@ -868,12 +872,12 @@ func _build_capture_points(conquest: ConquestManager) -> void:
 func _build_spawn_points() -> void:
 	royal_spawns.clear()
 	national_spawns.clear()
-	# 12 Royal & 12 National spaced spawn pads RIGHT BESIDE their Airfields & Vehicle Pools (6.5m apart, clear >= 6m!)
-	for i in range(12):
-		var row: int = i / 3
-		var col: int = i % 3
-		royal_spawns.append(Vector3(-456.0 - float(row) * 6.5, 2.35, -6.0 + float(col) * 6.5))
-		national_spawns.append(Vector3(456.0 + float(row) * 6.5, 2.35, 12.0 - float(col) * 6.5))
+	# 20 Royal & 20 National spaced spawn pads RIGHT BESIDE their Airfields & Vehicle Pools (6.5m apart)
+	for i in range(20):
+		var row: int = i / 4
+		var col: int = i % 4
+		royal_spawns.append(Vector3(-456.0 - float(row) * 6.5, 2.35, -9.0 + float(col) * 6.5))
+		national_spawns.append(Vector3(456.0 + float(row) * 6.5, 2.35, 15.0 - float(col) * 6.5))
 
 
 func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:

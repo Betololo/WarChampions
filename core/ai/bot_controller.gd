@@ -97,11 +97,16 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 		target_enemy = _find_nearest_visible_enemy(heroes_by_id, space_state)
 	var desired_pos: Vector3 = _target_flag.global_position if _target_flag != null else Vector3.ZERO
 
-	# Heal if injured
+	# Heal or cleanse status effects if injured/burning/poisoned
 	if bot_hero.hp < int(float(bot_hero.max_hp) * 0.5):
 		cmd.set_button(InputCmd.BTN_WIDGET_1, true)
 		if bot_hero.class_id == NetworkManager.CLASS_SOLDIER or bot_hero.class_id == NetworkManager.CLASS_GUNNER:
 			cmd.set_button(InputCmd.BTN_SKILL_1, true)
+	if bot_hero.status_effects != null:
+		if bot_hero.status_effects.is_burning():
+			cmd.set_button(InputCmd.BTN_WIDGET_3, true)
+		if bot_hero.status_effects.is_poisoned():
+			cmd.set_button(InputCmd.BTN_WIDGET_4, true)
 
 	if target_enemy != null:
 		if target_enemy.entity_id != _engaged_target_id:
@@ -141,6 +146,9 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 		cmd.set_button(InputCmd.BTN_FIRE, can_fire)
 		cmd.set_button(InputCmd.BTN_SKILL_2, can_fire and (_ai_tick % 180) == 0)
 		cmd.set_button(InputCmd.BTN_SKILL_3, can_fire and (_ai_tick % 240) == 0)
+		cmd.set_button(InputCmd.BTN_SKILL_4, can_fire and (_ai_tick % 300) == 0)
+		cmd.set_button(InputCmd.BTN_SKILL_5, can_fire and (_ai_tick % 360) == 0)
+		cmd.set_button(InputCmd.BTN_SKILL_6, can_fire and bot_hero.class_id == NetworkManager.CLASS_COMMANDO and (_ai_tick % 420) == 0)
 
 		if dist > 18.0:
 			cmd.move_dir = Vector2(_strafe_dir * 0.4, -0.9)

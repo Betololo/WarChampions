@@ -2,8 +2,8 @@ class_name MainGame
 extends Node3D
 
 ## Master game coordinator for War Champions:
-## Connects NetworkManager, MapSeasideFrontline (12v12 Land/Air/Water),
-## ConquestManager (50 Tickets + 4 Flags), Vehicles, Bots, HUD & Class Menu.
+## Connects NetworkManager, MapSeasideFrontline (20v20 Land/Air/Water),
+## ConquestManager (50 Tickets + 6 Flags), Vehicles, Bots, HUD & Class Menu.
 
 const MAP_SCENE: PackedScene = preload("res://maps/seaside_frontline.tscn")
 
@@ -72,6 +72,7 @@ func _ready() -> void:
 	NetworkManager.player_unregistered.connect(_on_player_unregistered)
 	NetworkManager.game_event_received.connect(_on_game_event)
 	NetworkManager.connection_state_changed.connect(_on_connection_state_changed)
+	NetworkManager.seat_switch_requested.connect(_on_seat_switch_requested)
 
 	_load_map()
 	_setup_ui()
@@ -218,7 +219,7 @@ func _build_loading_overlay() -> void:
 	vb.add_child(title_lbl)
 
 	var map_lbl := Label.new()
-	map_lbl.text = "SEASIDE FRONTLINE  •  12 vs 12"
+	map_lbl.text = "SEASIDE FRONTLINE  •  20 vs 20"
 	map_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	map_lbl.add_theme_font_size_override("font_size", 15)
 	map_lbl.add_theme_color_override("font_color", Color(0.76, 0.84, 0.94))
@@ -357,7 +358,8 @@ func _start_host_sync(team: int, class_id: int, port: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
 	conquest_manager.reset_match()
-	NetworkManager.set_local_loadout("HostHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
+	var slot_archs: Dictionary = NetworkManager.build_class_slot_archetypes(class_id)
+	NetworkManager.set_local_loadout("HostHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED, slot_archs)
 	NetworkManager.start_host(port, false)
 	_sync_vehicle_authority_freeze()
 	_switching_mode = false
@@ -376,7 +378,8 @@ func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
 func _start_join_sync(team: int, class_id: int, ip: String, port: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
-	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
+	var slot_archs: Dictionary = NetworkManager.build_class_slot_archetypes(class_id)
+	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED, slot_archs)
 	NetworkManager.join_server(ip, port)
 	_sync_vehicle_authority_freeze()
 	_switching_mode = false
@@ -385,7 +388,7 @@ func _start_join_sync(team: int, class_id: int, ip: String, port: int) -> void:
 
 func _on_play_offline_bots(team: int, class_id: int) -> void:
 	if _should_use_loading_screen():
-		_run_with_loading_screen("Posicionando pelotões 12 vs 12 e iniciando partida...", func() -> void:
+		_run_with_loading_screen("Posicionando pelotões 20 vs 20 e iniciando partida...", func() -> void:
 			_start_bots_sync(team, class_id)
 		)
 		return
@@ -396,11 +399,12 @@ func _start_bots_sync(team: int, class_id: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
 	conquest_manager.reset_match()
-	NetworkManager.set_local_loadout("Hero", team, class_id, NetworkManager.ARCHETYPE_BALANCED)
+	var slot_archs: Dictionary = NetworkManager.build_class_slot_archetypes(class_id)
+	NetworkManager.set_local_loadout("Hero", team, class_id, NetworkManager.ARCHETYPE_BALANCED, slot_archs)
 	NetworkManager.start_host(NetworkManager.DEFAULT_PORT, true)
 	_sync_vehicle_authority_freeze()
 	_switching_mode = false
-	_spawn_12v12_bots(team)
+	_spawn_20v20_bots(team)
 	SoundSynthesizer.start_whistle_theme()
 
 
@@ -420,11 +424,11 @@ func _clear_match_entities() -> void:
 	heroes_by_id.clear()
 
 
-func _spawn_12v12_bots(human_team: int) -> void:
-	# 12 Royal + 12 National = 24 combatants total (human + 23 bots)
+func _spawn_20v20_bots(human_team: int) -> void:
+	# 20 Royal + 20 National = 40 combatants total (human + 39 bots)
 	var bot_id: int = 1000
-	var ally_count: int = 11
-	var enemy_count: int = 12
+	var ally_count: int = 19
+	var enemy_count: int = 20
 	var enemy_team: int = NetworkManager.TEAM_NATIONAL if human_team == NetworkManager.TEAM_ROYAL else NetworkManager.TEAM_ROYAL
 
 	for i in range(ally_count):
@@ -562,6 +566,17 @@ func _handle_vehicle_interact(hero: HeroCharacter) -> void:
 		best_v.try_enter_hero(hero)
 
 
+func _on_seat_switch_requested(peer_id: int, seat_idx: int) -> void:
+	if not NetworkManager.is_active_host_authority():
+		return
+	var hero: HeroCharacter = heroes_by_id.get(peer_id, null)
+	if hero == null or hero.is_defeated or hero.current_vehicle_id < 0:
+		return
+	var veh: VehicleBase = vehicles_by_id.get(hero.current_vehicle_id, null)
+	if veh != null and veh.has_method("try_switch_seat"):
+		veh.try_switch_seat(hero, seat_idx)
+
+
 func _on_player_registered(peer_id: int, info: Dictionary) -> void:
 	spawn_hero(peer_id, info)
 
@@ -595,6 +610,8 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 	var hero := HeroCharacter.new()
 	var is_bot: bool = bool(info.get("is_bot", false))
 	var is_local: bool = (entity_id == NetworkManager.local_peer_id) and not is_bot and not NetworkManager.is_dedicated_server
+	var raw_slots: Variant = info.get("slot_archetypes", {})
+	var slot_map: Dictionary = raw_slots if raw_slots is Dictionary else {}
 	hero.setup_identity(
 		entity_id,
 		str(info.get("name", "Hero")),
@@ -602,7 +619,8 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 		int(info.get("class_id", 0)),
 		int(info.get("archetype", 0)),
 		is_local,
-		is_bot
+		is_bot,
+		slot_map
 	)
 	var sp: Vector3 = _get_next_spawn_pos(hero.team)
 	hero.position = sp
@@ -724,6 +742,8 @@ func _process(delta: float) -> void:
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key]
 		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id)
+	for v_key in vehicles_by_id.keys():
+		StatusEffectsVFX.update_vehicle_client_visuals(vehicles_by_id[v_key] as VehicleBase, local_hero)
 
 
 func _on_game_event(event_type: String, payload: Dictionary) -> void:
@@ -813,8 +833,14 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				hud.add_killfeed("%s destruiu %s!" % [a_name, v_label])
 		"skill_vfx":
 			var skill_pos: Vector3 = payload.get("pos", Vector3.ZERO)
-			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, skill_pos, "heal", 1.2)
 			var skill_caster_id: int = int(payload.get("hero_id", payload.get("caster_id", -1)))
+			var skill_slot: int = int(payload.get("slot", 0))
+			var skill_cls: int = int(payload.get("class_id", 0))
+			var caster_hero: HeroCharacter = heroes_by_id.get(skill_caster_id, null)
+			var caster_yaw: float = caster_hero.aim_yaw if caster_hero != null else 0.0
+			if caster_hero != null and caster_hero.has_method("trigger_skill_visual"):
+				caster_hero.trigger_skill_visual(skill_cls, skill_slot)
+			StatusEffectsVFX.spawn_skill_vfx(projectiles_root, skill_cls, skill_slot, skill_pos, caster_yaw)
 			SoundSynthesizer.play_sfx("heal", 0.0, skill_caster_id == NetworkManager.local_peer_id, skill_pos)
 		"eat_grenades":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)

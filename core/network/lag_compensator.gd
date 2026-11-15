@@ -80,6 +80,108 @@ func trace_rewound_ray(
 	return _trace_segment(shooter, ray_origin, ray_origin + dir * max_range, frame, heroes_by_id, world_3d, exclude_rids)
 
 
+## Evaluates a rewound piercing ray that passes through multiple aligned enemies along the shot path,
+## stopped only by solid world/vehicle geometry (or max_range).
+func trace_rewound_ray_piercing(
+	shooter: HeroCharacter,
+	ray_origin: Vector3,
+	ray_dir: Vector3,
+	max_range: float,
+	view_tick_delta: int,
+	current_tick: int,
+	heroes_by_id: Dictionary,
+	world_3d: World3D,
+	exclude_rids: Array[RID] = []
+) -> Dictionary:
+	var dir: Vector3 = ray_dir.normalized()
+	var seg_end: Vector3 = ray_origin + dir * max_range
+	var target_tick: int = current_tick - clampi(view_tick_delta, 0, MAX_REWIND_TICKS)
+	var frame: FrameRecord = get_frame(target_tick, current_tick)
+
+	var stop_dist: float = max_range
+	var stop_pos: Vector3 = seg_end
+	var hit_world: bool = false
+	var hit_object: Node = null
+	var hit_veh: VehicleBase = null
+
+	if world_3d != null:
+		var space: PhysicsDirectSpaceState3D = world_3d.direct_space_state
+		if space != null:
+			var query := PhysicsRayQueryParameters3D.create(ray_origin, seg_end, 1 | 8 | 64)
+			query.hit_from_inside = true
+			var excludes: Array[RID] = []
+			if shooter != null:
+				excludes.append(shooter.get_rid())
+			for rid in exclude_rids:
+				if not excludes.has(rid):
+					excludes.append(rid)
+			if not excludes.is_empty():
+				query.exclude = excludes
+			var res: Dictionary = space.intersect_ray(query)
+			if not res.is_empty():
+				stop_pos = res["position"]
+				stop_dist = ray_origin.distance_to(stop_pos)
+				hit_world = true
+				var collider: Object = res.get("collider", null)
+				if collider is Node:
+					var c_node: Node = collider as Node
+					if c_node.is_in_group("vehicles") or c_node.is_in_group("destructible"):
+						hit_object = c_node
+					if c_node is VehicleBase:
+						hit_veh = c_node as VehicleBase
+						hit_object = c_node
+					elif c_node.get_parent() is VehicleBase:
+						hit_veh = c_node.get_parent() as VehicleBase
+						hit_object = hit_veh
+
+	var hero_hits: Array[Dictionary] = []
+	if frame != null:
+		for id_key in frame.entries.keys():
+			var snap: HeroHitboxSnapshot = frame.entries[id_key]
+			if shooter != null and (snap.entity_id == shooter.entity_id or snap.team == shooter.team):
+				continue
+			var live_h: HeroCharacter = heroes_by_id.get(snap.entity_id, null) as HeroCharacter
+			if live_h != null and (live_h.is_defeated or (live_h.current_vehicle_id >= 0 and live_h.current_seat_enclosed)):
+				continue
+			var cap_d: float = max_range if (hit_veh != null and live_h != null and live_h.current_vehicle_id == hit_veh.id and not live_h.current_seat_enclosed) else stop_dist
+			var h_res: Dictionary = _hit_test_hero_bounds(ray_origin, dir, cap_d, snap.head_center, snap.head_radius, snap.body_bottom, snap.body_top, snap.body_radius)
+			if bool(h_res["hit"]):
+				hero_hits.append({
+					"target_hero_id": snap.entity_id,
+					"is_headshot": bool(h_res["headshot"]),
+					"hit_pos": ray_origin + dir * float(h_res["dist"]),
+					"distance": float(h_res["dist"]),
+				})
+	else:
+		for id_key in heroes_by_id.keys():
+			var h: HeroCharacter = heroes_by_id[id_key]
+			if h == null or h.is_defeated or (h.current_vehicle_id >= 0 and h.current_seat_enclosed):
+				continue
+			if shooter != null and (h.entity_id == shooter.entity_id or h.team == shooter.team):
+				continue
+			var cap_d: float = max_range if (hit_veh != null and h.current_vehicle_id == hit_veh.id and not h.current_seat_enclosed) else stop_dist
+			var bnd: Dictionary = _compute_hero_bounds(h)
+			var h_res: Dictionary = _hit_test_hero_bounds(ray_origin, dir, cap_d, bnd["head_center"], float(bnd["head_radius"]), bnd["body_bottom"], bnd["body_top"], float(bnd["body_radius"]))
+			if bool(h_res["hit"]):
+				hero_hits.append({
+					"target_hero_id": h.entity_id,
+					"is_headshot": bool(h_res["headshot"]),
+					"hit_pos": ray_origin + dir * float(h_res["dist"]),
+					"distance": float(h_res["dist"]),
+				})
+
+	hero_hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return float(a["distance"]) < float(b["distance"])
+	)
+	return {
+		"hero_hits": hero_hits,
+		"hit_world": hit_world,
+		"hit_pos": stop_pos,
+		"distance": stop_dist,
+		"target_object": hit_object,
+	}
+
+
 ## Finds the closest rewound (or live fallback) hero hitbox intersected by a ray.
 ## Returns {hit: bool, dist: float, pos: Vector3, hero_id: int, headshot: bool}
 func find_closest_rewound_hero_hit(
