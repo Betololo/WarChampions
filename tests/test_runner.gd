@@ -4147,10 +4147,13 @@ func _test_phase8_task1_skill_icons_and_guide() -> void:
 					catalog_fields_ok = false
 					break
 	var mark_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_2_5")
+	var burn_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_0_1")
 	var med_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_skill_0_0")
 	_assert(
 		s_list.size() == 5 and g_list.size() == 5 and c_list.size() == 6 and w_list.size() == 4
 		and catalog_fields_ok and str(mark_entry.get("name", "")) == "Mark Target"
+		and str(burn_entry.get("effect_stats", "")) == "+16 dano fogo/s"
+		and str(mark_entry.get("duration", "")) == "6.5s varredura / 12s marca"
 		and is_equal_approx(float(med_entry.get("aoe_radius", 0.0)), 12.0),
 		"SkillCatalog provides 5/5/6 class skills + 4 widgets with complete Rank-5 stats"
 	)
@@ -4576,6 +4579,18 @@ func _test_phase8_task3_plane_accel_and_crash() -> void:
 	arena.add_child(ally_wall)
 	ally_wall.global_position = Vector3(-3.0, 0.5, -31.0)
 
+	var enemy_jeep := VehicleJeep.new()
+	enemy_jeep.id = 8306
+	enemy_jeep.team = NetworkManager.TEAM_NATIONAL
+	arena.add_child(enemy_jeep)
+	enemy_jeep.global_position = Vector3(5.0, 0.8, -31.0)
+
+	var ally_jeep := VehicleJeep.new()
+	ally_jeep.id = 8307
+	ally_jeep.team = NetworkManager.TEAM_ROYAL
+	arena.add_child(ally_jeep)
+	ally_jeep.global_position = Vector3(-5.0, 0.8, -31.0)
+
 	var wall_heroes: Dictionary = {8302: pilot, 8303: enemy_wall, 8304: ally_wall}
 	var wall_ctx: Dictionary = {"heroes_by_id": wall_heroes}
 
@@ -4614,8 +4629,13 @@ func _test_phase8_task3_plane_accel_and_crash() -> void:
 			break
 
 	_assert(
-		plane.is_destroyed and enemy_wall.hp < enemy_wall.max_hp and ally_wall.hp == ally_wall.max_hp and has_crash_exp,
-		"VehiclePlane wall crash detonates with radial enemy splash (enemy_hp=%d/%d), zero friendly fire (ally_hp=%d/%d), and explosion_vfx" % [enemy_wall.hp, enemy_wall.max_hp, ally_wall.hp, ally_wall.max_hp]
+		plane.is_destroyed
+		and enemy_wall.hp < enemy_wall.max_hp
+		and ally_wall.hp == ally_wall.max_hp
+		and enemy_jeep.hp < enemy_jeep.max_hp
+		and ally_jeep.hp == ally_jeep.max_hp
+		and has_crash_exp,
+		"VehiclePlane wall crash detonates with radial enemy splash (enemy_hp=%d/%d, e_veh=%d/%d), zero friendly fire (ally_hp=%d/%d, a_veh=%d/%d), and explosion_vfx" % [enemy_wall.hp, enemy_wall.max_hp, enemy_jeep.hp, enemy_jeep.max_hp, ally_wall.hp, ally_wall.max_hp, ally_jeep.hp, ally_jeep.max_hp]
 	)
 
 	plane._respawn_vehicle()

@@ -315,6 +315,8 @@ func _detonate_plane_crash(context: Dictionary) -> void:
 				continue
 			if v is VehicleBase and (v as VehicleBase).is_destroyed:
 				continue
+			if _last_pilot_team >= 0 and v is VehicleBase and (v as VehicleBase).team == _last_pilot_team:
+				continue
 			var v_pos: Vector3 = (v as Node3D).global_position
 			var vdist: float = v_pos.distance_to(crash_pos)
 			if vdist <= CRASH_RADIUS + 2.0:
