@@ -17,7 +17,10 @@ var _poison_tick_accum: float = 0.0
 
 ## Buffs
 var shield_timer: float = 0.0
+var hero_shield_timer: float = 0.0
 var speed_boost_timer: float = 0.0
+var leg_it_timer: float = 0.0
+var elixir_timer: float = 0.0
 var speed_boost_mult: float = 1.0
 var slow_timer: float = 0.0
 var slow_mult: float = 1.0
@@ -118,8 +121,13 @@ func _physics_process(delta: float) -> void:
 		shield_timer -= delta
 		if shield_timer <= 0.0:
 			shield_timer = 0.0
+			hero_shield_timer = 0.0
 			owner_hero.shield = 0
 			owner_hero.stats_changed.emit()
+	if hero_shield_timer > 0.0:
+		hero_shield_timer = maxf(0.0, hero_shield_timer - delta)
+		if owner_hero.shield <= 0:
+			hero_shield_timer = 0.0
 
 	# Speed modifiers
 	if speed_boost_timer > 0.0:
@@ -127,6 +135,8 @@ func _physics_process(delta: float) -> void:
 		if speed_boost_timer <= 0.0:
 			speed_boost_timer = 0.0
 			speed_boost_mult = 1.0
+	leg_it_timer = maxf(0.0, leg_it_timer - delta)
+	elixir_timer = maxf(0.0, elixir_timer - delta)
 	if slow_timer > 0.0:
 		slow_timer -= delta
 		if slow_timer <= 0.0:
@@ -203,6 +213,38 @@ func _sync_flags() -> void:
 	if slow_timer > 0.0:
 		f |= NetSerializer.SNAP_KEG_CONCUSSED
 	owner_hero.active_flags = f
+	_sync_buffs()
+
+
+func _sync_buffs() -> void:
+	if owner_hero == null:
+		return
+	var b: int = 0
+	if hero_shield_timer > 0.0 and owner_hero.shield > 0:
+		b |= NetSerializer.BUFF_HERO_SHIELD
+	if leg_it_timer > 0.0:
+		b |= NetSerializer.BUFF_LEG_IT
+	if elixir_timer > 0.0:
+		b |= NetSerializer.BUFF_ELIXIR
+	if burning_bullets_timer > 0.0:
+		b |= NetSerializer.BUFF_BURNING_BULLETS
+	if poisoned_blade_timer > 0.0:
+		b |= NetSerializer.BUFF_POISONED_BLADE
+	if frenzy_timer > 0.0:
+		b |= NetSerializer.BUFF_FRENZY_FIRE
+	if piercing_timer > 0.0:
+		b |= NetSerializer.BUFF_PIERCING_SHOT
+	if eat_grenades_timer > 0.0:
+		b |= NetSerializer.BUFF_EAT_GRENADES
+	if sixth_sense_timer > 0.0:
+		b |= NetSerializer.BUFF_SIXTH_SENSE
+	if hot_timer > 0.0:
+		b |= NetSerializer.BUFF_COMBAT_MED_HOT
+	if bandage_channel_timer > 0.0:
+		b |= NetSerializer.BUFF_BANDAGE
+	if fire_immunity_timer > 0.0:
+		b |= NetSerializer.BUFF_FIREPROOF
+	owner_hero.active_buffs = b
 
 
 func apply_burn(attacker_id: int, dps: float, duration: float) -> void:
@@ -237,61 +279,78 @@ func cleanse_burn_and_poison() -> void:
 	cleanse_poison()
 
 
-func apply_shield(amount: int, duration: float) -> void:
+func apply_shield(amount: int, duration: float, is_hero_shield: bool = true) -> void:
 	if owner_hero == null:
 		return
 	owner_hero.shield = maxi(owner_hero.shield, amount)
 	shield_timer = maxf(shield_timer, duration)
+	if is_hero_shield:
+		hero_shield_timer = maxf(hero_shield_timer, duration)
 	owner_hero.stats_changed.emit()
+	_sync_flags()
 
 
-func apply_speed_boost(mult: float, duration: float) -> void:
+func apply_speed_boost(mult: float, duration: float, is_elixir: bool = false) -> void:
 	speed_boost_mult = maxf(speed_boost_mult, mult)
 	speed_boost_timer = maxf(speed_boost_timer, duration)
+	if is_elixir:
+		elixir_timer = maxf(elixir_timer, duration)
+	else:
+		leg_it_timer = maxf(leg_it_timer, duration)
+	_sync_flags()
 
 
 func apply_concussion_slow(mult: float, duration: float) -> void:
 	slow_mult = minf(slow_mult, mult)
 	slow_timer = maxf(slow_timer, duration)
+	_sync_flags()
 
 
 func activate_burning_bullets(dps: float, duration: float) -> void:
 	burning_bullets_dps = dps
 	burning_bullets_timer = duration
+	_sync_flags()
 
 
 func activate_poisoned_blade(dps: float, duration: float) -> void:
 	poisoned_blade_dps = dps
 	poisoned_blade_timer = duration
+	_sync_flags()
 
 
 func activate_frenzy_fire(heal_amount: int, duration: float) -> void:
 	frenzy_heal_amount = heal_amount
 	frenzy_timer = duration
+	_sync_flags()
 
 
 func activate_eat_grenades(duration: float) -> void:
 	eat_grenades_timer = duration
+	_sync_flags()
 
 
 func activate_piercing_shot(mult: float, duration: float) -> void:
 	piercing_mult = mult
 	piercing_timer = duration
+	_sync_flags()
 
 
 func apply_heal_over_time(total_amount: int, duration: float) -> void:
 	var ticks: int = maxi(1, int(roundf(duration / 0.5)))
 	hot_heal_per_tick = maxi(1, int(ceilf(float(total_amount) / float(ticks))))
 	hot_timer = maxf(hot_timer, duration)
+	_sync_flags()
 
 
 func start_bandage_channel(heal_amount: int = 40, duration: float = 2.0) -> void:
 	bandage_heal_amount = heal_amount
 	bandage_channel_timer = duration
+	_sync_flags()
 
 
 func interrupt_bandage_channel() -> void:
 	bandage_channel_timer = 0.0
+	_sync_flags()
 
 
 func is_burning() -> bool:
@@ -405,6 +464,7 @@ func has_piercing_shot() -> bool:
 func activate_sixth_sense(radius: float, duration: float) -> void:
 	sixth_sense_radius = maxf(sixth_sense_radius, radius)
 	sixth_sense_timer = maxf(sixth_sense_timer, duration)
+	_sync_flags()
 
 
 func has_burning_bullets() -> bool:
@@ -443,7 +503,10 @@ func clear_all() -> void:
 	burn_timer = 0.0
 	poison_timer = 0.0
 	shield_timer = 0.0
+	hero_shield_timer = 0.0
 	speed_boost_timer = 0.0
+	leg_it_timer = 0.0
+	elixir_timer = 0.0
 	speed_boost_mult = 1.0
 	slow_timer = 0.0
 	slow_mult = 1.0

@@ -65,6 +65,7 @@ var current_seat_can_shoot: bool = false
 var _last_vehicle_id_for_cam: int = -1
 var knockback_seq: int = 0
 var active_flags: int = 0
+var active_buffs: int = 0
 var last_killer_id: int = -1
 var defeat_explosive: bool = false
 var _max_air_fall_speed: float = 0.0
@@ -101,6 +102,8 @@ var _parachute_rig: Node3D
 var _defeat_prop: Node3D
 var _mesh_parts: Array[MeshInstance3D] = []
 var _last_vfx_key: String = ""
+var _overhead_buff_row: Node3D = null
+var _overhead_buff_slots: Array[Sprite3D] = []
 var _speed_trail_timer: float = 0.0
 var _body_collision: CollisionShape3D
 var _capsule_shape: CapsuleShape3D
@@ -455,9 +458,12 @@ func _rebuild_cartoon_visuals() -> void:
 	if visual_root == null:
 		return
 	for child in visual_root.get_children():
+		visual_root.remove_child(child)
 		child.queue_free()
 	_mesh_parts.clear()
 	_last_vfx_key = ""
+	_overhead_buff_row = null
+	_overhead_buff_slots.clear()
 
 	var is_royal: bool = (team == NetworkManager.TEAM_ROYAL)
 	var style: Dictionary = _get_visual_style(is_royal)
@@ -1589,6 +1595,7 @@ func reconcile_with_server(state: Dictionary) -> void:
 	var auth_pos: Vector3 = state.get("pos", global_position)
 	var auth_vel: Vector3 = state.get("vel", velocity)
 	var auth_flags: int = int(state.get("flags", 0))
+	active_buffs = int(state.get("buffs", active_buffs))
 	hp = int(state.get("hp", hp))
 	shield = int(state.get("shield", shield))
 	var prev_vid: int = current_vehicle_id
@@ -1691,6 +1698,7 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 	var pitch: float = float(snap_dict.get("pitch", 0.0))
 	var vel: Vector3 = snap_dict.get("vel", Vector3.ZERO)
 	var flags: int = int(snap_dict.get("flags", 0))
+	active_buffs = int(snap_dict.get("buffs", 0))
 	hp = int(snap_dict.get("hp", hp))
 	shield = int(snap_dict.get("shield", shield))
 	selected_weapon_slot = int(snap_dict.get("weapon_slot", selected_weapon_slot))
@@ -1714,6 +1722,7 @@ func build_snapshot_dict() -> Dictionary:
 		"class_id": class_id,
 		"weapon_slot": selected_weapon_slot,
 		"flags": active_flags,
+		"buffs": active_buffs,
 		"pos": global_position,
 		"vel": velocity,
 		"yaw": aim_yaw,
@@ -1748,11 +1757,14 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 		var absorbed: int = mini(shield, remaining)
 		shield -= absorbed
 		remaining -= absorbed
+		if shield <= 0 and status_effects != null and status_effects.has_method("_sync_flags"):
+			status_effects._sync_flags()
 	var hp_dealt: int = mini(hp, remaining)
 	hp -= hp_dealt
 	if hp <= 0:
 		hp = 0
 		is_defeated = true
+		active_buffs = 0
 		collision_layer = 0
 		defeat_timer = 5.0
 		_defeat_elapsed = 0.0
@@ -1801,6 +1813,7 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 		hero_camera.yaw = spawn_yaw
 	hp = max_hp
 	shield = 0
+	active_buffs = 0
 	is_defeated = false
 	collision_layer = 2
 	reset_weapons_full()

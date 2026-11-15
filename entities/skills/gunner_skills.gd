@@ -18,20 +18,24 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 	match slot_idx:
 		0: # Hero Shield: Blue energy absorption shield
 			if owner_hero.status_effects != null:
-				owner_hero.status_effects.apply_shield(45 + rank * 22, 6.0 + float(rank))
+				owner_hero.status_effects.apply_shield(45 + rank * 22, 6.0 + float(rank), true)
 				return true
 			return false
 
 		1: # Leg It: Movement speed surge for Gunner and nearby allies
 			var mult: float = 1.38 + float(rank) * 0.06
 			var dur: float = 4.5 + float(rank) * 0.7
+			var radius: float = 11.0
+			var affected_ids: Array[int] = [owner_hero.entity_id]
 			if owner_hero.status_effects != null:
-				owner_hero.status_effects.apply_speed_boost(mult, dur)
+				owner_hero.status_effects.apply_speed_boost(mult, dur, false)
 			for id_key in heroes_by_id.keys():
 				var ally: HeroCharacter = heroes_by_id[id_key]
 				if ally != null and ally != owner_hero and not ally.is_defeated and ally.team == owner_hero.team:
-					if ally.global_position.distance_to(owner_hero.global_position) <= 11.0 and ally.status_effects != null:
-						ally.status_effects.apply_speed_boost(mult, dur)
+					if ally.global_position.distance_to(owner_hero.global_position) <= radius and ally.status_effects != null:
+						ally.status_effects.apply_speed_boost(mult, dur, false)
+						affected_ids.append(ally.entity_id)
+			_record_aoe_effect(radius, affected_ids, owner_hero.global_position)
 			return true
 
 		2: # Explosive Keg: Heavy rolling barrel with splash & concussion slow

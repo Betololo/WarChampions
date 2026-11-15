@@ -43,6 +43,9 @@ var widget_names: Array[String] = ["Bandages", "Wrench", "Fireproof", "Antidote"
 
 var _prev_skill_btns: int = 0
 var _prev_widget_btns: int = 0
+var _last_aoe_radius: float = 0.0
+var _last_aoe_origin: Vector3 = Vector3.ZERO
+var _last_aoe_target_ids: Array[int] = []
 
 
 func _ready() -> void:
@@ -113,23 +116,37 @@ func _defers_cooldown_until_exit(_slot_idx: int) -> bool:
 	return false
 
 
+func _record_aoe_effect(radius: float, target_ids: Array[int], origin: Vector3 = Vector3.ZERO) -> void:
+	_last_aoe_radius = radius
+	_last_aoe_origin = origin
+	_last_aoe_target_ids = target_ids.duplicate()
+
+
 func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bool:
 	if slot_idx < 0 or slot_idx >= skill_ranks.size():
 		return false
 	var rank: int = skill_ranks[slot_idx]
 	if rank <= 0 or skill_cooldowns[slot_idx] > 0.0:
 		return false
+	_last_aoe_radius = 0.0
+	_last_aoe_origin = Vector3.ZERO
+	_last_aoe_target_ids.clear()
 	if _execute_class_skill(slot_idx, rank, cmd, context):
 		var cd_val: float = 0.0 if _defers_cooldown_until_exit(slot_idx) else skill_max_cooldowns[slot_idx]
 		skill_cooldowns[slot_idx] = cd_val
 		skill_activated.emit(slot_idx, cd_val)
-		NetworkManager.broadcast_game_event("skill_vfx", {
+		var vfx_payload: Dictionary = {
 			"hero_id": owner_hero.entity_id,
 			"slot": slot_idx,
 			"class_id": owner_hero.class_id,
 			"skill_name": skill_names[slot_idx] if slot_idx < skill_names.size() else "Skill",
 			"pos": owner_hero.global_position,
-		})
+		}
+		if _last_aoe_radius > 0.0:
+			vfx_payload["aoe_radius"] = _last_aoe_radius
+			vfx_payload["aoe_origin"] = _last_aoe_origin
+			vfx_payload["affected_ids"] = _last_aoe_target_ids.duplicate()
+		NetworkManager.broadcast_game_event("skill_vfx", vfx_payload)
 		return true
 	return false
 

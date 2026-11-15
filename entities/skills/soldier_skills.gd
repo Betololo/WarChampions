@@ -20,6 +20,7 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 			var instant_heal: int = 35 + rank * 5
 			var hot_heal: int = 16 + rank * 4
 			var radius: float = 8.0 + float(rank - 1) * 1.0
+			var affected_ids: Array[int] = [owner_hero.entity_id]
 			owner_hero.heal_server(instant_heal)
 			if owner_hero.status_effects != null:
 				owner_hero.status_effects.apply_heal_over_time(hot_heal, 3.0)
@@ -30,6 +31,8 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 						ally.heal_server(instant_heal)
 						if ally.status_effects != null:
 							ally.status_effects.apply_heal_over_time(hot_heal, 3.0)
+						affected_ids.append(ally.entity_id)
+			_record_aoe_effect(radius, affected_ids, owner_hero.global_position)
 			return true
 
 		1: # Burning Bullets: Incendiary DoT for SMG / Pistol
@@ -62,6 +65,7 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 			var blast_radius: float = 8.0 + float(rank) * 1.0
 			var blast_dmg: int = 10 + rank * 4
 			var kb_power: float = maxf(16.0, 16.0 + float(rank) * 3.0)
+			var affected_ids: Array[int] = []
 			for id_key in heroes_by_id.keys():
 				var enemy: HeroCharacter = heroes_by_id[id_key]
 				if enemy != null and not enemy.is_defeated and enemy.team != owner_hero.team:
@@ -72,6 +76,7 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 						var horiz_dir: Vector3 = horiz.normalized() if horiz.length_squared() > 0.001 else Vector3.FORWARD
 						var kb_impulse: Vector3 = horiz_dir * kb_power + Vector3(0.0, maxf(6.5, kb_power * 0.45), 0.0)
 						enemy.apply_knockback(kb_impulse)
+						affected_ids.append(enemy.entity_id)
 						NetworkManager.broadcast_game_event("hit_vfx", {
 							"pos": enemy.global_position + Vector3(0.0, 1.75, 0.0),
 							"kind": "spark",
@@ -84,18 +89,23 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 					if v is RigidBody3D and (v as Node3D).global_position.distance_to(owner_hero.global_position) <= blast_radius + 2.0:
 						var v_dir: Vector3 = ((v as Node3D).global_position - owner_hero.global_position + Vector3(0.0, 0.4, 0.0)).normalized()
 						(v as RigidBody3D).apply_central_impulse(v_dir * kb_power * 45.0)
+			_record_aoe_effect(blast_radius, affected_ids, owner_hero.global_position)
 			return true
 
 		4: # Sixth Sense: Tactical radar wall-reveal for self and nearby allies
 			var sense_radius: float = 35.0 + float(rank) * 10.0
 			var duration: float = 6.0 + float(rank) * 1.5
+			var aoe_ally_radius: float = 18.0
+			var affected_ids: Array[int] = [owner_hero.entity_id]
 			if owner_hero.status_effects != null:
 				owner_hero.status_effects.activate_sixth_sense(sense_radius, duration)
 			for id_key in heroes_by_id.keys():
 				var ally: HeroCharacter = heroes_by_id[id_key]
 				if ally != null and ally != owner_hero and not ally.is_defeated and ally.team == owner_hero.team:
-					if ally.global_position.distance_to(owner_hero.global_position) <= 18.0 and ally.status_effects != null:
+					if ally.global_position.distance_to(owner_hero.global_position) <= aoe_ally_radius and ally.status_effects != null:
 						ally.status_effects.activate_sixth_sense(sense_radius, duration * 0.85)
+						affected_ids.append(ally.entity_id)
+			_record_aoe_effect(aoe_ally_radius, affected_ids, owner_hero.global_position)
 			return true
 
 	return false
