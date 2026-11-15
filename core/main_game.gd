@@ -2,7 +2,7 @@ class_name MainGame
 extends Node3D
 
 ## Master game coordinator for War Champions:
-## Connects NetworkManager, MapSeasideFrontline (20v20 Land/Air/Water),
+## Connects NetworkManager, MapSeasideFrontline (14v14 Land/Air/Water),
 ## ConquestManager (50 Tickets + 6 Flags), Vehicles, Bots, HUD & Class Menu.
 
 const MAP_SCENE: PackedScene = preload("res://maps/seaside_frontline.tscn")
@@ -23,12 +23,13 @@ var vehicles_by_id: Dictionary = {}
 var bot_brains: Dictionary = {}
 var _prev_interact_state: Dictionary = {}
 var _prev_local_parachuting: bool = false
-var _last_local_level: int = 1
+var _last_local_level: int = 5
 var _royal_spawn_idx: int = 0
 var _national_spawn_idx: int = 0
 var _switching_mode: bool = false
 var _loading_in_progress: bool = false
 var _skip_loading_screen: bool = false
+var _cached_combat_ctx: Dictionary = {}
 
 var _loading_layer: CanvasLayer
 var _loading_stage_lbl: Label
@@ -113,7 +114,7 @@ func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
 		return
 	if connected and is_srv:
 		if NetworkManager.is_solo_bot_mode:
-			hud.add_killfeed("Modo Solo 12v12 com Bots pronto!")
+			hud.add_killfeed("Modo Solo 14v14 com Bots pronto!")
 		else:
 			hud.add_killfeed("Sala Online pronta (0 Bots, porta %d)" % NetworkManager.DEFAULT_PORT)
 	elif connected:
@@ -144,11 +145,13 @@ func _load_map() -> void:
 		v.queue_free()
 	vehicles_by_id.clear()
 
+	_refresh_combat_context()
 	map_instance = MAP_SCENE.instantiate() as MapSeasideFrontline
 	map_root.add_child(map_instance)
-	map_instance.build_map(conquest_manager, vehicles_root, _build_combat_context())
+	map_instance.build_map(conquest_manager, vehicles_root, _cached_combat_ctx)
 	for v in map_instance.spawned_vehicles:
 		vehicles_by_id[v.id] = v
+	_refresh_combat_context()
 	_sync_vehicle_authority_freeze()
 
 
@@ -219,7 +222,7 @@ func _build_loading_overlay() -> void:
 	vb.add_child(title_lbl)
 
 	var map_lbl := Label.new()
-	map_lbl.text = "SEASIDE FRONTLINE  •  20 vs 20"
+	map_lbl.text = "SEASIDE FRONTLINE  •  14 vs 14"
 	map_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	map_lbl.add_theme_font_size_override("font_size", 15)
 	map_lbl.add_theme_color_override("font_color", Color(0.76, 0.84, 0.94))
@@ -388,7 +391,7 @@ func _start_join_sync(team: int, class_id: int, ip: String, port: int) -> void:
 
 func _on_play_offline_bots(team: int, class_id: int) -> void:
 	if _should_use_loading_screen():
-		_run_with_loading_screen("Posicionando pelotões 20 vs 20 e iniciando partida...", func() -> void:
+		_run_with_loading_screen("Posicionando pelotões 14 vs 14 e iniciando partida...", func() -> void:
 			_start_bots_sync(team, class_id)
 		)
 		return
@@ -404,7 +407,7 @@ func _start_bots_sync(team: int, class_id: int) -> void:
 	NetworkManager.start_host(NetworkManager.DEFAULT_PORT, true)
 	_sync_vehicle_authority_freeze()
 	_switching_mode = false
-	_spawn_20v20_bots(team)
+	_spawn_14v14_bots(team)
 	SoundSynthesizer.start_whistle_theme()
 
 
@@ -422,13 +425,14 @@ func _clear_match_entities() -> void:
 		if is_instance_valid(h):
 			h.queue_free()
 	heroes_by_id.clear()
+	_refresh_combat_context()
 
 
-func _spawn_20v20_bots(human_team: int) -> void:
-	# 20 Royal + 20 National = 40 combatants total (human + 39 bots)
+func _spawn_14v14_bots(human_team: int) -> void:
+	# 14 Royal + 14 National = 28 combatants total (human + 27 bots)
 	var bot_id: int = 1000
-	var ally_count: int = 19
-	var enemy_count: int = 20
+	var ally_count: int = 13
+	var enemy_count: int = 14
 	var enemy_team: int = NetworkManager.TEAM_NATIONAL if human_team == NetworkManager.TEAM_ROYAL else NetworkManager.TEAM_ROYAL
 
 	for i in range(ally_count):
@@ -441,15 +445,29 @@ func _spawn_20v20_bots(human_team: int) -> void:
 		bot_id += 1
 
 
+func _refresh_combat_context() -> void:
+	var v_list: Array = vehicles_by_id.values()
+	if _cached_combat_ctx.is_empty():
+		_cached_combat_ctx = {
+			"lag_compensator": lag_compensator,
+			"heroes_by_id": heroes_by_id,
+			"projectiles_root": projectiles_root,
+			"vehicles": v_list,
+			"vehicles_by_id": vehicles_by_id,
+			"on_damage_dealt": _on_damage_dealt_xp,
+		}
+	else:
+		_cached_combat_ctx["lag_compensator"] = lag_compensator
+		_cached_combat_ctx["heroes_by_id"] = heroes_by_id
+		_cached_combat_ctx["projectiles_root"] = projectiles_root
+		_cached_combat_ctx["vehicles"] = v_list
+		_cached_combat_ctx["vehicles_by_id"] = vehicles_by_id
+		_cached_combat_ctx["on_damage_dealt"] = _on_damage_dealt_xp
+
+
 func _build_combat_context() -> Dictionary:
-	return {
-		"lag_compensator": lag_compensator,
-		"heroes_by_id": heroes_by_id,
-		"projectiles_root": projectiles_root,
-		"vehicles": vehicles_by_id.values(),
-		"vehicles_by_id": vehicles_by_id,
-		"on_damage_dealt": _on_damage_dealt_xp,
-	}
+	_refresh_combat_context()
+	return _cached_combat_ctx
 
 
 func _on_damage_dealt_xp(attacker: HeroCharacter, _victim: HeroCharacter, dealt: int) -> void:
@@ -459,7 +477,9 @@ func _on_damage_dealt_xp(attacker: HeroCharacter, _victim: HeroCharacter, dealt:
 
 func _physics_process(delta: float) -> void:
 	if NetworkManager.is_active_host_authority():
-		var combat_ctx: Dictionary = _build_combat_context()
+		if _cached_combat_ctx.is_empty():
+			_refresh_combat_context()
+		var combat_ctx: Dictionary = _cached_combat_ctx
 
 		# 1. Step AI Bots
 		var cps: Array[CapturePoint] = map_instance.capture_points if map_instance != null else []
@@ -638,7 +658,7 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 		if hero.hero_camera != null:
 			hero.hero_camera.mouse_sensitivity = ClassSelectMenu.current_mouse_sensitivity
 			hero.hero_camera.sensitivity = ClassSelectMenu.current_mouse_sensitivity
-		_last_local_level = 1
+		_last_local_level = hero.skill_manager.level if hero.skill_manager != null else 5
 		_prev_local_parachuting = hero.is_parachuting
 		if hero.skill_manager != null and hero.skill_manager.has_signal("progression_changed"):
 			hero.skill_manager.progression_changed.connect(func(lvl: int, _xp: int, _xp_next: int, _pts: int) -> void:

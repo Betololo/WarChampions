@@ -1,8 +1,8 @@
 class_name SkillManager
 extends Node
 
-## Manages RPG Levels (1..30), Hero Points (earned every 2 levels),
-## 5-6 Class Skills (ranks 1..5), and 4 Widgets (Bandages, Wrench, Fireproof, Antidote).
+## Manages Combat Mastery Levels (5..30), Max-Rank Class Skills (rank 5 unlocked immediately),
+## and 4 Widgets (Bandages, Wrench, Fireproof, Antidote).
 
 signal progression_changed(level: int, xp: int, xp_next: int, hero_points: int)
 signal skill_activated(slot_idx: int, cooldown: float)
@@ -27,11 +27,11 @@ const WIDGET_BUTTON_FLAGS: Array[int] = [
 
 var owner_hero: HeroCharacter = null
 
-## RPG Progression
-var level: int = 1
+## RPG Progression (all skills unlocked at max rank 5 immediately; no hero point gating)
+var level: int = 5
 var xp: int = 0
-var hero_points: int = 2 # Starting Hero Points to customize initial build
-var skill_ranks: Array[int] = [1, 1, 1, 0, 0] # Ranks 0..5
+var hero_points: int = 0
+var skill_ranks: Array[int] = [5, 5, 5, 5, 5] # Ranks 0..5 (all start at MAX_SKILL_RANK)
 var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0]
 var skill_max_cooldowns: Array[float] = [14.0, 16.0, 18.0, 14.0, 20.0]
 var skill_names: Array[String] = ["Skill 1", "Skill 2", "Skill 3", "Skill 4", "Skill 5"]
@@ -61,20 +61,11 @@ func award_xp(amount: int) -> void:
 	while level < MAX_LEVEL and xp >= get_xp_for_next_level():
 		xp -= get_xp_for_next_level()
 		level += 1
-		if level % 2 == 0:
-			hero_points += 1
 	progression_changed.emit(level, xp, get_xp_for_next_level(), hero_points)
 
 
-func upgrade_skill(slot_idx: int) -> bool:
-	if slot_idx < 0 or slot_idx >= skill_ranks.size():
-		return false
-	if hero_points <= 0 or skill_ranks[slot_idx] >= MAX_SKILL_RANK:
-		return false
-	hero_points -= 1
-	skill_ranks[slot_idx] += 1
-	progression_changed.emit(level, xp, get_xp_for_next_level(), hero_points)
-	return true
+func upgrade_skill(_slot_idx: int) -> bool:
+	return false
 
 
 func start_stealth_exit_cooldown() -> void:

@@ -1,8 +1,8 @@
 extends Node
 
-## War Champions Dedicated-Server Authoritative Network Manager (12v12 / 24 players).
+## War Champions Dedicated-Server Authoritative Network Manager (14v14 / 28 players).
 const DEFAULT_PORT: int = 7777
-const MAX_PLAYERS: int = 40
+const MAX_PLAYERS: int = 28
 const CHANNEL_RELIABLE: int = 0
 const CHANNEL_UNRELIABLE: int = 1
 const TICK_RATE: int = 60
@@ -131,7 +131,7 @@ func start_dedicated_server(port: int = DEFAULT_PORT) -> Error:
 	server_tick = 0
 	local_peer_id = 1
 	connection_state_changed.emit(true, true)
-	print("[NetworkManager] Dedicated server listening on UDP port %d (Max %d / 20v20)" % [port, MAX_PLAYERS])
+	print("[NetworkManager] Dedicated server listening on UDP port %d (Max %d / 14v14)" % [port, MAX_PLAYERS])
 	return OK
 
 
@@ -333,8 +333,8 @@ func register_bot(bot_id: int, bot_name: String, team: int, class_id: int, arche
 		"archetype": archetype,
 		"is_bot": true,
 		"xp": 0,
-		"level": 1,
-		"hero_points": 1,
+		"level": 5,
+		"hero_points": 0,
 		"kills": 0,
 		"deaths": 0,
 	}
@@ -527,8 +527,8 @@ func _register_player_internal(peer_id: int, profile: Dictionary) -> void:
 		"slot_archetypes": clean_slots,
 		"is_bot": false,
 		"xp": int(players_info.get(peer_id, {}).get("xp", 0)),
-		"level": int(players_info.get(peer_id, {}).get("level", 1)),
-		"hero_points": int(players_info.get(peer_id, {}).get("hero_points", 1)),
+		"level": int(players_info.get(peer_id, {}).get("level", 5)),
+		"hero_points": int(players_info.get(peer_id, {}).get("hero_points", 0)),
 		"kills": int(players_info.get(peer_id, {}).get("kills", 0)),
 		"deaths": int(players_info.get(peer_id, {}).get("deaths", 0)),
 	}
