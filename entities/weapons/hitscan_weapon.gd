@@ -24,7 +24,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 
 	var is_aiming: bool = cmd.has_button(InputCmd.BTN_AIM)
 	var has_frenzy: bool = owner_hero.status_effects != null and owner_hero.status_effects.has_method("has_frenzy_fire") and owner_hero.status_effects.has_frenzy_fire()
-	var spread_mult: float = get_current_spread_mult(is_aiming, has_frenzy)
+	var spread_mult: float = get_current_spread_mult(is_aiming, has_frenzy, owner_hero.is_crouching)
 
 	var dmg_mult: float = 1.0
 	if is_sniper and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_piercing_shot_mult"):

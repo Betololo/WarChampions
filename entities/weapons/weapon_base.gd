@@ -297,21 +297,23 @@ func is_first_shot() -> bool:
 	return _was_first_shot or _burst_bloom <= 0.05
 
 
-func get_current_spread_mult(is_aiming: bool = false, has_frenzy_fire: bool = false) -> float:
+func get_current_spread_mult(is_aiming: bool = false, has_frenzy_fire: bool = false, is_crouching: bool = false) -> float:
+	var crouch_mult: float = 0.55 if is_crouching else 1.0
 	if pellet_count > 1:
-		return 1.0
+		return 1.0 * crouch_mult
 	if is_sniper and is_aiming:
 		return 0.0
-	# Automatic weapons (SMG / MG) ALWAYS carry real bullet spread and ramp up during sustained fire
+	# First shot (and fully settled tap-fire) is always 100% pinpoint across all non-pellet weapons
+	if is_first_shot():
+		return 0.0
+	# Automatic weapons (SMG / MG) ramp up genuine bullet spread during sustained fire
 	if is_automatic:
 		var auto_mult: float = lerpf(0.70, 1.85, _burst_bloom)
 		if weapon_kind == WeaponKind.MG and has_frenzy_fire:
 			auto_mult *= 0.45
-		return auto_mult
-	# Semi-auto / bolt precision weapons (Pistol, Sniper) are 100% pinpoint once spread resets
-	if is_first_shot():
-		return 0.0
-	return lerpf(0.25, 1.0, _burst_bloom)
+		return auto_mult * crouch_mult
+	# Semi-auto / bolt follow-up shots before bloom settles
+	return lerpf(0.25, 1.0, _burst_bloom) * crouch_mult
 
 
 func reset_weapon() -> void:

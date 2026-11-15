@@ -1020,14 +1020,14 @@ func _process(delta: float) -> void:
 		var speed_horiz: float = Vector2(_local_hero.velocity.x, _local_hero.velocity.z).length()
 		var move_bloom: float = clampf(speed_horiz / 8.0, 0.0, 1.5) * 6.0
 		var air_bloom: float = 6.0 if (not _local_hero.is_on_floor() and _local_hero.current_vehicle_id < 0) else 0.0
-		var crouch_bonus: float = -1.5 if _local_hero.is_crouching else 0.0
+		var crouch_bonus: float = -2.0 if _local_hero.is_crouching else 0.0
 		var weapon_spread_bonus: float = 0.0
 		if not _local_hero.weapons.is_empty():
 			var w_slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
 			var active_w: WeaponBase = _local_hero.weapons[w_slot] as WeaponBase
 			if active_w != null:
 				var has_frenzy: bool = _local_hero.status_effects != null and _local_hero.status_effects.has_method("has_frenzy_fire") and _local_hero.status_effects.has_frenzy_fire()
-				weapon_spread_bonus = clampf(active_w.spread_rad * active_w.get_current_spread_mult(is_scoped, has_frenzy) * 140.0, 0.0, 9.0)
+				weapon_spread_bonus = clampf(active_w.spread_rad * active_w.get_current_spread_mult(is_scoped, has_frenzy, _local_hero.is_crouching) * 140.0, 0.0, 9.0)
 		var recoil_bloom: float = _crosshair_bloom + _local_hero._weapon_recoil_anim * 5.0
 		var target_spread: float = clampf(6.0 + weapon_spread_bonus + move_bloom + air_bloom + crouch_bonus + recoil_bloom, 4.0, 28.0)
 		_crosshair_spread_px = lerpf(_crosshair_spread_px, target_spread, minf(1.0, 18.0 * delta))

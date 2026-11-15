@@ -2,11 +2,11 @@ class_name VehicleJeep
 extends VehicleBase
 
 ## High-speed Recon Jeep: 1 Driver + 2 rear Passengers who fire weapons & skills freely, plus high-speed roadkill!
-const MAX_SPEED: float = 28.0
-const ACCEL: float = 42.0
-const STEER_RATE: float = 3.2
-const LATERAL_GRIP: float = 13.0
-const IDLE_DRAG: float = 4.0
+const MAX_SPEED: float = 27.0
+const ACCEL: float = 40.0
+const STEER_RATE: float = 2.25
+const LATERAL_GRIP: float = 14.0
+const IDLE_DRAG: float = 4.2
 
 
 func _setup_vehicle_stats_and_seats() -> void:

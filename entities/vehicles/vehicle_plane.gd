@@ -22,13 +22,22 @@ func _setup_vehicle_stats_and_seats() -> void:
 
 
 func _build_vehicle_mesh() -> void:
-	# Slender lower fuselage collider (leaving open cockpit bay y > 0.98m unobstructed)
+	# Slender lower fuselage collider with elevated belly clearance so nose-up takeoff pitch never snags the tail
 	var col_fuse := CollisionShape3D.new()
 	var box_fuse := BoxShape3D.new()
-	box_fuse.size = Vector3(1.05, 0.72, 5.6)
+	box_fuse.size = Vector3(1.05, 0.58, 5.4)
 	col_fuse.shape = box_fuse
-	col_fuse.position = Vector3(0.0, 0.62, 0.0)
+	col_fuse.position = Vector3(0.0, 0.72, 0.0)
 	add_child(col_fuse)
+
+	# 3-point tricycle landing gear spheres for smooth low-drag runway roll & rotation
+	for gear_pos in [Vector3(0.0, 0.28, -1.65), Vector3(-0.85, 0.28, 0.35), Vector3(0.85, 0.28, 0.35)]:
+		var col_gear := CollisionShape3D.new()
+		var sph_gear := SphereShape3D.new()
+		sph_gear.radius = 0.28
+		col_gear.shape = sph_gear
+		col_gear.position = gear_pos
+		add_child(col_gear)
 
 	# Thin wings collider
 	var col_wings := CollisionShape3D.new()
@@ -53,19 +62,30 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 
 		var forward: Vector3 = -global_transform.basis.z.normalized()
 		var cur_speed: float = clampf(linear_velocity.length(), 0.0, MAX_FLIGHT_SPEED)
-		cur_speed = lerpf(cur_speed, target_speed, 2.2 * delta)
+		cur_speed = lerpf(cur_speed, target_speed, 2.6 * delta)
 
-		# Smoothly steer plane attitude toward pilot aim_yaw & aim_pitch
+		# Support both mouse aim pitch/yaw AND Space (climb) / Crouch (dive) / A-D (roll)
+		var climb_input: float = (0.34 if cmd.has_button(InputCmd.BTN_JUMP) else 0.0) - (0.30 if cmd.has_button(InputCmd.BTN_CROUCH) else 0.0)
 		var target_yaw: float = cmd.aim_yaw
-		var target_pitch: float = clampf(cmd.aim_pitch, -0.75, 0.75)
-		var yaw_diff: float = wrapf(target_yaw - rotation.y, -PI, PI)
-		var bank_roll: float = clampf(-yaw_diff * 1.4 - cmd.move_dir.x * 0.7, -0.85, 0.85)
+		var target_pitch: float = clampf(cmd.aim_pitch + climb_input, -0.75, 0.75)
 
-		rotation.y = lerp_angle(rotation.y, target_yaw, 2.8 * delta)
-		rotation.x = lerpf(rotation.x, target_pitch, 3.2 * delta)
-		rotation.z = lerpf(rotation.z, bank_roll, 4.0 * delta)
+		# Automatic aerodynamic liftoff once past takeoff speed on runway (unless deliberately diving)
+		var near_runway: bool = global_position.y < 6.5
+		if near_runway and cur_speed >= TAKEOFF_SPEED and target_pitch > -0.15:
+			target_pitch = maxf(target_pitch, 0.18)
+
+		var airborne: bool = cur_speed >= TAKEOFF_SPEED or global_position.y >= 4.2
+		var yaw_diff: float = wrapf(target_yaw - rotation.y, -PI, PI)
+		var yaw_rate: float = 2.8 if airborne else 1.15
+		var bank_roll: float = clampf(-yaw_diff * 1.4 - cmd.move_dir.x * 0.7, -0.85, 0.85) if airborne else 0.0
+
+		rotation.y = lerp_angle(rotation.y, target_yaw, yaw_rate * delta)
+		rotation.x = lerpf(rotation.x, target_pitch, 3.4 * delta)
+		rotation.z = lerpf(rotation.z, bank_roll, 4.2 * delta)
 
 		var lift_y: float = 0.0 if cur_speed >= TAKEOFF_SPEED else -4.0
+		if near_runway and cur_speed >= TAKEOFF_SPEED and target_pitch > -0.10:
+			lift_y = clampf((cur_speed - TAKEOFF_SPEED) * 0.35 + 1.4, 1.4, 4.5)
 		linear_velocity = forward * cur_speed + Vector3(0.0, lift_y, 0.0)
 		angular_velocity = Vector3.ZERO
 

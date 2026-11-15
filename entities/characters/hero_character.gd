@@ -1427,6 +1427,12 @@ func reconcile_with_server(state: Dictionary) -> void:
 			_body_collision.disabled = (current_vehicle_id >= 0)
 		if hero_camera != null:
 			hero_camera.set_vehicle_mode(current_vehicle_id >= 0)
+			if current_vehicle_id >= 0 and current_seat_index == 0 and is_inside_tree():
+				for v_node in get_tree().get_nodes_in_group("vehicles"):
+					if v_node is VehicleBase and v_node.id == current_vehicle_id and v_node.is_aircraft():
+						hero_camera.yaw = v_node.global_rotation.y
+						hero_camera.pitch = maxf(hero_camera.pitch, 0.06)
+						break
 		if current_vehicle_id < 0 and visual_root != null:
 			visual_root.rotation.x = 0.0
 			visual_root.rotation.z = 0.0

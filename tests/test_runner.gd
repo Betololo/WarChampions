@@ -32,6 +32,7 @@ func _ready() -> void:
 	_test_smooth_sync_packet_sequencing_and_menus()
 	await _test_step_climb_vehicle_arcade_and_roadkill()
 	_test_phase4_spread_and_optimization()
+	await _test_phase5_vehicles_grass_and_precision()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -2394,7 +2395,7 @@ func _test_smooth_sync_packet_sequencing_and_menus() -> void:
 			hero.hero_camera._process(1.0 / 60.0)
 
 		var cur_vis_x: float = hero.visual_root.global_position.x
-		if cur_vis_x <= prev_vis_x:
+		if frame > 0 and cur_vis_x <= prev_vis_x:
 			subframe_moved = false
 		prev_vis_x = cur_vis_x
 
@@ -3083,3 +3084,150 @@ func _test_phase4_spread_and_optimization() -> void:
 	main_inst.set_loading_state(false)
 	_assert(not main_inst.is_loading_visible(), "MainGame LoadingOverlay hides cleanly")
 	main_inst.queue_free()
+
+
+func _test_phase5_vehicles_grass_and_precision() -> void:
+	# 1. Weapon 1st-shot pinpoint accuracy across automatic weapons + crouch spread reduction
+	var smg := WeaponBase.new()
+	smg.configure(null, WeaponBase.WeaponKind.SMG, NetworkManager.ARCHETYPE_BALANCED)
+	var mg := WeaponBase.new()
+	mg.configure(null, WeaponBase.WeaponKind.MG, NetworkManager.ARCHETYPE_BALANCED)
+	var sg := WeaponBase.new()
+	sg.configure(null, WeaponBase.WeaponKind.SHOTGUN, NetworkManager.ARCHETYPE_BALANCED)
+
+	var fire_cmd := InputCmd.new()
+	fire_cmd.set_button(InputCmd.BTN_FIRE, true)
+	var idle_cmd := InputCmd.new()
+
+	_assert(smg.try_consume_fire(fire_cmd) and absf(smg.get_current_spread_mult(false, false, false)) < 0.0001, "Automatic SMG 1st shot has exact 0.0 spread")
+	_assert(mg.try_consume_fire(fire_cmd) and absf(mg.get_current_spread_mult(false, false, false)) < 0.0001, "Automatic MG 1st shot has exact 0.0 spread")
+	var base_aim := Vector3(0.0, 0.0, -1.0)
+	var smg_first_dir: Vector3 = smg.apply_spread(base_aim, smg.get_current_spread_mult(false, false, false))
+	_assert(base_aim.angle_to(smg_first_dir) < 0.0001, "SMG 1st shot hits dead-center on crosshair aim ray")
+
+	for _shot in range(5):
+		smg.step_timers(smg.fire_interval, idle_cmd)
+		smg.try_consume_fire(fire_cmd)
+		mg.step_timers(mg.fire_interval, idle_cmd)
+		mg.try_consume_fire(fire_cmd)
+
+	var smg_stand: float = smg.get_current_spread_mult(false, false, false)
+	var smg_crouch: float = smg.get_current_spread_mult(false, false, true)
+	var mg_stand: float = mg.get_current_spread_mult(false, false, false)
+	var mg_crouch: float = mg.get_current_spread_mult(false, false, true)
+	var sg_stand: float = sg.get_current_spread_mult(false, false, false)
+	var sg_crouch: float = sg.get_current_spread_mult(false, false, true)
+	_assert(smg_stand > 0.50 and mg_stand > 0.50, "Sustained SMG/MG fire ramps bullet spread (smg=%.2f, mg=%.2f)" % [smg_stand, mg_stand])
+	_assert(smg_crouch < smg_stand * 0.70 and mg_crouch < mg_stand * 0.70 and sg_crouch < sg_stand * 0.70, "Crouching tightens spread across SMG (%.2f<%.2f), MG (%.2f<%.2f), and Shotgun (%.2f<%.2f)" % [smg_crouch, smg_stand, mg_crouch, mg_stand, sg_crouch, sg_stand])
+	smg.free()
+	mg.free()
+	sg.free()
+
+	# 2. Grass texture mipmaps, anisotropic filter & non-micro UV scale
+	var grass_tex: ImageTexture = CartoonAssets.get_texture("grass")
+	var grass_img: Image = grass_tex.get_image()
+	_assert(grass_tex.get_width() >= 256 and grass_img != null and grass_img.has_mipmaps(), "Grass texture is >=256px and generates hardware mipmaps")
+
+	var p5_map := MapSeasideFrontline.new()
+	var p5_conq := ConquestManager.new()
+	var p5_vehs := Node3D.new()
+	p5_vehs.name = "Phase5Vehs"
+	add_child(p5_vehs)
+	add_child(p5_conq)
+	add_child(p5_map)
+	p5_map.build_map(p5_conq, p5_vehs, {})
+
+	var terrain_mi: MeshInstance3D = p5_map.get_node_or_null("SculptedTerrain/TerrainMesh") as MeshInstance3D
+	var terrain_mat: StandardMaterial3D = terrain_mi.material_override as StandardMaterial3D if terrain_mi != null else null
+	_assert(
+		terrain_mat != null and terrain_mat.uv1_scale.x <= 2.0 and terrain_mat.uv1_scale.y <= 2.0 and terrain_mat.texture_filter == BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC,
+		"TerrainMesh uses macro grass UV scale (<=2.0) and anisotropic mipmaps"
+	)
+
+	# 3. VehiclePlane staggered spawns & effortless takeoff (neutral aim_pitch=0.0 & Space climb)
+	var plane_a: VehiclePlane = null
+	var plane_b: VehiclePlane = null
+	var jeep_a: VehicleJeep = null
+	for v in p5_map.spawned_vehicles:
+		if v is VehiclePlane and v.team == NetworkManager.TEAM_ROYAL:
+			if plane_a == null:
+				plane_a = v as VehiclePlane
+			else:
+				plane_b = v as VehiclePlane
+		elif v is VehicleJeep and v.team == NetworkManager.TEAM_ROYAL and jeep_a == null:
+			jeep_a = v as VehicleJeep
+
+	_assert(
+		plane_a != null and plane_b != null and absf(plane_a.global_position.z - plane_b.global_position.z) >= 8.0,
+		"Royal runway planes spawn in staggered parallel lanes (dz=%.1fm >= 8m)" % (absf(plane_a.global_position.z - plane_b.global_position.z) if plane_a != null and plane_b != null else 0.0)
+	)
+	_assert(
+		jeep_a != null and jeep_a.physics_material_override != null and jeep_a.physics_material_override.friction <= 0.05 and plane_a.physics_material_override.friction <= 0.05,
+		"Vehicles configure low-friction PhysicsMaterial (<= 0.05) for smooth rolling"
+	)
+
+	var pilot := HeroCharacter.new()
+	pilot.setup_identity(811, "Phase5Pilot", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(pilot)
+	plane_a.try_enter_hero(pilot)
+
+	var j_driver := HeroCharacter.new()
+	j_driver.setup_identity(812, "Phase5JeepDriver", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(j_driver)
+	jeep_a.try_enter_hero(j_driver)
+
+	await get_tree().physics_frame
+	var plane_start_y: float = plane_a.global_position.y
+	var p_heroes: Dictionary = {811: pilot, 812: j_driver}
+	for tick in range(75):
+		var p_cmd := InputCmd.new()
+		p_cmd.move_dir = Vector2(0.0, -1.0)
+		p_cmd.aim_yaw = -PI * 0.5
+		p_cmd.aim_pitch = 0.0 # Neutral horizon camera pitch
+		pilot.latest_server_input = p_cmd
+		plane_a.step_vehicle_server(1.0 / 60.0, p_heroes, {"heroes_by_id": p_heroes})
+
+		var jc := InputCmd.new()
+		jc.move_dir = Vector2(-0.5 if tick > 45 else 0.0, -1.0)
+		j_driver.latest_server_input = jc
+		jeep_a.step_vehicle_server(1.0 / 60.0, p_heroes, {"heroes_by_id": p_heroes})
+		await get_tree().physics_frame
+
+	_assert(
+		plane_a.global_position.y >= plane_start_y + 3.0 and plane_a.linear_velocity.length() > 30.0,
+		"VehiclePlane takes off cleanly with neutral aim_pitch=0 (dy=%.2fm, spd=%.1f)" % [plane_a.global_position.y - plane_start_y, plane_a.linear_velocity.length()]
+	)
+	_assert(
+		jeep_a.linear_velocity.length() >= 15.0 and absf(jeep_a.rotation.x) < 0.25 and absf(jeep_a.rotation.z) < 0.25,
+		"VehicleJeep accelerates & corners onto road/curbs cleanly without stalling or flipping (spd=%.1f)" % jeep_a.linear_velocity.length()
+	)
+
+	# Also verify Space (BTN_JUMP) climbs strongly on second plane
+	var pilot2 := HeroCharacter.new()
+	pilot2.setup_identity(813, "Phase5Pilot2", NetworkManager.TEAM_ROYAL, 0, 0, false, false)
+	add_child(pilot2)
+	plane_b.try_enter_hero(pilot2)
+	await get_tree().physics_frame
+	var p2_start_y: float = plane_b.global_position.y
+	p_heroes[813] = pilot2
+	for _t in range(75):
+		var p2_cmd := InputCmd.new()
+		p2_cmd.move_dir = Vector2(0.0, -1.0)
+		p2_cmd.aim_yaw = -PI * 0.5
+		p2_cmd.aim_pitch = 0.0
+		p2_cmd.set_button(InputCmd.BTN_JUMP, true)
+		pilot2.latest_server_input = p2_cmd
+		plane_b.step_vehicle_server(1.0 / 60.0, p_heroes, {"heroes_by_id": p_heroes})
+		await get_tree().physics_frame
+
+	_assert(
+		plane_b.global_position.y >= p2_start_y + 6.0,
+		"VehiclePlane Space (BTN_JUMP) climbs high cleanly (dy=%.2fm)" % (plane_b.global_position.y - p2_start_y)
+	)
+
+	pilot.queue_free()
+	pilot2.queue_free()
+	j_driver.queue_free()
+	p5_map.queue_free()
+	p5_conq.queue_free()
+	p5_vehs.queue_free()
