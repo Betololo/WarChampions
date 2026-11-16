@@ -168,55 +168,14 @@ static func _collect_active_buff_icon_keys(hero: HeroCharacter, stealthed: bool,
 	return keys
 
 
-static func _update_overhead_buff_icons(hero: HeroCharacter, stealthed: bool, is_enemy: bool, vis: bool) -> void:
-	if hero == null or hero.visual_root == null:
+static func _update_overhead_buff_icons(hero: HeroCharacter, _stealthed: bool, _is_enemy: bool, _vis: bool) -> void:
+	if hero == null:
 		return
-	var keys: Array[String] = []
-	if vis and not hero.is_defeated:
-		keys = _collect_active_buff_icon_keys(hero, stealthed, is_enemy)
-	var count: int = keys.size()
 	var row: Node3D = hero._overhead_buff_row
-	if row == null or not is_instance_valid(row) or row.is_queued_for_deletion():
-		if count == 0:
-			return
-		row = Node3D.new()
-		row.name = "OverheadBuffRow"
-		row.position = Vector3(0.0, 2.38, 0.0)
-		hero.visual_root.add_child(row)
-		hero._overhead_buff_row = row
-		hero._overhead_buff_slots.clear()
-		for i in range(MAX_OVERHEAD_BUFF_SLOTS):
-			var sp := Sprite3D.new()
-			sp.name = "BuffIcon_%d" % i
-			sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			sp.pixel_size = 0.011
-			sp.no_depth_test = false
-			sp.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
-			sp.transparent = true
-			sp.render_priority = 4
-			sp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			sp.visible = false
-			row.add_child(sp)
-			hero._overhead_buff_slots.append(sp)
-
-	if count == 0:
+	if row != null and is_instance_valid(row) and not row.is_queued_for_deletion():
 		row.visible = false
-		for sp in hero._overhead_buff_slots:
-			if is_instance_valid(sp):
-				sp.visible = false
-				sp.texture = null
-		return
-
-	row.visible = true
-	for i in range(hero._overhead_buff_slots.size()):
-		var sp: Sprite3D = hero._overhead_buff_slots[i]
-		if not is_instance_valid(sp):
-			continue
-		if i < count:
-			sp.texture = CartoonAssets.get_texture(keys[i])
-			sp.position = Vector3((float(i) - float(count - 1) * 0.5) * 0.50, 0.0, 0.0)
-			sp.visible = sp.texture != null
-		else:
+	for sp in hero._overhead_buff_slots:
+		if is_instance_valid(sp):
 			sp.visible = false
 			sp.texture = null
 
@@ -247,6 +206,10 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var hidden_in_vehicle: bool = (hero.current_vehicle_id >= 0 and hero.current_seat_pose == "hidden" and not hero.is_defeated)
 	var is_enemy: bool = local_hero != null and hero.team != local_hero.team
 	var stealthed: bool = (hero.active_flags & NetSerializer.SNAP_STEALTHED) != 0 or hero.is_stealthed
+	var sense_r_sq: float = StatusEffectContainer.SIXTH_SENSE_RADIUS * StatusEffectContainer.SIXTH_SENSE_RADIUS
+	var marked_enemy: bool = is_enemy and ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0)
+	var sensed_enemy: bool = is_enemy and local_hero != null and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (hero.global_position.distance_squared_to(local_hero.global_position) <= sense_r_sq)
+	var show_xray: bool = (marked_enemy or sensed_enemy) and not hero.is_defeated
 	var cloak_val: float = 0.0
 	var vis: bool = true
 
@@ -256,7 +219,10 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 		if is_enemy and local_hero != null:
 			var detect_r: float = hero.status_effects.stealth_detection_radius if hero.status_effects != null else 10.0
 			var dist_sq: float = hero.global_position.distance_squared_to(local_hero.global_position)
-			if dist_sq > detect_r * detect_r:
+			if marked_enemy or sensed_enemy:
+				vis = not hero.is_scoping
+				cloak_val = 0.72
+			elif dist_sq > detect_r * detect_r:
 				vis = false
 			else:
 				vis = not hero.is_scoping
@@ -268,6 +234,9 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 		vis = not (hero.is_local_player and hero.is_scoping)
 		cloak_val = 0.0
 
+	var is_headless: bool = DisplayServer.get_name().contains("headless")
+	var parent_node: Node = hero.get_parent()
+
 	# Rate-limited foot dust/wind puffs when speed-boosted (Leg It / Elixir) and sprinting
 	if vis and not hero.is_defeated and hero.current_vehicle_id < 0:
 		var is_boosted: bool = ((hero.active_flags & NetSerializer.SNAP_SPEED_BOOST) != 0) or (hero.speed_multiplier > 1.15)
@@ -277,16 +246,28 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 				hero._speed_trail_timer -= delta
 				if hero._speed_trail_timer <= 0.0:
 					hero._speed_trail_timer = 0.18
-					var parent_node: Node = hero.get_parent()
-					if parent_node != null and not DisplayServer.get_name().contains("headless"):
+					if parent_node != null and not is_headless:
 						_spawn_foot_speed_puff(parent_node, hero.global_position, hero.aim_yaw)
+
+		# Rate-limited thematic continuous particles matching active buffs (zero extra VFX on Stealth)
+		if _has_continuous_particle_buff(hero):
+			hero._active_buff_vfx_timer -= delta
+			if hero._active_buff_vfx_timer <= 0.0:
+				hero._active_buff_vfx_timer = 0.42
+				if parent_node != null and not is_headless:
+					_spawn_active_buff_tick_vfx(parent_node, hero)
+
+	# Expanding ground radar pulse around Sixth Sense caster (visible on ground around caster)
+	if not hero.is_defeated and ((hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0):
+		hero._sixth_sense_pulse_timer -= delta
+		if hero._sixth_sense_pulse_timer <= 0.0:
+			hero._sixth_sense_pulse_timer = 1.15
+			if parent_node != null and not is_headless:
+				_spawn_sixth_sense_radar_pulse(parent_node, hero.global_position, StatusEffectContainer.SIXTH_SENSE_RADIUS)
 
 	var burning: bool = (hero.active_flags & NetSerializer.SNAP_BURNING) != 0
 	var poisoned: bool = (hero.active_flags & NetSerializer.SNAP_POISONED) != 0
 	var shielded: bool = (hero.active_flags & NetSerializer.SNAP_SHIELDED) != 0
-	var marked_enemy: bool = is_enemy and ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0)
-	var sensed_enemy: bool = is_enemy and local_hero != null and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (hero.global_position.distance_squared_to(local_hero.global_position) <= 3025.0)
-	var show_xray: bool = (marked_enemy or sensed_enemy) and not hero.is_defeated
 	var speed_flag: int = 1 if ((hero.active_flags & NetSerializer.SNAP_SPEED_BOOST) != 0) else 0
 	var eat_flag: int = 1 if ((hero.active_flags & NetSerializer.SNAP_EAT_GRENADES) != 0) else 0
 	var frenzy_flag: int = 1 if ((hero.active_buffs & NetSerializer.BUFF_FRENZY_FIRE) != 0 or (hero.status_effects != null and hero.status_effects.frenzy_timer > 0.0)) else 0
@@ -368,9 +349,11 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 static func update_vehicle_client_visuals(veh: VehicleBase, local_hero: HeroCharacter) -> void:
 	if veh == null or veh.is_destroyed or veh._visual_root == null:
 		return
+	var is_non_ally: bool = local_hero != null and veh.team != local_hero.team
 	var is_enemy: bool = local_hero != null and veh.team >= 0 and veh.team != local_hero.team
-	var local_senses: bool = is_enemy and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (veh.global_position.distance_squared_to(local_hero.global_position) <= 3025.0)
-	var show_xray: bool = is_enemy and (veh.is_marked or local_senses)
+	var sense_r_sq: float = StatusEffectContainer.SIXTH_SENSE_RADIUS * StatusEffectContainer.SIXTH_SENSE_RADIUS
+	var local_senses: bool = is_enemy and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (veh.global_position.distance_squared_to(local_hero.global_position) <= sense_r_sq)
+	var show_xray: bool = (is_non_ally and veh.is_marked) or local_senses
 	var next_xray: int = 1 if show_xray else 0
 	var meshes: Array[MeshInstance3D] = veh.get_cached_visual_meshes()
 	if next_xray == veh._last_xray_state:
@@ -398,6 +381,108 @@ static func _spawn_foot_speed_puff(parent: Node, world_pos: Vector3, aim_yaw: fl
 		tw.tween_property(puff, "position", puff.position + back_dir * 0.45 + Vector3(0.0, 0.18, 0.0), 0.26)
 		tw.tween_property(puff, "transparency", 1.0, 0.26)
 		tw.chain().tween_callback(puff.queue_free)
+
+
+static func _has_continuous_particle_buff(hero: HeroCharacter) -> bool:
+	const PARTICLE_BUFF_MASK: int = (
+		NetSerializer.BUFF_HERO_SHIELD
+		| NetSerializer.BUFF_BURNING_BULLETS
+		| NetSerializer.BUFF_POISONED_BLADE
+		| NetSerializer.BUFF_FRENZY_FIRE
+		| NetSerializer.BUFF_PIERCING_SHOT
+		| NetSerializer.BUFF_EAT_GRENADES
+		| NetSerializer.BUFF_COMBAT_MED_HOT
+		| NetSerializer.BUFF_BANDAGE
+		| NetSerializer.BUFF_FIREPROOF
+	)
+	if (hero.active_buffs & PARTICLE_BUFF_MASK) != 0:
+		return true
+	const PARTICLE_FLAG_MASK: int = (
+		NetSerializer.SNAP_BURNING
+		| NetSerializer.SNAP_POISONED
+		| NetSerializer.SNAP_SHIELDED
+		| NetSerializer.SNAP_EAT_GRENADES
+	)
+	return (hero.active_flags & PARTICLE_FLAG_MASK) != 0
+
+
+static func _spawn_rising_mote(
+	parent: Node,
+	start_pos: Vector3,
+	col: Color,
+	mote_scale: float,
+	rise_y: float = 0.65,
+	is_cross: bool = false
+) -> void:
+	var node: Node3D
+	var fades: Array[MeshInstance3D] = []
+	var mat: StandardMaterial3D = _get_shared_mat(col, true)
+	if is_cross:
+		node = _vfx_plus_cross(parent as Node3D, mat, start_pos, mote_scale * 2.2, mote_scale * 0.55, fades)
+	else:
+		var mi := MeshInstance3D.new()
+		mi.mesh = _get_shared_sphere()
+		mi.material_override = mat
+		mi.scale = Vector3.ONE * mote_scale
+		mi.position = start_pos
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		parent.add_child(mi)
+		node = mi
+		fades.append(mi)
+
+	if node.is_inside_tree():
+		var tw: Tween = node.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(node, "position", start_pos + Vector3(randf_range(-0.18, 0.18), rise_y, randf_range(-0.18, 0.18)), 0.45)
+		tw.tween_property(node, "scale", node.scale * 1.45, 0.45)
+		for mi in fades:
+			tw.tween_property(mi, "transparency", 1.0, 0.45)
+		tw.chain().tween_callback(node.queue_free)
+
+
+static func _spawn_active_buff_tick_vfx(parent: Node, hero: HeroCharacter) -> void:
+	warm_shared_meshes()
+	var base: Vector3 = hero.global_position
+	var side_a := Vector3(randf_range(-0.42, 0.42), randf_range(0.75, 1.35), randf_range(-0.42, 0.42))
+	var b: int = hero.active_buffs
+	var f: int = hero.active_flags
+
+	if (b & (NetSerializer.BUFF_COMBAT_MED_HOT | NetSerializer.BUFF_BANDAGE)) != 0 and parent is Node3D:
+		var cross_col := Color(0.28, 0.78, 1.0, 0.90) if (b & NetSerializer.BUFF_BANDAGE) != 0 else Color(0.24, 0.96, 0.52, 0.90)
+		_spawn_rising_mote(parent, base + side_a, cross_col, 0.11, 0.75, true)
+	elif (b & NetSerializer.BUFF_HERO_SHIELD) != 0 or (f & NetSerializer.SNAP_SHIELDED) != 0:
+		_spawn_rising_mote(parent, base + side_a, Color(0.32, 0.76, 1.0, 0.85), 0.12, 0.60, false)
+
+	if (b & NetSerializer.BUFF_BURNING_BULLETS) != 0 or (f & NetSerializer.SNAP_BURNING) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.35, 0.35), 1.05, randf_range(-0.35, 0.35)), Color(1.0, 0.42, 0.08, 0.92), 0.11, 0.65, false)
+	elif (b & NetSerializer.BUFF_POISONED_BLADE) != 0 or (f & NetSerializer.SNAP_POISONED) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.35, 0.35), 1.00, randf_range(-0.35, 0.35)), Color(0.28, 0.96, 0.24, 0.88), 0.10, 0.55, false)
+	elif (b & NetSerializer.BUFF_EAT_GRENADES) != 0 or (f & NetSerializer.SNAP_EAT_GRENADES) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.4, 0.4), 0.95, randf_range(-0.4, 0.4)), Color(0.32, 1.0, 0.52, 0.86), 0.11, 0.55, false)
+	elif (b & NetSerializer.BUFF_FRENZY_FIRE) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.32, 0.32), 1.15, randf_range(-0.32, 0.32)), Color(1.0, 0.82, 0.18, 0.90), 0.10, 0.60, false)
+	elif (b & NetSerializer.BUFF_PIERCING_SHOT) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.30, 0.30), 1.15, randf_range(-0.30, 0.30)), Color(1.0, 0.26, 0.22, 0.90), 0.10, 0.60, false)
+	elif (b & NetSerializer.BUFF_FIREPROOF) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.38, 0.38), 0.95, randf_range(-0.38, 0.38)), Color(0.95, 0.68, 0.22, 0.82), 0.10, 0.55, false)
+
+
+static func _spawn_sixth_sense_radar_pulse(parent: Node, origin: Vector3, radius: float) -> void:
+	warm_shared_meshes()
+	var pulse := MeshInstance3D.new()
+	pulse.mesh = _get_shared_torus()
+	pulse.material_override = _get_shared_mat(Color(1.0, 0.78, 0.18, 0.55), true)
+	pulse.position = origin + Vector3(0.0, 0.18, 0.0)
+	pulse.scale = Vector3(1.2, 0.35, 1.2)
+	pulse.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(pulse)
+	if pulse.is_inside_tree():
+		var target_scale: float = clampf(radius * 2.0, 12.0, 110.0)
+		var tw: Tween = pulse.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(pulse, "scale", Vector3(target_scale, 0.35, target_scale), 0.95)
+		tw.tween_property(pulse, "transparency", 1.0, 0.95)
+		tw.chain().tween_callback(pulse.queue_free)
 
 
 static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, radius: float = 1.0) -> void:

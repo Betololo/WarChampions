@@ -9,21 +9,32 @@ const CAPTURE_RATE_PER_HERO: float = 0.18 # ~5.5 seconds for 1 hero
 
 var point_index: int = 0
 var point_name: String = "Flag A"
+var initial_owner_team: int = -1
 var owner_team: int = -1 # -1 Neutral, 0 Royal, 1 National
 var capturing_team: int = -1
 var progress: float = 0.0 # 0.0 neutral .. 1.0 fully captured
 
 var _flag_mesh: MeshInstance3D
 var _ring_mesh: MeshInstance3D
+var _flag_label_3d: Label3D
 
 
 func setup(p_index: int, p_name: String, p_pos: Vector3, initial_owner: int = -1) -> void:
 	point_index = p_index
 	point_name = p_name
 	position = p_pos
+	initial_owner_team = initial_owner
 	owner_team = initial_owner
+	capturing_team = -1
 	progress = 1.0 if initial_owner >= 0 else 0.0
 	name = "CapturePoint_%d" % p_index
+
+
+func reset_point() -> void:
+	owner_team = initial_owner_team
+	capturing_team = -1
+	progress = 1.0 if initial_owner_team >= 0 else 0.0
+	_update_visuals()
 
 
 func _ready() -> void:
@@ -32,23 +43,46 @@ func _ready() -> void:
 
 
 func _build_flagpole_visual() -> void:
+	var plinth := MeshInstance3D.new()
+	var pl_cyl := CylinderMesh.new()
+	pl_cyl.top_radius = 0.85
+	pl_cyl.bottom_radius = 1.05
+	pl_cyl.height = 0.36
+	plinth.mesh = pl_cyl
+	plinth.position = Vector3(0.0, 0.18, 0.0)
+	var pl_mat := StandardMaterial3D.new()
+	pl_mat.albedo_color = Color(0.55, 0.56, 0.60)
+	plinth.material_override = pl_mat
+	add_child(plinth)
+
 	var pole := MeshInstance3D.new()
 	var cyl := CylinderMesh.new()
 	cyl.top_radius = 0.14
 	cyl.bottom_radius = 0.18
-	cyl.height = 10.0
+	cyl.height = 13.5
 	pole.mesh = cyl
-	pole.position = Vector3(0.0, 5.0, 0.0)
+	pole.position = Vector3(0.0, 6.75, 0.0)
 	var pmat := StandardMaterial3D.new()
 	pmat.albedo_color = Color(0.88, 0.88, 0.9)
 	pole.material_override = pmat
 	add_child(pole)
 
+	var finial := MeshInstance3D.new()
+	var fin_sph := SphereMesh.new()
+	fin_sph.radius = 0.32
+	fin_sph.height = 0.64
+	finial.mesh = fin_sph
+	finial.position = Vector3(0.0, 13.65, 0.0)
+	var fin_mat := StandardMaterial3D.new()
+	fin_mat.albedo_color = Color(0.95, 0.78, 0.22)
+	finial.material_override = fin_mat
+	add_child(finial)
+
 	_flag_mesh = MeshInstance3D.new()
 	var fbox := BoxMesh.new()
-	fbox.size = Vector3(2.8, 1.6, 0.12)
+	fbox.size = Vector3(3.2, 1.85, 0.14)
 	_flag_mesh.mesh = fbox
-	_flag_mesh.position = Vector3(1.5, 9.0, 0.0)
+	_flag_mesh.position = Vector3(1.7, 12.0, 0.0)
 	var fmat := StandardMaterial3D.new()
 	fmat.albedo_color = Color.WHITE
 	_flag_mesh.material_override = fmat
@@ -66,6 +100,18 @@ func _build_flagpole_visual() -> void:
 	rmat.albedo_color = Color(1.0, 1.0, 1.0, 0.16)
 	_ring_mesh.material_override = rmat
 	add_child(_ring_mesh)
+
+	_flag_label_3d = Label3D.new()
+	_flag_label_3d.name = "FlagLabel3D"
+	_flag_label_3d.position = Vector3(0.0, 14.8, 0.0)
+	_flag_label_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_flag_label_3d.no_depth_test = true
+	_flag_label_3d.fixed_size = false
+	_flag_label_3d.pixel_size = 0.014
+	_flag_label_3d.font_size = 42
+	_flag_label_3d.outline_size = 10
+	_flag_label_3d.text = "[%s] %s" % [String.chr(65 + point_index), point_name]
+	add_child(_flag_label_3d)
 
 
 func step_server(delta: float, heroes_by_id: Dictionary) -> void:
@@ -123,10 +169,13 @@ func _update_visuals() -> void:
 	if _flag_mesh == null:
 		return
 	var col: Color = Color(0.92, 0.92, 0.92)
+	var lbl_col: Color = Color(1.0, 0.95, 0.72)
 	if owner_team == NetworkManager.TEAM_ROYAL:
 		col = Color(0.18, 0.45, 0.95)
+		lbl_col = Color(0.40, 0.72, 1.0)
 	elif owner_team == NetworkManager.TEAM_NATIONAL:
 		col = Color(0.86, 0.16, 0.16)
+		lbl_col = Color(1.0, 0.38, 0.38)
 	elif capturing_team == NetworkManager.TEAM_ROYAL:
 		col = Color(0.55, 0.72, 1.0)
 	elif capturing_team == NetworkManager.TEAM_NATIONAL:
@@ -134,10 +183,14 @@ func _update_visuals() -> void:
 
 	if _flag_mesh.material_override is StandardMaterial3D:
 		(_flag_mesh.material_override as StandardMaterial3D).albedo_color = col
-	_flag_mesh.position.y = lerpf(3.0, 9.0, clampf(progress, 0.0, 1.0))
+	_flag_mesh.position.y = lerpf(5.5, 12.0, clampf(progress, 0.0, 1.0))
 
 	if _ring_mesh != null and _ring_mesh.material_override is StandardMaterial3D:
 		(_ring_mesh.material_override as StandardMaterial3D).albedo_color = Color(col.r, col.g, col.b, 0.18)
+
+	if _flag_label_3d != null:
+		_flag_label_3d.text = "[%s] %s" % [String.chr(65 + point_index), point_name]
+		_flag_label_3d.modulate = lbl_col
 
 
 func build_snapshot_dict() -> Dictionary:

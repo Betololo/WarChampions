@@ -40,6 +40,7 @@ func _ready() -> void:
 	await _test_phase8_task1_skill_icons_and_guide()
 	await _test_phase8_task2_aoe_vfx_and_overhead_buffs()
 	await _test_phase8_task3_plane_accel_and_crash()
+	await _test_phase9_all_9_fixes()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -3405,7 +3406,7 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 	target_a.apply_damage_server(20, 602, false)
 	_assert(not target_a.is_stealthed and ta_sm.skill_cooldowns[0] > 0.0, "Direct damage > 15 (20 dmg) breaks Stealth & starts cooldown")
 
-	# Re-cloak Target A briefly, then Commando activates 6th Skill (Mark Target, index 5) looking forward (-Z)
+	# Re-cloak Target A briefly, then Commando activates 6th Skill (Mark Target, index 5) looking straight at Target A
 	ta_sm.skill_cooldowns[0] = 0.0
 	ta_sm.try_activate_skill(0, InputCmd.new(), p6_ctx)
 	var csm6: SkillManager = commando.skill_manager as SkillManager
@@ -3413,14 +3414,24 @@ func _test_phase6_skills_20v20_arsenal() -> void:
 	var mark_cmd := InputCmd.new()
 	mark_cmd.aim_yaw = 0.0
 	mark_cmd.aim_pitch = 0.0
-	_assert(csm6.try_activate_skill(5, mark_cmd, p6_ctx), "16th skill Mark Target (slot 5) activates")
-	_assert(target_a.status_effects.is_marked() and not target_a.is_stealthed and p6_tank.is_marked, "Mark Target reveals cloaked enemy, marks Target A & marks enemy Tank")
+	_assert(csm6.try_activate_skill(5, mark_cmd, p6_ctx), "16th skill Mark Target (slot 5) activates on crosshair target")
+	_assert(target_a.status_effects.is_marked() and not target_a.is_stealthed and not p6_tank.is_marked, "Mark Target reveals cloaked enemy in crosshair (Target A only, Tank unmarked)")
 
-	# Check X-Ray material_overlay applied on client visuals for Marked enemy & Marked vehicle
+	# Check X-Ray material_overlay applied on client visuals for Marked enemy hero
 	target_a.active_flags |= NetSerializer.SNAP_MARKED_TARGET
 	StatusEffectsVFX.update_hero_client_visuals(target_a, commando, 0.016)
-	StatusEffectsVFX.update_vehicle_client_visuals(p6_tank, commando)
 	var xray_hero_mat := (target_a._mesh_parts[0] as MeshInstance3D).material_overlay as ShaderMaterial
+
+	# Now aim directly at Tank -> single-target lock switches mark from Target A to Tank
+	csm6.skill_cooldowns[5] = 0.0
+	var eye_p6: Vector3 = commando.global_position + Vector3(0.0, 1.5, 0.0)
+	var dir_to_tank: Vector3 = (p6_tank.global_position + Vector3(0.0, 0.4, 0.0) - eye_p6).normalized()
+	var tank_cmd := InputCmd.new()
+	tank_cmd.aim_yaw = atan2(-dir_to_tank.x, -dir_to_tank.z)
+	tank_cmd.aim_pitch = asin(clampf(dir_to_tank.y, -1.0, 1.0))
+	_assert(csm6.try_activate_skill(5, tank_cmd, p6_ctx) and p6_tank.is_marked and not target_a.status_effects.is_marked(), "Mark Target switches lock to aimed Tank and clears old Target A mark")
+
+	StatusEffectsVFX.update_vehicle_client_visuals(p6_tank, commando)
 	var xray_veh_ok: bool = false
 	for ch in p6_tank.find_children("*", "MeshInstance3D", true, false):
 		if ch is MeshInstance3D and (ch as MeshInstance3D).material_overlay != null:
@@ -4153,7 +4164,7 @@ func _test_phase8_task1_skill_icons_and_guide() -> void:
 		s_list.size() == 5 and g_list.size() == 5 and c_list.size() == 6 and w_list.size() == 4
 		and catalog_fields_ok and str(mark_entry.get("name", "")) == "Mark Target"
 		and str(burn_entry.get("effect_stats", "")) == "+16 dano fogo/s"
-		and str(mark_entry.get("duration", "")) == "6.5s varredura / 12s marca"
+		and str(mark_entry.get("duration", "")) == "12.0s marca"
 		and is_equal_approx(float(med_entry.get("aoe_radius", 0.0)), 12.0),
 		"SkillCatalog provides 5/5/6 class skills + 4 widgets with complete Rank-5 stats"
 	)
@@ -4383,48 +4394,49 @@ func _test_phase8_task2_aoe_vfx_and_overhead_buffs() -> void:
 		"All timed skills/widgets map to exact active_buffs bits (Leg It vs Elixir distinct, Hero Shield clears on break)"
 	)
 
-	# Verify OverheadBuffRow Sprite3D icons on Soldier & Commando
+	# Verify oversized OverheadBuffRow Sprite3D billboards stay hidden while thematic particle flags are active (and Stealth uses cloak shader only)
 	StatusEffectsVFX.update_hero_client_visuals(sol, sol, 0.016)
 	var sol_row := sol.visual_root.get_node_or_null("OverheadBuffRow") as Node3D
-	var sol_visible_texs: Array[Texture2D] = []
+	var sol_visible_sprites: int = 0
 	if sol_row != null:
 		for c in sol_row.get_children():
 			if c is Sprite3D and (c as Sprite3D).visible:
-				sol_visible_texs.append((c as Sprite3D).texture)
-	var has_leg_it_icon: bool = sol_visible_texs.has(CartoonAssets.get_texture("icon_skill_1_1"))
-	var has_burn_icon: bool = sol_visible_texs.has(CartoonAssets.get_texture("icon_skill_0_1"))
-	var has_band_icon: bool = sol_visible_texs.has(CartoonAssets.get_texture("icon_widget_0"))
+				sol_visible_sprites += 1
+	var sol_has_particles: bool = StatusEffectsVFX._has_continuous_particle_buff(sol)
 
 	StatusEffectsVFX.update_hero_client_visuals(enemy_com, sol, 0.016)
 	var com_row := enemy_com.visual_root.get_node_or_null("OverheadBuffRow") as Node3D
-	var com_visible_texs: Array[Texture2D] = []
-	if com_row != null:
-		for c in com_row.get_children():
-			if c is Sprite3D and (c as Sprite3D).visible:
-				com_visible_texs.append((c as Sprite3D).texture)
-	var has_elixir_icon: bool = com_visible_texs.has(CartoonAssets.get_texture("icon_skill_2_4"))
+	var com_no_row: bool = (com_row == null) or (not com_row.visible)
 
-	# Stealth beyond detect radius hides OverheadBuffRow from enemy perspective
+	# Stealth beyond detect radius hides visual_root when unmarked/unsensed, and adds zero continuous particles
+	enemy_com.status_effects.clear_all()
 	enemy_com.global_position = Vector3(40.0, 0.0, 0.0)
 	com_sm.try_activate_skill(0, cmd, ctx)
+	var stealth_no_extra_particles: bool = not StatusEffectsVFX._has_continuous_particle_buff(enemy_com)
+	sol.active_flags &= ~NetSerializer.SNAP_SIXTH_SENSE
 	StatusEffectsVFX.update_hero_client_visuals(enemy_com, sol, 0.016)
-	var hidden_when_stealthed: bool = com_row != null and not com_row.visible and not enemy_com.visual_root.visible
+	var hidden_when_stealthed: bool = not enemy_com.visual_root.visible
 
-	# Defeated hero hides OverheadBuffRow; clear_all() hides/clears all slots
+	# Within Sixth Sense 55m radius (40m), Stealthed Commando becomes revealed in 3D
+	sol.active_flags |= NetSerializer.SNAP_SIXTH_SENSE
+	StatusEffectsVFX.update_hero_client_visuals(enemy_com, sol, 0.016)
+	var revealed_by_sixth_sense: bool = enemy_com.visual_root.visible
+
+	# Defeated & clear_all() keep OverheadBuffRow hidden and clear particle buff state
 	sol.is_defeated = true
 	StatusEffectsVFX.update_hero_client_visuals(sol, sol, 0.016)
-	var hidden_when_defeated: bool = sol_row != null and not sol_row.visible
+	var hidden_when_defeated: bool = (sol_row == null) or (not sol_row.visible)
 
 	sol.is_defeated = false
 	sol.status_effects.clear_all()
 	StatusEffectsVFX.update_hero_client_visuals(sol, sol, 0.016)
-	var hidden_when_cleared: bool = sol.active_buffs == 0 and sol_row != null and not sol_row.visible
+	var hidden_when_cleared: bool = sol.active_buffs == 0 and ((sol_row == null) or (not sol_row.visible)) and not StatusEffectsVFX._has_continuous_particle_buff(sol)
 
 	_assert(
-		sol_row != null and sol_visible_texs.size() == 5 and has_leg_it_icon and has_burn_icon and has_band_icon
-		and com_row != null and has_elixir_icon
-		and hidden_when_stealthed and hidden_when_defeated and hidden_when_cleared,
-		"StatusEffectsVFX displays pooled OverheadBuffRow Sprite3D icons and hides on stealth/defeat/clear_all"
+		sol_visible_sprites == 0 and (sol_row == null or not sol_row.visible) and com_no_row
+		and sol_has_particles and stealth_no_extra_particles
+		and hidden_when_stealthed and revealed_by_sixth_sense and hidden_when_defeated and hidden_when_cleared,
+		"StatusEffectsVFX removes giant OverheadBuffRow Sprite3Ds, keeps thematic buff particles (0 extra on Stealth), and reveals 40m Stealth via Sixth Sense"
 	)
 
 	# 3. Combat Medicine AoE payload + StatusEffectsVFX.spawn_aoe_area_vfx geometry
@@ -4721,3 +4733,320 @@ func _test_phase8_task3_plane_accel_and_crash() -> void:
 
 	arena.queue_free()
 	await _flush_deferred()
+
+
+func _test_phase9_all_9_fixes() -> void:
+	# 1, 2 & 3. Match restart vehicle/prop respawn, Conquest flag reset across matches, & 4th Flag Town Square + HUD A..F pips
+	var mg_scene := load("res://scenes/main.tscn") as PackedScene
+	var mg := mg_scene.instantiate() as MainGame
+	add_child(mg)
+	await _flush_deferred()
+
+	var town_cp: CapturePoint = null
+	var all_6_cps: bool = (mg.conquest_manager.capture_points.size() == 6)
+	for cp in mg.conquest_manager.capture_points:
+		if cp.point_index == 3:
+			town_cp = cp
+	var town_lbl := town_cp._flag_label_3d if town_cp != null else null
+	var hud_pips_ok: bool = (mg.hud != null and mg.hud._flag_pips.size() == 6)
+	if hud_pips_ok:
+		var letters: PackedStringArray = PackedStringArray(["A", "B", "C", "D", "E", "F"])
+		for pi in range(6):
+			var pip: ColorRect = mg.hud._flag_pips[pi]
+			var plbl := pip.get_child(0) as Label if pip.get_child_count() > 0 else null
+			if pip.custom_minimum_size != Vector2(22, 16) or plbl == null or plbl.text != letters[pi]:
+				hud_pips_ok = false
+				break
+	_assert(
+		all_6_cps and town_cp != null and town_cp.point_name == "Town Square"
+		and town_cp.position.y >= 2.299 and town_lbl != null and town_lbl.text == "[D] Town Square"
+		and hud_pips_ok,
+		"Phase 9.3: 6 Conquest flags present with Town Square ([D]) elevated above plaza and A..F HUD pips"
+	)
+
+	# Simulate captured flags, destroyed vehicle, destroyed DestructibleProp, stray projectile, then reset match
+	var test_veh: VehicleBase = mg.vehicles_by_id.values()[0] as VehicleBase
+	test_veh.apply_marked(12.0)
+	test_veh.is_destroyed = true
+	test_veh.hp = 0
+	test_veh._respawn_timer = 19.5
+	test_veh.visible = false
+
+	var test_prop: DestructibleProp = null
+	var found_props: Array[Node] = mg.map_instance.find_children("*", "DestructibleProp", true, false)
+	if not found_props.is_empty():
+		test_prop = found_props[0] as DestructibleProp
+		test_prop.is_broken = true
+		test_prop.hp = 0
+		test_prop.visible = false
+
+	var stray_proj := Node3D.new()
+	mg.projectiles_root.add_child(stray_proj)
+
+	for cp in mg.conquest_manager.capture_points:
+		cp.owner_team = NetworkManager.TEAM_NATIONAL if cp.initial_owner_team != NetworkManager.TEAM_NATIONAL else NetworkManager.TEAM_ROYAL
+		cp.capturing_team = NetworkManager.TEAM_ROYAL
+		cp.progress = 0.35
+
+	mg._clear_match_entities()
+	mg.conquest_manager.reset_match()
+	await get_tree().process_frame
+	await _flush_deferred()
+
+	var all_flags_reset: bool = true
+	for cp in mg.conquest_manager.capture_points:
+		var exp_prog: float = 1.0 if cp.initial_owner_team >= 0 else 0.0
+		if cp.owner_team != cp.initial_owner_team or cp.capturing_team != -1 or not is_equal_approx(cp.progress, exp_prog):
+			all_flags_reset = false
+			break
+
+	_assert(
+		not test_veh.is_destroyed and test_veh.hp == test_veh.max_hp and test_veh._respawn_timer == 0.0
+		and test_veh.visible and not test_veh.is_marked
+		and (test_prop == null or (not test_prop.is_broken and test_prop.hp == test_prop.max_hp and test_prop.visible))
+		and mg.projectiles_root.get_child_count() == 0
+		and all_flags_reset,
+		"Phase 9.1 & 9.2: _clear_match_entities() + conquest_manager.reset_match() cleanly respawn vehicles/props, clear projectiles & reset all 6 flags (veh_ok=%s prop_ok=%s proj=%d flags=%s)" % [
+			str(not test_veh.is_destroyed and test_veh.hp == test_veh.max_hp and not test_veh.is_marked),
+			str(test_prop == null or (not test_prop.is_broken and test_prop.hp == test_prop.max_hp)),
+			mg.projectiles_root.get_child_count(),
+			str(all_flags_reset),
+		]
+	)
+
+	mg._start_bots_sync(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER)
+	if test_veh != null:
+		test_veh.step_vehicle_server(1.0 / 60.0, mg.heroes_by_id, mg._build_combat_context())
+		test_veh._on_destroyed(-1)
+		test_veh._respawn_vehicle()
+	_assert(
+		mg.heroes_by_id.size() == 28 and mg.heroes_by_id.has(1),
+		"Vehicle respawn during active match preserves MainGame.heroes_by_id without wiping roster (size=%d, has_local=%s)" % [
+			mg.heroes_by_id.size(),
+			str(mg.heroes_by_id.has(1)),
+		]
+	)
+
+	mg.queue_free()
+	await _flush_deferred()
+
+	# 4, 5, 6 & 7. Mark Target (crosshair/LOS/unlimited range/single-target), Sixth Sense (55m radius & Stealth reveal), Bot 130° cone, and Buff VFX
+	var arena := Node3D.new()
+	add_child(arena)
+
+	var wall_body := StaticBody3D.new()
+	wall_body.collision_layer = 1
+	var wall_col := CollisionShape3D.new()
+	var wall_box := BoxShape3D.new()
+	wall_box.size = Vector3(8.0, 6.0, 1.0)
+	wall_col.shape = wall_box
+	wall_body.add_child(wall_col)
+	arena.add_child(wall_body)
+	wall_body.global_position = Vector3(40.0, 2.0, -25.0)
+
+	var cmd_h := HeroCharacter.new()
+	cmd_h.setup_identity(9001, "P9Cmd", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	arena.add_child(cmd_h)
+	cmd_h.global_position = Vector3(0.0, 0.1, 0.0)
+
+	var sol_h := HeroCharacter.new()
+	sol_h.setup_identity(9002, "P9Sol", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(sol_h)
+	sol_h.global_position = Vector3(0.0, 0.1, 0.0)
+	sol_h.hero_camera.camera.position = Vector3(0.0, 2.5, 4.0)
+	sol_h.hero_camera.camera.look_at(Vector3(0.0, 1.0, -40.0), Vector3.UP)
+
+	var far_stealth := HeroCharacter.new()
+	far_stealth.setup_identity(9003, "P9FarStealth", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	arena.add_child(far_stealth)
+	far_stealth.global_position = Vector3(0.0, 0.1, -300.0)
+
+	var mid_enemy := HeroCharacter.new()
+	mid_enemy.setup_identity(9004, "P9MidEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(mid_enemy)
+	mid_enemy.global_position = Vector3(0.0, 0.1, -40.0)
+	mid_enemy.is_stealthed = true
+	mid_enemy.active_flags |= NetSerializer.SNAP_STEALTHED
+
+	var blocked_enemy := HeroCharacter.new()
+	blocked_enemy.setup_identity(9005, "P9Blocked", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(blocked_enemy)
+	blocked_enemy.global_position = Vector3(40.0, 0.1, -40.0)
+
+	await get_tree().physics_frame
+
+	var p9_heroes: Dictionary = {9001: cmd_h, 9002: sol_h, 9003: far_stealth, 9004: mid_enemy, 9005: blocked_enemy}
+	var p9_ctx: Dictionary = {"heroes_by_id": p9_heroes, "vehicles": [] as Array[VehicleBase]}
+
+	# Miss in empty sky
+	var miss_ok: bool = not cmd_h.status_effects.try_mark_crosshair_target(p9_ctx, PI * 0.5, 0.0, 12.0)
+
+	# LOS blocked by wall (40, 2, -25) in front of blocked_enemy (40, 0.1, -40) from cmd_h at (40, 0.1, 0)
+	cmd_h.global_position = Vector3(40.0, 0.1, 0.0)
+	var wall_blocks_mark: bool = not cmd_h.status_effects.try_mark_crosshair_target(p9_ctx, 0.0, 0.0, 12.0)
+
+	# Clear LOS at 300m (> 150m!) breaks Stealth & marks 1 target
+	cmd_h.global_position = Vector3(0.0, 0.1, 0.0)
+	far_stealth.is_stealthed = true
+	far_stealth.active_flags |= NetSerializer.SNAP_STEALTHED
+	# Aim slightly around mid_enemy to hit far_stealth cleanly: place mid_enemy off-center temporarily so ray picks far_stealth at 300m
+	mid_enemy.global_position = Vector3(25.0, 0.1, -30.0)
+	var eye_c: Vector3 = cmd_h.global_position + Vector3(0.0, 1.5, 0.0)
+	var dir_far: Vector3 = (far_stealth.global_position + Vector3(0.0, 1.0, 0.0) - eye_c).normalized()
+	var hit_far_ok: bool = cmd_h.status_effects.try_mark_crosshair_target(p9_ctx, atan2(-dir_far.x, -dir_far.z), asin(dir_far.y), 12.0)
+	var far_marked_only: bool = hit_far_ok and far_stealth.status_effects.is_marked() and not far_stealth.is_stealthed and not mid_enemy.status_effects.is_marked()
+
+	# Marking mid_enemy switches mark to mid_enemy & clears far_stealth
+	var dir_mid: Vector3 = (mid_enemy.global_position + Vector3(0.0, 1.0, 0.0) - eye_c).normalized()
+	var switch_ok: bool = cmd_h.status_effects.try_mark_crosshair_target(p9_ctx, atan2(-dir_mid.x, -dir_mid.z), asin(dir_mid.y), 12.0)
+	var single_target_switch_ok: bool = switch_ok and mid_enemy.status_effects.is_marked() and not far_stealth.status_effects.is_marked()
+
+	_assert(
+		miss_ok and wall_blocks_mark and far_marked_only and single_target_switch_ok,
+		"Phase 9.4: Mark Target enforces crosshair+LOS, works at 300m, breaks Stealth, and locks 1 target at a time"
+	)
+
+	# Reset mid_enemy straight ahead at 40m (< 55m) and far_stealth at 120m (> 55m), test Soldier Sixth Sense
+	mid_enemy.status_effects.clear_all()
+	mid_enemy.global_position = Vector3(0.0, 0.1, -40.0)
+	mid_enemy.is_stealthed = true
+	mid_enemy.active_flags = NetSerializer.SNAP_STEALTHED
+	far_stealth.global_position = Vector3(0.0, 0.1, -120.0)
+	far_stealth.is_stealthed = false
+	far_stealth.active_flags = 0
+
+	var hud9 := HUDController.new()
+	arena.add_child(hud9)
+	await _flush_deferred()
+	hud9._local_hero = sol_h
+	hud9._heroes_ref = {9002: sol_h, 9003: far_stealth, 9004: mid_enemy}
+	hud9._vehicles_ref = [] as Array[VehicleBase]
+
+	sol_h.active_flags |= NetSerializer.SNAP_SIXTH_SENSE
+	hud9._update_sixth_sense_markers()
+	var visible_markers_55m: int = 0
+	for mk in hud9._marker_pool:
+		if mk.visible:
+			visible_markers_55m += 1
+	StatusEffectsVFX.update_hero_client_visuals(mid_enemy, sol_h, 0.016)
+	StatusEffectsVFX.update_hero_client_visuals(far_stealth, sol_h, 0.016)
+	var mid_overlay := (mid_enemy._mesh_parts[0] as MeshInstance3D).material_overlay
+	var far_overlay := (far_stealth._mesh_parts[0] as MeshInstance3D).material_overlay
+
+	_assert(
+		is_equal_approx(StatusEffectContainer.SIXTH_SENSE_RADIUS, 55.0)
+		and visible_markers_55m == 1
+		and mid_enemy.visual_root.visible and mid_overlay != null and far_overlay == null,
+		"Phase 9.5: Sixth Sense reveals enemies (incl. Stealth) within 55m radius only, ignoring 120m enemies"
+	)
+
+	# 6. Bot 130 deg frontal vision cone
+	var bot_h := HeroCharacter.new()
+	bot_h.setup_identity(9006, "P9Bot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	arena.add_child(bot_h)
+	bot_h.global_position = Vector3(0.0, 0.1, 0.0)
+	bot_h.aim_yaw = 0.0 # facing -Z
+
+	var cone_front := HeroCharacter.new()
+	cone_front.setup_identity(9007, "ConeFront", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(cone_front)
+	cone_front.global_position = Vector3(20.0, 0.1, -20.0) # 45 deg (< 65 deg)
+
+	var cone_side := HeroCharacter.new()
+	cone_side.setup_identity(9008, "ConeSide", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(cone_side)
+	cone_side.global_position = Vector3(25.0, 0.1, 0.0) # 90 deg (> 65 deg)
+
+	var cone_rear := HeroCharacter.new()
+	cone_rear.setup_identity(9009, "ConeRear", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(cone_rear)
+	cone_rear.global_position = Vector3(0.0, 0.1, 10.0) # 180 deg behind
+
+	var bc9 := BotController.new()
+	bc9.bot_hero = bot_h
+	var space9: PhysicsDirectSpaceState3D = arena.get_world_3d().direct_space_state
+	var picked_front: HeroCharacter = bc9._find_nearest_visible_enemy({9006: bot_h, 9007: cone_front, 9008: cone_side, 9009: cone_rear}, space9)
+	var picked_rear_only: HeroCharacter = bc9._find_nearest_visible_enemy({9006: bot_h, 9009: cone_rear}, space9)
+
+	_assert(
+		is_equal_approx(BotController.FOV_HALF_ANGLE_DEG, 65.0)
+		and bc9.is_in_vision_cone(cone_front) and not bc9.is_in_vision_cone(cone_side) and not bc9.is_in_vision_cone(cone_rear)
+		and picked_front == cone_front and picked_rear_only == null,
+		"Phase 9.6: BotController enforces 130° frontal vision cone (ignores closer behind/side enemies)"
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+
+	# 8. Mouse extra button hotkeys (encoding, short labels, ConfigFile save/load, ClassSelectMenu _input filter)
+	InputCmd.reset_default_hotkeys()
+	var menu9 := ClassSelectMenu.new()
+	menu9.hotkeys_config_path = ""
+	add_child(menu9)
+	await _flush_deferred()
+	menu9.show_screen("settings")
+	menu9._begin_hotkey_listen("skill", 1)
+
+	var ev_left := InputEventMouseButton.new()
+	ev_left.button_index = MOUSE_BUTTON_LEFT
+	ev_left.pressed = true
+	menu9._input(ev_left)
+	var left_ignored: bool = InputCmd.get_skill_key(1) == InputCmd.DEFAULT_SKILL_HOTKEYS[1]
+
+	var ev_m4 := InputEventMouseButton.new()
+	ev_m4.button_index = MOUSE_BUTTON_XBUTTON1
+	ev_m4.pressed = true
+	menu9._input(ev_m4)
+	var m4_code: int = InputCmd.encode_mouse_button(MOUSE_BUTTON_XBUTTON1)
+	var m4_bound: bool = InputCmd.get_skill_key(1) == m4_code and InputCmd.key_short_label(m4_code) == "M4"
+
+	InputCmd.set_skill_key(2, InputCmd.encode_mouse_button(MOUSE_BUTTON_XBUTTON2))
+	InputCmd.set_widget_key(0, InputCmd.encode_mouse_button(MOUSE_BUTTON_MIDDLE))
+	var test_cfg_path: String = "user://phase9_mouse_hotkeys_test.cfg"
+	InputCmd.save_hotkeys_to_config(test_cfg_path)
+	InputCmd.reset_default_hotkeys()
+	var loaded_ok: bool = InputCmd.load_hotkeys_from_config(test_cfg_path)
+	var roundtrip_ok: bool = (
+		loaded_ok
+		and InputCmd.get_skill_key(1) == m4_code
+		and InputCmd.get_skill_key(2) == InputCmd.encode_mouse_button(MOUSE_BUTTON_XBUTTON2)
+		and InputCmd.key_short_label(InputCmd.get_skill_key(2)) == "M5"
+		and InputCmd.key_short_label(InputCmd.get_widget_key(0)) == "M3"
+	)
+	InputCmd.reset_default_hotkeys()
+	menu9.queue_free()
+	await _flush_deferred()
+
+	_assert(
+		left_ignored and m4_bound and roundtrip_ok,
+		"Phase 9.8: Extra mouse buttons (M3/M4/M5) bind cleanly in ClassSelectMenu, persist via ConfigFile, and Left/Right clicks are ignored"
+	)
+
+	# 9. Distinct 3D meshes and 2D HUD icons across all 24 (weapon_kind 0..7 x archetype 0..2) variants
+	var tmp_weapon := Node3D.new()
+	var all_24_meshes_distinct: bool = true
+	var all_24_icons_distinct: bool = true
+	for wk in range(8):
+		var mesh_sigs: Array[String] = []
+		var icon_datas: Array[PackedByteArray] = []
+		for arch in range(3):
+			var w_info: Dictionary = HeroMeshBuilder.populate_weapon_root(tmp_weapon, wk, arch)
+			var m_pos: Vector3 = w_info.get("muzzle", Vector3.ZERO) as Vector3
+			var c_cnt: int = tmp_weapon.get_child_count()
+			var p0_pos: Vector3 = (tmp_weapon.get_child(0) as Node3D).position if c_cnt > 0 else Vector3.ZERO
+			var sig: String = "%.3f|%d|%.3f,%.3f,%.3f" % [m_pos.z, c_cnt, p0_pos.x, p0_pos.y, p0_pos.z]
+			if mesh_sigs.has(sig) or c_cnt == 0:
+				all_24_meshes_distinct = false
+			mesh_sigs.append(sig)
+
+			var tex: ImageTexture = CartoonAssets.get_texture("icon_weapon_%d_%d" % [wk, arch])
+			var data: PackedByteArray = tex.get_image().get_data() if tex != null and tex.get_image() != null else PackedByteArray()
+			if data.is_empty() or icon_datas.has(data):
+				all_24_icons_distinct = false
+			icon_datas.append(data)
+	tmp_weapon.free()
+
+	_assert(
+		all_24_meshes_distinct and all_24_icons_distinct,
+		"Phase 9.9: All 24 (weapon_kind 0..7 x archetype 0..2) variants have distinct 3D geometry/muzzle signatures and distinct 2D HUD icons"
+	)

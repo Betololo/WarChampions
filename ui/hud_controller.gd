@@ -549,22 +549,31 @@ func _build_hud() -> void:
 	_style_label(_royal_ticket_lbl, 34, Color(0.92, 0.97, 1.0))
 	top_hbox.add_child(_royal_ticket_lbl)
 
-	# 6 Flag ownership pips neatly beneath the scoreboard
+	# 6 Flag ownership pips neatly beneath the scoreboard (with A..F letters)
 	var pips_hbox := HBoxContainer.new()
-	pips_hbox.position = Vector2(150.0, 74.0)
-	pips_hbox.size = Vector2(220.0, 14.0)
+	pips_hbox.position = Vector2(126.0, 72.0)
+	pips_hbox.size = Vector2(268.0, 18.0)
 	pips_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	pips_hbox.add_theme_constant_override("separation", 8)
+	pips_hbox.add_theme_constant_override("separation", 6)
 	pips_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_anchor.add_child(pips_hbox)
 
 	_last_flag_owners.resize(6)
+	var flag_letters: PackedStringArray = PackedStringArray(["A", "B", "C", "D", "E", "F"])
 	for i in range(6):
 		_last_flag_owners[i] = -99
 		var pip := ColorRect.new()
-		pip.custom_minimum_size = Vector2(14, 10)
+		pip.custom_minimum_size = Vector2(22, 16)
 		pip.color = Color(0.85, 0.85, 0.85)
 		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var pip_lbl := Label.new()
+		pip_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+		pip_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		pip_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		pip_lbl.text = flag_letters[i]
+		pip_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_style_label(pip_lbl, 11, Color.WHITE)
+		pip.add_child(pip_lbl)
 		pips_hbox.add_child(pip)
 		_flag_pips.append(pip)
 
@@ -1078,7 +1087,8 @@ func _refresh_hotbar_icons() -> void:
 			_weapon_slot_boxes[i].visible = true
 			var w: WeaponBase = _local_hero.weapons[i] as WeaponBase
 			if w != null:
-				_weapon_slot_icons[i].texture = CartoonAssets.get_texture("icon_weapon_%d" % w.weapon_kind)
+				var w_arch: int = clampi(w.archetype, 0, 2)
+				_weapon_slot_icons[i].texture = CartoonAssets.get_texture("icon_weapon_%d_%d" % [w.weapon_kind, w_arch])
 				if not w.fired.is_connected(_on_local_weapon_fired):
 					w.fired.connect(_on_local_weapon_fired)
 				if not _bound_weapon_signals.has(w):
@@ -1540,6 +1550,23 @@ func _update_vehicle_seat_diagram(target_v: VehicleBase) -> void:
 		btn.add_theme_stylebox_override("pressed", sb)
 
 
+func _place_sixth_sense_marker(used_count: int, screen_p: Vector2, sym: String, col: Color) -> void:
+	var marker: Label
+	if used_count < _marker_pool.size():
+		marker = _marker_pool[used_count]
+	else:
+		marker = Label.new()
+		marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_sixth_sense_layer.add_child(marker)
+		_marker_pool.append(marker)
+	if marker.text != sym:
+		marker.text = sym
+	marker.modulate = col
+	marker.position = screen_p - Vector2(6.0, 10.0)
+	if not marker.visible:
+		marker.visible = true
+
+
 func _update_sixth_sense_markers() -> void:
 	if _sixth_sense_layer == null:
 		return
@@ -1547,35 +1574,46 @@ func _update_sixth_sense_markers() -> void:
 		_hide_all_sixth_sense_markers()
 		return
 	var local_sixth_sense: bool = (_local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0
+	var sense_r_sq: float = StatusEffectContainer.SIXTH_SENSE_RADIUS * StatusEffectContainer.SIXTH_SENSE_RADIUS
+	var pulse_alpha: float = 0.52 + 0.48 * (0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.008))
 	var cam: Camera3D = _local_hero.hero_camera.camera
 	var used_count: int = 0
+
 	for id_key in _heroes_ref.keys():
 		var enemy: HeroCharacter = _heroes_ref[id_key]
 		if enemy == null or enemy.is_defeated or enemy.team == _local_hero.team:
 			continue
 		var enemy_marked: bool = (enemy.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0
-		if not local_sixth_sense and not enemy_marked:
+		var enemy_sensed: bool = local_sixth_sense and (enemy.global_position.distance_squared_to(_local_hero.global_position) <= sense_r_sq)
+		if not enemy_sensed and not enemy_marked:
 			continue
 		var world_p: Vector3 = enemy.global_position + Vector3(0.0, 2.2, 0.0)
 		if cam.is_position_behind(world_p):
 			continue
 		var screen_p: Vector2 = cam.unproject_position(world_p)
-		var marker: Label
-		if used_count < _marker_pool.size():
-			marker = _marker_pool[used_count]
-		else:
-			marker = Label.new()
-			marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			_sixth_sense_layer.add_child(marker)
-			_marker_pool.append(marker)
 		var sym: String = "◎" if enemy_marked else "◆"
-		if marker.text != sym:
-			marker.text = sym
-		marker.modulate = Color(1.0, 0.22, 0.22)
-		marker.position = screen_p - Vector2(6.0, 10.0)
-		if not marker.visible:
-			marker.visible = true
+		var col := Color(1.0, 0.22, 0.22, 1.0 if enemy_marked else pulse_alpha)
+		_place_sixth_sense_marker(used_count, screen_p, sym, col)
 		used_count += 1
+
+	for veh in _vehicles_ref:
+		if veh == null or veh.is_destroyed:
+			continue
+		if veh.team == _local_hero.team:
+			continue
+		var veh_marked: bool = veh.is_marked
+		var veh_sensed: bool = local_sixth_sense and veh.team >= 0 and (veh.global_position.distance_squared_to(_local_hero.global_position) <= sense_r_sq)
+		if not veh_marked and not veh_sensed:
+			continue
+		var v_world_p: Vector3 = veh.global_position + Vector3(0.0, 2.6, 0.0)
+		if cam.is_position_behind(v_world_p):
+			continue
+		var v_screen_p: Vector2 = cam.unproject_position(v_world_p)
+		var v_sym: String = "◎" if veh_marked else "◆"
+		var v_col := Color(1.0, 0.22, 0.22, 1.0 if veh_marked else pulse_alpha)
+		_place_sixth_sense_marker(used_count, v_screen_p, v_sym, v_col)
+		used_count += 1
+
 	for k in range(used_count, _marker_pool.size()):
 		if _marker_pool[k].visible:
 			_marker_pool[k].visible = false

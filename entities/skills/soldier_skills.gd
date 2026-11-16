@@ -92,8 +92,8 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 			_record_aoe_effect(blast_radius, affected_ids, owner_hero.global_position)
 			return true
 
-		4: # Sixth Sense: Tactical radar wall-reveal for self and nearby allies
-			var sense_radius: float = 35.0 + float(rank) * 10.0
+		4: # Sixth Sense: Tactical radar wall-reveal pulse for self and nearby allies within fixed 55m radius
+			var sense_radius: float = StatusEffectContainer.SIXTH_SENSE_RADIUS
 			var duration: float = 6.0 + float(rank) * 1.5
 			var aoe_ally_radius: float = 18.0
 			var affected_ids: Array[int] = [owner_hero.entity_id]

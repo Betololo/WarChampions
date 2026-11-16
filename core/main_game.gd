@@ -301,9 +301,13 @@ func _run_with_loading_screen(deploy_text: String, on_ready_call: Callable) -> v
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if not _loading_in_progress and class_menu != null and not class_menu.visible and heroes_by_id.has(NetworkManager.local_peer_id):
+			if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not DisplayServer.get_name().contains("headless"):
+				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
-		if k.keycode == KEY_ESCAPE and class_menu != null:
+		if (k.keycode == KEY_ESCAPE or k.keycode == KEY_P) and class_menu != null:
 			if class_menu.is_listening_hotkey():
 				return
 			var in_active_match: bool = heroes_by_id.has(NetworkManager.local_peer_id)
@@ -383,6 +387,7 @@ func _on_join_online(team: int, class_id: int, ip: String, port: int) -> void:
 func _start_join_sync(team: int, class_id: int, ip: String, port: int) -> void:
 	_switching_mode = true
 	_clear_match_entities()
+	conquest_manager.reset_match()
 	var slot_archs: Dictionary = NetworkManager.build_class_slot_archetypes(class_id)
 	NetworkManager.set_local_loadout("ClientHero", team, class_id, NetworkManager.ARCHETYPE_BALANCED, slot_archs)
 	NetworkManager.join_server(ip, port)
@@ -416,9 +421,13 @@ func _start_bots_sync(team: int, class_id: int) -> void:
 func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
+	_prev_interact_state.clear()
 	if hud != null:
 		hud.set_local_hero(null)
 		hud.clear_killfeed()
+	if projectiles_root != null:
+		for p in projectiles_root.get_children():
+			p.queue_free()
 	for b in bots_root.get_children():
 		b.queue_free()
 	bot_brains.clear()
@@ -426,7 +435,26 @@ func _clear_match_entities() -> void:
 		var h: HeroCharacter = heroes_by_id[id_key]
 		if is_instance_valid(h):
 			h.queue_free()
+	if heroes_root != null:
+		for ch in heroes_root.get_children():
+			if is_instance_valid(ch):
+				ch.queue_free()
 	heroes_by_id.clear()
+	var reset_vehs: Array[VehicleBase] = []
+	for v_val in vehicles_by_id.values():
+		var vb := v_val as VehicleBase
+		if vb != null and is_instance_valid(vb) and not reset_vehs.has(vb):
+			reset_vehs.append(vb)
+	if map_instance != null:
+		for mv in map_instance.spawned_vehicles:
+			if mv != null and is_instance_valid(mv) and not reset_vehs.has(mv):
+				reset_vehs.append(mv)
+		for ch in map_instance.get_children():
+			if ch is DestructibleProp:
+				(ch as DestructibleProp).reset_prop()
+	for vb in reset_vehs:
+		vb._respawn_vehicle()
+	_sync_vehicle_authority_freeze()
 	_refresh_combat_context()
 
 

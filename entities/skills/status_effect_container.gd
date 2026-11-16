@@ -44,7 +44,11 @@ var stealth_infinite: bool = false
 var stealth_detection_radius: float = 12.0
 
 var sixth_sense_timer: float = 0.0
-var sixth_sense_radius: float = 45.0
+var sixth_sense_radius: float = 55.0
+
+const SIXTH_SENSE_RADIUS: float = 55.0
+const MARK_TARGET_MAX_RANGE: float = 2500.0
+const MARK_CROSSHAIR_MAX_ANGLE_DEG: float = 2.8
 
 var hot_timer: float = 0.0
 var hot_tick_accum: float = 0.0
@@ -172,10 +176,8 @@ func _physics_process(delta: float) -> void:
 			bandage_channel_timer = 0.0
 			owner_hero.heal_server(bandage_heal_amount)
 
-	# Mark Target 5.0s sweeping cone (120m LOS -> tags enemies & vehicles globally for 12s)
-	if mark_sweep_timer > 0.0:
-		mark_sweep_timer = maxf(0.0, mark_sweep_timer - delta)
-		_process_mark_target_sweep()
+	# Single-target Mark Target is resolved instantaneously on crosshair press (no multi-target sweep)
+	mark_sweep_timer = 0.0
 
 	if stealth_infinite:
 		if marked_timer > 0.0:
@@ -371,68 +373,132 @@ func apply_marked(duration: float = 12.0) -> void:
 	_sync_flags()
 
 
-func activate_mark_target_window(duration: float, max_range_m: float, context: Dictionary, aim_yaw: float, aim_pitch: float) -> void:
-	mark_sweep_timer = duration
-	mark_sweep_range = max_range_m
-	mark_sweep_context = context
-	mark_sweep_aim_yaw = aim_yaw
-	mark_sweep_aim_pitch = aim_pitch
-	_process_mark_target_sweep()
+func clear_marked() -> void:
+	marked_timer = 0.0
+	_sync_flags()
 
 
-func _process_mark_target_sweep() -> void:
+func _clear_all_other_marks(heroes_by_id: Dictionary, vehs: Array) -> void:
+	for id_key in heroes_by_id.keys():
+		var h: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+		if h != null and h.status_effects != null and h.status_effects.is_marked():
+			h.status_effects.clear_marked()
+	for v in vehs:
+		if v is VehicleBase and (v as VehicleBase).is_marked:
+			(v as VehicleBase).clear_marked()
+
+
+func try_mark_crosshair_target(context: Dictionary, aim_yaw: float, aim_pitch: float, mark_duration: float = 12.0) -> bool:
 	if owner_hero == null or owner_hero.is_defeated:
-		return
-	var yaw: float = mark_sweep_aim_yaw
-	var pitch: float = mark_sweep_aim_pitch
-	if owner_hero.latest_server_input != null and owner_hero.latest_server_input.tick > 0:
-		yaw = owner_hero.latest_server_input.aim_yaw
-		pitch = owner_hero.latest_server_input.aim_pitch
-	var eye_pos: Vector3 = owner_hero.global_position + Vector3(0.0, 1.5, 0.0)
-	var look_dir: Vector3 = (-Basis.from_euler(Vector3(pitch, yaw, 0.0)).z).normalized()
-	var space: PhysicsDirectSpaceState3D = owner_hero.get_world_3d().direct_space_state if owner_hero.is_inside_tree() else null
-	var min_cos: float = cos(deg_to_rad(28.0))
+		return false
+	mark_sweep_timer = 0.0
+	var hero_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+	var eye_offset: float = 1.05 if owner_hero.is_crouching else 1.50
+	var eye_pos: Vector3 = hero_pos + Vector3(0.0, eye_offset, 0.0)
+	var cam_ray: Dictionary = HeroCamera.compute_aim_ray(
+		hero_pos,
+		aim_yaw,
+		aim_pitch,
+		owner_hero.is_scoping,
+		owner_hero.current_vehicle_id >= 0,
+		owner_hero.is_crouching
+	)
+	var pivot_pos: Vector3 = cam_ray.get("pivot", eye_pos)
+	var look_dir: Vector3 = (-Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
+	var space: PhysicsDirectSpaceState3D = owner_hero.get_world_3d().direct_space_state if (owner_hero.is_inside_tree() and owner_hero.get_world_3d() != null) else null
+	var min_cos: float = cos(deg_to_rad(MARK_CROSSHAIR_MAX_ANGLE_DEG))
+	var ray_excludes: Array[RID] = [owner_hero.get_rid()]
 
-	var heroes_by_id: Dictionary = mark_sweep_context.get("heroes_by_id", {})
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
+	var vehs: Array = context.get("vehicles", [])
+	if vehs.is_empty() and owner_hero.is_inside_tree():
+		vehs = owner_hero.get_tree().get_nodes_in_group("vehicles")
+
+	var best_kind: String = "" # "hero" | "vehicle"
+	var best_hero: HeroCharacter = null
+	var best_veh: VehicleBase = null
+	var best_dot: float = -2.0
+	var best_dist: float = MARK_TARGET_MAX_RANGE + 1.0
+
 	for id_key in heroes_by_id.keys():
 		var cand: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
 		if cand == null or cand.is_defeated or cand.team == owner_hero.team:
 			continue
-		var target_pos: Vector3 = cand.global_position + Vector3(0.0, 1.15, 0.0)
-		var to_cand: Vector3 = target_pos - eye_pos
-		var dist: float = to_cand.length()
-		if dist > mark_sweep_range or dist < 0.1:
+		var c_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
+		var target_pos: Vector3 = c_pos + Vector3(0.0, 1.15, 0.0)
+		var to_eye: Vector3 = target_pos - eye_pos
+		var dist: float = to_eye.length()
+		if dist > MARK_TARGET_MAX_RANGE or dist < 0.1:
 			continue
-		if (to_cand / dist).dot(look_dir) < min_cos:
+		var dot_eye: float = (to_eye / dist).dot(look_dir)
+		var to_cam: Vector3 = target_pos - pivot_pos
+		var cam_len: float = maxf(0.1, to_cam.length())
+		var dot_cam: float = (to_cam / cam_len).dot(look_dir)
+		var align_dot: float = maxf(dot_eye, dot_cam)
+		var proj: float = maxf(0.0, to_eye.dot(look_dir))
+		var perp_dist: float = (to_eye - look_dir * proj).length()
+		var in_crosshair: bool = (align_dot >= min_cos) or (dist <= 30.0 and to_eye.dot(look_dir) > 0.0 and perp_dist <= 1.15)
+		if not in_crosshair:
 			continue
 		if space != null:
 			var q := PhysicsRayQueryParameters3D.create(eye_pos, target_pos, 1 | 64)
+			q.exclude = ray_excludes
 			if not space.intersect_ray(q).is_empty():
 				continue
-		if cand.status_effects != null:
-			cand.status_effects.apply_marked(12.0)
+		if align_dot > best_dot + 0.0002 or (absf(align_dot - best_dot) <= 0.0002 and dist < best_dist):
+			best_kind = "hero"
+			best_hero = cand
+			best_veh = null
+			best_dot = align_dot
+			best_dist = dist
 
-	var vehs: Array = mark_sweep_context.get("vehicles", [])
-	if vehs.is_empty() and owner_hero.is_inside_tree():
-		vehs = owner_hero.get_tree().get_nodes_in_group("vehicles")
 	for v in vehs:
 		if not (v is VehicleBase):
 			continue
 		var vb := v as VehicleBase
 		if vb.is_destroyed or vb.team == owner_hero.team:
 			continue
-		var vpos: Vector3 = vb.global_position + Vector3(0.0, 1.2, 0.0)
-		var to_v: Vector3 = vpos - eye_pos
-		var vdist: float = to_v.length()
-		if vdist > mark_sweep_range or vdist < 0.1:
+		var v_pos: Vector3 = vb.global_position if vb.is_inside_tree() else vb.position
+		var target_pos: Vector3 = v_pos + Vector3(0.0, 1.2, 0.0)
+		var to_eye: Vector3 = target_pos - eye_pos
+		var vdist: float = to_eye.length()
+		if vdist > MARK_TARGET_MAX_RANGE or vdist < 0.1:
 			continue
-		if (to_v / vdist).dot(look_dir) < min_cos:
+		var dot_eye: float = (to_eye / vdist).dot(look_dir)
+		var to_cam: Vector3 = target_pos - pivot_pos
+		var cam_len: float = maxf(0.1, to_cam.length())
+		var dot_cam: float = (to_cam / cam_len).dot(look_dir)
+		var align_dot: float = maxf(dot_eye, dot_cam)
+		var proj: float = maxf(0.0, to_eye.dot(look_dir))
+		var perp_dist: float = (to_eye - look_dir * proj).length()
+		var in_crosshair: bool = (align_dot >= min_cos) or (vdist <= 35.0 and to_eye.dot(look_dir) > 0.0 and perp_dist <= 2.6)
+		if not in_crosshair:
 			continue
 		if space != null:
-			var qv := PhysicsRayQueryParameters3D.create(eye_pos, vpos, 1 | 64)
+			var qv := PhysicsRayQueryParameters3D.create(eye_pos, target_pos, 1 | 64)
+			qv.exclude = ray_excludes
 			if not space.intersect_ray(qv).is_empty():
 				continue
-		vb.apply_marked(12.0)
+		if align_dot > best_dot + 0.0002 or (absf(align_dot - best_dot) <= 0.0002 and vdist < best_dist):
+			best_kind = "vehicle"
+			best_veh = vb
+			best_hero = null
+			best_dot = align_dot
+			best_dist = vdist
+
+	if best_kind == "hero" and best_hero != null and best_hero.status_effects != null:
+		_clear_all_other_marks(heroes_by_id, vehs)
+		best_hero.status_effects.apply_marked(mark_duration)
+		return true
+	if best_kind == "vehicle" and best_veh != null:
+		_clear_all_other_marks(heroes_by_id, vehs)
+		best_veh.apply_marked(mark_duration)
+		return true
+	return false
+
+
+func activate_mark_target_window(_duration: float, _max_range_m: float, context: Dictionary, aim_yaw: float, aim_pitch: float) -> void:
+	try_mark_crosshair_target(context, aim_yaw, aim_pitch, 12.0)
 
 
 func activate_stealth(detection_radius: float, duration: float = -1.0) -> void:

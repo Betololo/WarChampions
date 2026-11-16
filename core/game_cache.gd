@@ -66,6 +66,8 @@ static func warm_textures() -> void:
 		CartoonAssets.get_texture(k)
 	for wk in range(9):
 		CartoonAssets.get_texture("icon_weapon_%d" % wk)
+		for arch in range(3):
+			CartoonAssets.get_texture("icon_weapon_%d_%d" % [wk, arch])
 	for cls in range(3):
 		for sk in range(6):
 			CartoonAssets.get_texture("icon_skill_%d_%d" % [cls, sk])
@@ -127,7 +129,8 @@ static func warm_meshes() -> void:
 
 	var tmp_w := Node3D.new()
 	for wk in range(9):
-		HeroMeshBuilder.populate_weapon_root(tmp_w, wk)
+		for arch in range(3):
+			HeroMeshBuilder.populate_weapon_root(tmp_w, wk, arch)
 	tmp_w.free()
 	StatusEffectsVFX.warm_shared_meshes()
 	_meshes_warmed = true
@@ -179,16 +182,17 @@ static func prewarm_gpu_pipelines(host_node: Node3D) -> Node3D:
 		mi.material_override = sample_mats[j]
 		root.add_child(mi)
 
-	var gp := GPUParticles3D.new()
-	gp.position = anchor
-	gp.amount = 2
-	gp.lifetime = 0.1
-	gp.one_shot = true
-	gp.emitting = true
-	gp.draw_pass_1 = tiny_box
-	gp.process_material = ParticleProcessMaterial.new()
-	gp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	root.add_child(gp)
+	if not OS.has_feature("web"):
+		var gp := GPUParticles3D.new()
+		gp.position = anchor
+		gp.amount = 2
+		gp.lifetime = 0.1
+		gp.one_shot = true
+		gp.emitting = true
+		gp.draw_pass_1 = tiny_box
+		gp.process_material = ParticleProcessMaterial.new()
+		gp.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(gp)
 
 	_gpu_warmed = true
 	return root

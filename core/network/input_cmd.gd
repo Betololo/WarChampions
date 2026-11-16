@@ -23,6 +23,7 @@ const BTN_EMOTE: int = 1 << 14
 const DEFAULT_SKILL_HOTKEYS: Array[int] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 const DEFAULT_WIDGET_HOTKEYS: Array[int] = [KEY_Z, KEY_X, KEY_V, KEY_B]
 const DEFAULT_HOTKEYS_PATH: String = "user://hotkeys.cfg"
+const MOUSE_BIND_OFFSET: int = 0x20000000
 
 static var skill_hotkeys: Array[int] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 static var widget_hotkeys: Array[int] = [KEY_Z, KEY_X, KEY_V, KEY_B]
@@ -120,9 +121,49 @@ static func is_key_assigned_anywhere(keycode: int) -> bool:
 	return skill_hotkeys.has(keycode) or widget_hotkeys.has(keycode)
 
 
+static func encode_mouse_button(mouse_btn: int) -> int:
+	if mouse_btn <= 0:
+		return KEY_NONE
+	return MOUSE_BIND_OFFSET + mouse_btn
+
+
+static func is_mouse_bind(bind_code: int) -> bool:
+	return bind_code > MOUSE_BIND_OFFSET
+
+
+static func decode_mouse_button(bind_code: int) -> int:
+	if is_mouse_bind(bind_code):
+		return bind_code - MOUSE_BIND_OFFSET
+	return 0
+
+
+static func is_bind_pressed(bind_code: int) -> bool:
+	if bind_code == KEY_NONE:
+		return false
+	if is_mouse_bind(bind_code):
+		var mb: int = decode_mouse_button(bind_code)
+		return mb > 0 and Input.is_mouse_button_pressed(mb as MouseButton)
+	return Input.is_key_pressed(bind_code as Key)
+
+
 static func key_short_label(keycode: int) -> String:
 	if keycode == KEY_NONE:
 		return "-"
+	if is_mouse_bind(keycode):
+		var mb: int = decode_mouse_button(keycode)
+		match mb:
+			MOUSE_BUTTON_MIDDLE:
+				return "M3"
+			MOUSE_BUTTON_WHEEL_UP:
+				return "MWU"
+			MOUSE_BUTTON_WHEEL_DOWN:
+				return "MWD"
+			MOUSE_BUTTON_XBUTTON1:
+				return "M4"
+			MOUSE_BUTTON_XBUTTON2:
+				return "M5"
+			_:
+				return "MB%d" % mb
 	var s: String = OS.get_keycode_string(keycode)
 	if s.begins_with("Kp "):
 		s = s.substr(3)

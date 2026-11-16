@@ -105,6 +105,8 @@ var _last_vfx_key: String = ""
 var _overhead_buff_row: Node3D = null
 var _overhead_buff_slots: Array[Sprite3D] = []
 var _speed_trail_timer: float = 0.0
+var _active_buff_vfx_timer: float = 0.0
+var _sixth_sense_pulse_timer: float = 0.0
 var _body_collision: CollisionShape3D
 var _capsule_shape: CapsuleShape3D
 var hero_camera: HeroCamera
@@ -117,6 +119,7 @@ var _skill_anim_duration: float = 0.55
 var _skill_anim_style: String = ""
 var last_skill_anim_name: String = ""
 var _shown_weapon_kind: int = -1
+var _shown_weapon_arch: int = -1
 var _prev_q_held: bool = false
 var _upper_arm_len: float = 0.30
 var _forearm_len: float = 0.28
@@ -202,6 +205,7 @@ func configure_class_loadout() -> void:
 	if _capsule_shape != null:
 		_capsule_shape.radius = capsule_radius
 	_shown_weapon_kind = -1
+	_shown_weapon_arch = -1
 	_rebuild_held_weapon_mesh()
 
 
@@ -595,10 +599,14 @@ func _rebuild_held_weapon_mesh() -> void:
 		return
 	var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
 	var w: WeaponBase = weapons[slot] as WeaponBase
-	if w == null or w.weapon_kind == _shown_weapon_kind:
+	if w == null:
+		return
+	var w_arch: int = clampi(w.archetype, 0, 2)
+	if w.weapon_kind == _shown_weapon_kind and w_arch == _shown_weapon_arch:
 		return
 	_shown_weapon_kind = w.weapon_kind
-	var w_info: Dictionary = HeroMeshBuilder.populate_weapon_root(_held_weapon_root, w.weapon_kind)
+	_shown_weapon_arch = w_arch
+	var w_info: Dictionary = HeroMeshBuilder.populate_weapon_root(_held_weapon_root, w.weapon_kind, w_arch)
 	_weapon_grip_local = w_info.get("grip", Vector3(0.0, -0.04, 0.0))
 	_weapon_foregrip_local = w_info.get("foregrip", Vector3(0.0, -0.015, -0.24))
 	_weapon_muzzle_local = w_info.get("muzzle", Vector3(0.0, 0.035, -0.58))
@@ -1212,18 +1220,18 @@ func _sample_local_input() -> InputCmd:
 	cmd.set_button(InputCmd.BTN_RELOAD, Input.is_key_pressed(KEY_R))
 	cmd.set_button(InputCmd.BTN_INTERACT, Input.is_key_pressed(KEY_E))
 
-	var s1_pressed: bool = Input.is_key_pressed(InputCmd.get_skill_key(0)) or (not InputCmd.is_key_assigned_anywhere(KEY_F) and Input.is_key_pressed(KEY_F))
-	var s2_pressed: bool = Input.is_key_pressed(InputCmd.get_skill_key(1)) or (not InputCmd.is_key_assigned_anywhere(KEY_G) and Input.is_key_pressed(KEY_G))
+	var s1_pressed: bool = InputCmd.is_bind_pressed(InputCmd.get_skill_key(0)) or (not InputCmd.is_key_assigned_anywhere(KEY_F) and Input.is_key_pressed(KEY_F))
+	var s2_pressed: bool = InputCmd.is_bind_pressed(InputCmd.get_skill_key(1)) or (not InputCmd.is_key_assigned_anywhere(KEY_G) and Input.is_key_pressed(KEY_G))
 	cmd.set_button(InputCmd.BTN_SKILL_1, s1_pressed)
 	cmd.set_button(InputCmd.BTN_SKILL_2, s2_pressed)
-	cmd.set_button(InputCmd.BTN_SKILL_3, Input.is_key_pressed(InputCmd.get_skill_key(2)))
-	cmd.set_button(InputCmd.BTN_SKILL_4, Input.is_key_pressed(InputCmd.get_skill_key(3)))
-	cmd.set_button(InputCmd.BTN_SKILL_5, Input.is_key_pressed(InputCmd.get_skill_key(4)))
-	cmd.set_button(InputCmd.BTN_SKILL_6, Input.is_key_pressed(InputCmd.get_skill_key(5)))
-	cmd.set_button(InputCmd.BTN_WIDGET_1, Input.is_key_pressed(InputCmd.get_widget_key(0)))
-	cmd.set_button(InputCmd.BTN_WIDGET_2, Input.is_key_pressed(InputCmd.get_widget_key(1)))
-	cmd.set_button(InputCmd.BTN_WIDGET_3, Input.is_key_pressed(InputCmd.get_widget_key(2)))
-	cmd.set_button(InputCmd.BTN_WIDGET_4, Input.is_key_pressed(InputCmd.get_widget_key(3)))
+	cmd.set_button(InputCmd.BTN_SKILL_3, InputCmd.is_bind_pressed(InputCmd.get_skill_key(2)))
+	cmd.set_button(InputCmd.BTN_SKILL_4, InputCmd.is_bind_pressed(InputCmd.get_skill_key(3)))
+	cmd.set_button(InputCmd.BTN_SKILL_5, InputCmd.is_bind_pressed(InputCmd.get_skill_key(4)))
+	cmd.set_button(InputCmd.BTN_SKILL_6, InputCmd.is_bind_pressed(InputCmd.get_skill_key(5)))
+	cmd.set_button(InputCmd.BTN_WIDGET_1, InputCmd.is_bind_pressed(InputCmd.get_widget_key(0)))
+	cmd.set_button(InputCmd.BTN_WIDGET_2, InputCmd.is_bind_pressed(InputCmd.get_widget_key(1)))
+	cmd.set_button(InputCmd.BTN_WIDGET_3, InputCmd.is_bind_pressed(InputCmd.get_widget_key(2)))
+	cmd.set_button(InputCmd.BTN_WIDGET_4, InputCmd.is_bind_pressed(InputCmd.get_widget_key(3)))
 	cmd.set_button(InputCmd.BTN_EMOTE, Input.is_key_pressed(KEY_T))
 
 	cmd.selected_weapon_slot = selected_weapon_slot

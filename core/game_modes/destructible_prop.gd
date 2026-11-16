@@ -32,6 +32,15 @@ func _ready() -> void:
 	_build_prop()
 
 
+func reset_prop() -> void:
+	is_broken = false
+	_respawn_timer = 0.0
+	hp = max_hp
+	visible = true
+	if _col != null:
+		_col.disabled = false
+
+
 func _build_prop() -> void:
 	_mesh = MeshInstance3D.new()
 	_col = CollisionShape3D.new()

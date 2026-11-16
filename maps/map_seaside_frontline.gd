@@ -855,7 +855,7 @@ func _build_capture_points(conquest: ConquestManager) -> void:
 		{"name": "Lighthouse Cove", "pos": Vector3(-335.0, 2.15, 290.0), "owner": NetworkManager.TEAM_ROYAL},
 		{"name": "North Orchard", "pos": Vector3(-388.0, orchard_y, -262.0), "owner": -1},
 		{"name": "Windmill Hill", "pos": Vector3(-210.0, 12.15, -220.0), "owner": -1},
-		{"name": "Town Square", "pos": Vector3(-15.0, 2.28, 40.0), "owner": -1},
+		{"name": "Town Square", "pos": Vector3(-15.0, 2.30, 40.0), "owner": -1},
 		{"name": "East Fazenda", "pos": Vector3(338.0, fazenda_y, 240.0), "owner": -1},
 		{"name": "Harbor Ruins", "pos": Vector3(280.0, 7.65, -230.0), "owner": NetworkManager.TEAM_NATIONAL},
 	]

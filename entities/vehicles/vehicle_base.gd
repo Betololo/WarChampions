@@ -428,13 +428,25 @@ func _respawn_vehicle() -> void:
 	is_destroyed = false
 	is_marked = false
 	marked_timer = 0.0
+	_respawn_timer = 0.0
 	_last_xray_state = -1
 	hp = max_hp
 	_damage_smoke_timer = 0.0
 	_roadkill_cooldowns.clear()
+	for mi in _cached_visual_meshes:
+		if is_instance_valid(mi):
+			mi.material_overlay = null
 	for s in seats:
+		if s.occupant_id >= 0:
+			var occ_h: HeroCharacter = _last_heroes_by_id.get(s.occupant_id, null) as HeroCharacter
+			if occ_h != null and is_instance_valid(occ_h) and occ_h.current_vehicle_id == id:
+				_clear_hero_seat_state(occ_h)
 		s.occupant_id = -1
-	global_transform = spawn_transform
+	_last_heroes_by_id = {}
+	if is_inside_tree():
+		global_transform = spawn_transform
+	else:
+		transform = spawn_transform
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	visible = true
@@ -446,6 +458,11 @@ func _respawn_vehicle() -> void:
 func apply_marked(duration: float = 12.0) -> void:
 	marked_timer = maxf(marked_timer, duration)
 	is_marked = marked_timer > 0.0
+
+
+func clear_marked() -> void:
+	marked_timer = 0.0
+	is_marked = false
 
 
 func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictionary) -> void:

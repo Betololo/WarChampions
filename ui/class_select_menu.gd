@@ -19,8 +19,8 @@ signal class_selected(class_id: int)
 signal resume_match_requested()
 signal leave_match_requested()
 
-const HOTKEY_HINT_DEFAULT: String = "Clique em qualquer botão e pressione a tecla desejada (ESC cancela):"
-const HOTKEY_HINT_LISTENING: String = "Pressione a nova tecla agora... (ESC cancela)"
+const HOTKEY_HINT_DEFAULT: String = "Clique em qualquer botão e pressione a tecla ou botão extra do mouse (ESC cancela):"
+const HOTKEY_HINT_LISTENING: String = "Pressione a nova tecla ou botão extra do mouse... (ESC cancela)"
 const HOTKEY_HINT_COLOR_DEFAULT: Color = Color(0.74, 0.84, 0.94)
 const HOTKEY_HINT_COLOR_LISTENING: Color = Color(1.0, 0.86, 0.24)
 
@@ -113,6 +113,11 @@ func _input(event: InputEvent) -> void:
 			return
 		assign_hotkey_from_ui(_listening_hotkey_kind, _listening_hotkey_slot, k.keycode)
 		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.pressed:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_MIDDLE or mb.button_index >= MOUSE_BUTTON_XBUTTON1:
+			assign_hotkey_from_ui(_listening_hotkey_kind, _listening_hotkey_slot, InputCmd.encode_mouse_button(mb.button_index))
+			get_viewport().set_input_as_handled()
 
 
 static func get_class_weapon_slots(p_class_id: int) -> Array[int]:

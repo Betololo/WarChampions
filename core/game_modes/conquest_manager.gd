@@ -24,6 +24,9 @@ func reset_match() -> void:
 	national_tickets = STARTING_TICKETS
 	match_over = false
 	winning_team = -1
+	for cp in capture_points:
+		if cp != null and is_instance_valid(cp):
+			cp.reset_point()
 	tickets_changed.emit(royal_tickets, national_tickets)
 
 

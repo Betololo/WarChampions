@@ -148,12 +148,9 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 				return true
 			return false
 
-		5: # Mark Target: 5.0s sweep window (120m LOS) marks enemies & vehicles globally for 12s & breaks Stealth
+		5: # Mark Target: Instantly marks 1 enemy or vehicle under crosshair in LOS at any distance for 12s & breaks Stealth
 			if owner_hero.status_effects != null:
-				var sweep_dur: float = 4.0 + float(rank) * 0.5
-				var sweep_range: float = 100.0 + float(rank) * 10.0
-				owner_hero.status_effects.activate_mark_target_window(sweep_dur, sweep_range, context, cmd.aim_yaw, cmd.aim_pitch)
-				return true
+				return owner_hero.status_effects.try_mark_crosshair_target(context, cmd.aim_yaw, cmd.aim_pitch, 12.0)
 			return false
 
 	return false

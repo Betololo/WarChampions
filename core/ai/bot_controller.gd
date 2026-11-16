@@ -10,6 +10,8 @@ const LOS_TARGET_HEIGHT: float = 1.25
 const MAX_DETECT_RANGE: float = 85.0
 const MAX_FIRE_RANGE: float = 75.0
 const MEMORY_PURSUIT_SEC: float = 1.0
+const FOV_HALF_ANGLE_DEG: float = 65.0
+const FOV_MIN_COS: float = 0.422618
 
 var bot_hero: HeroCharacter = null
 var _ai_tick: int = 0
@@ -33,6 +35,19 @@ func setup(p_hero: HeroCharacter) -> void:
 	_retarget_timer = randf_range(0.0, 1.5)
 	_strafe_dir = -1.0 if randf() < 0.5 else 1.0
 	_aim_seed = float(p_hero.entity_id) * 1.731 + randf_range(0.0, TAU)
+
+
+func is_in_vision_cone(target: HeroCharacter) -> bool:
+	if bot_hero == null or target == null:
+		return false
+	var b_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
+	var t_pos: Vector3 = target.global_position if target.is_inside_tree() else target.position
+	var flat_to := Vector3(t_pos.x - b_pos.x, 0.0, t_pos.z - b_pos.z)
+	var len_sq: float = flat_to.length_squared()
+	if len_sq < 0.0001:
+		return true
+	var fwd := Vector3(-sin(bot_hero.aim_yaw), 0.0, -cos(bot_hero.aim_yaw))
+	return (flat_to / sqrt(len_sq)).dot(fwd) >= FOV_MIN_COS
 
 
 func has_line_of_sight(space_state: PhysicsDirectSpaceState3D, target: HeroCharacter) -> bool:
@@ -90,7 +105,7 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			var dist_sq: float = b_pos.distance_squared_to(c_pos)
 			var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 8.0
 			var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r)
-			if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth:
+			if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth and is_in_vision_cone(cand):
 				if has_line_of_sight(space_state, cand):
 					target_enemy = cand
 	elif do_full_scan:
@@ -222,6 +237,8 @@ func _find_nearest_visible_enemy(heroes_by_id: Dictionary, space_state: PhysicsD
 			var detect_r: float = h.status_effects.stealth_detection_radius if h.status_effects != null else 8.0
 			if dist_sq > detect_r * detect_r:
 				continue
+		if not is_in_vision_cone(h):
+			continue
 		candidates.append([dist_sq, h])
 
 	if candidates.size() > 1:
