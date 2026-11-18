@@ -192,6 +192,15 @@ func play_weapon_fire(
 			gain_off = 1.0
 		7: # TNT
 			clip = "shot_tnt"
+		8: # Flamethrower
+			clip = "shoot_flame"
+			p_jitter = randf_range(0.92, 1.08)
+		9: # Grenade Launcher
+			clip = "shoot_launcher"
+			gain_off = 0.8
+		10: # Stick Grenade
+			clip = "stick_grenade"
+			gain_off = 0.6
 	var effective_pos: Vector3 = world_pos
 	if not is_local_priority and world_pos == Vector3.ZERO and distance_m > 0.0:
 		effective_pos = (_listener_pos if _has_listener_pos else Vector3.ZERO) + Vector3(distance_m, 0.0, 0.0)
@@ -215,6 +224,9 @@ func _build_clips() -> void:
 	_clips["shoot_bazooka"] = _synth_gunshot(0.320, 165.0, 42.0, 0.62, 0.90, 1.4, 0.28, 0.70)
 	_clips["shot_tnt"] = _synth_tone_burst_norm(0.11, 240.0, 110.0, 0.80)
 	_clips["knife"] = _synth_gunshot(0.095, 680.0, 210.0, 0.42, 0.80, 2.2, 0.48, 0.32)
+	_clips["shoot_flame"] = _synth_gunshot(0.140, 260.0, 120.0, 0.88, 0.80, 1.3, 0.22, 0.15)
+	_clips["shoot_launcher"] = _synth_gunshot(0.240, 185.0, 48.0, 0.58, 0.90, 1.5, 0.28, 0.65)
+	_clips["stick_grenade"] = _synth_gunshot(0.180, 320.0, 72.0, 0.55, 0.88, 1.8, 0.36, 0.68)
 
 	# Combat, feedback & UI clips normalized to 0.78..0.92 peak
 	_clips["explosion"] = _synth_explosion(0.48, 0.92)

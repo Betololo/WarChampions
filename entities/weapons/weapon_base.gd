@@ -13,6 +13,9 @@ enum WeaponKind {
 	KNIFE,
 	BAZOOKA,
 	TNT,
+	FLAMETHROWER,
+	GRENADE_LAUNCHER,
+	STICK_GRENADE,
 }
 
 signal fired(weapon_kind: int, muzzle_pos: Vector3, hit_pos: Vector3)
@@ -51,6 +54,8 @@ var mag_size: int = 32
 var ammo_in_mag: int = 32
 var spread_rad: float = 0.022
 var reserve_ammo: int = -1 # -1 represents infinite reserve
+var ammo_per_shot: int = 1
+var caber_spent: bool = false
 
 var cooldown_timer: float = 0.0
 var fire_cooldown: float:
@@ -76,7 +81,16 @@ func configure(p_owner: HeroCharacter, p_kind: int, p_archetype: int) -> void:
 	_was_first_shot = true
 
 
+func reset_caber_for_life() -> void:
+	caber_spent = false
+
+
 func _load_weapon_stats() -> void:
+	ammo_per_shot = 1
+	is_melee = false
+	is_sniper = false
+	is_explosive_weapon = false
+	pellet_count = 1
 	match weapon_kind:
 		WeaponKind.SMG:
 			weapon_name = "Submachine Gun"
@@ -199,6 +213,96 @@ func _load_weapon_stats() -> void:
 			recoil_rad = 0.02
 			is_automatic = false
 			is_explosive_weapon = true
+		WeaponKind.FLAMETHROWER:
+			var f_arch: int = clampi(archetype, 0, 2)
+			base_mag_size = 100
+			base_spread_rad = 0.035
+			recoil_rad = 0.005
+			bullet_gravity_scale = 0.0
+			match f_arch:
+				1:
+					weapon_name = "Fire Starter"
+					base_damage_max = 5.0
+					base_damage_min = 5.0
+					falloff_start_m = 15.5
+					falloff_end_m = 15.5
+					max_range_m = 15.5
+					base_fire_interval = 0.05
+					reload_duration = 2.2
+					is_automatic = true
+					ammo_per_shot = 1
+				2:
+					weapon_name = "Fire Breath"
+					base_damage_max = 40.0
+					base_damage_min = 40.0
+					falloff_start_m = 52.0
+					falloff_end_m = 52.0
+					max_range_m = 52.0
+					base_fire_interval = 0.50
+					reload_duration = 2.3
+					base_spread_rad = 0.012
+					recoil_rad = 0.035
+					is_automatic = false
+					ammo_per_shot = 10
+					bullet_speed_mps = 48.0
+				_:
+					weapon_name = "Flamethrower"
+					base_damage_max = 5.0
+					base_damage_min = 5.0
+					falloff_start_m = 11.0
+					falloff_end_m = 11.0
+					max_range_m = 11.0
+					base_fire_interval = 0.10
+					reload_duration = 2.1
+					is_automatic = true
+					ammo_per_shot = 1
+		WeaponKind.GRENADE_LAUNCHER:
+			var g_arch: int = clampi(archetype, 0, 2)
+			is_explosive_weapon = true
+			is_automatic = false
+			falloff_start_m = 40.0
+			falloff_end_m = 90.0
+			max_range_m = 120.0
+			base_spread_rad = 0.01
+			recoil_rad = 0.045
+			match g_arch:
+				1:
+					weapon_name = "Trapper"
+					base_mag_size = 6
+					base_fire_interval = 0.52
+					reload_duration = 2.1
+					base_damage_max = 40.0
+					base_damage_min = 40.0
+				2:
+					weapon_name = "Canhão"
+					base_mag_size = 1
+					base_fire_interval = 0.90
+					reload_duration = 2.0
+					base_damage_max = 100.0
+					base_damage_min = 100.0
+				_:
+					weapon_name = "Lança-Granadas"
+					base_mag_size = 6
+					base_fire_interval = 0.62
+					reload_duration = 2.2
+					base_damage_max = 60.0
+					base_damage_min = 60.0
+		WeaponKind.STICK_GRENADE:
+			weapon_name = "Granada de Cabo"
+			base_damage_max = 35.0
+			base_damage_min = 35.0
+			falloff_start_m = 3.0
+			falloff_end_m = 3.4
+			max_range_m = 3.2
+			base_fire_interval = 0.68
+			base_mag_size = 1
+			reload_duration = 0.0
+			base_spread_rad = 0.0
+			recoil_rad = 0.0
+			is_automatic = false
+			is_melee = true
+			bullet_speed_mps = 100.0
+			bullet_gravity_scale = 0.0
 
 
 static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
@@ -220,6 +324,12 @@ static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
 			return ["Bazooka M1", "Lança-Foguete Ágil", "Super Bazooka M9"][arch]
 		WeaponKind.TNT:
 			return ["Carga TNT", "Dinamite Leve", "Satchel Pesada"][arch]
+		WeaponKind.FLAMETHROWER:
+			return ["Flamethrower", "Fire Starter", "Fire Breath"][arch]
+		WeaponKind.GRENADE_LAUNCHER:
+			return ["Lança-Granadas", "Trapper", "Canhão"][arch]
+		WeaponKind.STICK_GRENADE:
+			return "Granada de Cabo"
 	return "Arma"
 
 
@@ -231,7 +341,7 @@ func _apply_archetype_modifiers() -> void:
 	mag_size = base_mag_size
 	spread_rad = base_spread_rad
 
-	if is_explosive_weapon:
+	if is_explosive_weapon or weapon_kind == WeaponKind.FLAMETHROWER or weapon_kind == WeaponKind.GRENADE_LAUNCHER or weapon_kind == WeaponKind.STICK_GRENADE:
 		return
 
 	if is_melee:
@@ -273,9 +383,34 @@ func base_falloff_scale(mult: float) -> float:
 	return falloff_start_m * mult
 
 
+func _get_haste_fire_mult() -> float:
+	if owner_hero != null and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_haste_fire_mult"):
+		return maxf(1.0, float(owner_hero.status_effects.get_haste_fire_mult()))
+	return 1.0
+
+
+func _get_haste_reload_mult() -> float:
+	if owner_hero != null and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_haste_reload_mult"):
+		return maxf(1.0, float(owner_hero.status_effects.get_haste_reload_mult()))
+	return 1.0
+
+
+func _is_fire_blocked_by_tnt_rope() -> bool:
+	if owner_hero == null:
+		return false
+	if (owner_hero.active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0:
+		return true
+	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("is_tnt_rope_active"):
+		return bool(owner_hero.status_effects.is_tnt_rope_active())
+	return false
+
+
 func step_timers(delta: float, cmd: InputCmd) -> void:
+	var fire_mult: float = _get_haste_fire_mult()
+	var reload_mult: float = _get_haste_reload_mult()
+
 	if cooldown_timer > 0.0:
-		cooldown_timer = maxf(0.0, cooldown_timer - delta)
+		cooldown_timer = maxf(0.0, cooldown_timer - delta * fire_mult)
 
 	# Decay over 0.85s so automatic SMG/MG fire builds continuous bloom (~0.10-0.11 decay vs +0.24/shot)
 	# while slow-cadence Pistol (>=0.24s) and Sniper (1.1s) naturally reset cleanly between shots.
@@ -284,7 +419,7 @@ func step_timers(delta: float, cmd: InputCmd) -> void:
 		_was_first_shot = true
 
 	if is_reloading:
-		reload_timer -= delta
+		reload_timer -= delta * reload_mult
 		if reload_timer <= 0.0:
 			is_reloading = false
 			ammo_in_mag = mag_size
@@ -296,6 +431,7 @@ func step_timers(delta: float, cmd: InputCmd) -> void:
 func start_reload() -> void:
 	if is_melee or is_reloading or ammo_in_mag >= mag_size:
 		return
+	var _reload_mult: float = _get_haste_reload_mult()
 	is_reloading = true
 	reload_timer = reload_duration
 	_burst_bloom = 0.0
@@ -308,10 +444,13 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 	var wants_fire: bool = fire_held if is_automatic else (fire_held and not _prev_fire_held)
 	_prev_fire_held = fire_held
 
+	if _is_fire_blocked_by_tnt_rope():
+		return false
+
 	if not wants_fire or is_reloading or cooldown_timer > 0.0:
 		return false
 
-	if not is_melee and ammo_in_mag <= 0:
+	if not is_melee and ammo_in_mag < ammo_per_shot:
 		start_reload()
 		return false
 
@@ -321,9 +460,9 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 
 	cooldown_timer = fire_interval
 	if not is_melee:
-		ammo_in_mag -= 1
+		ammo_in_mag = maxi(0, ammo_in_mag - ammo_per_shot)
 		ammo_changed.emit(ammo_in_mag, mag_size, false)
-		if ammo_in_mag == 0:
+		if ammo_in_mag < ammo_per_shot:
 			start_reload()
 	return true
 
@@ -359,6 +498,7 @@ func reset_weapon() -> void:
 	_burst_bloom = 0.0
 	_was_first_shot = true
 	_prev_fire_held = false
+	caber_spent = false
 	ammo_changed.emit(ammo_in_mag, mag_size, false)
 
 

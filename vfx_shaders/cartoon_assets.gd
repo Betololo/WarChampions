@@ -132,9 +132,9 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _sprite_hp_cross()
 		"icon_ammo":
 			return _sprite_bullet()
-		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2":
+		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3":
 			return _sprite_portrait(0, int(key.right(1)))
-		"portrait_national_0", "portrait_national_1", "portrait_national_2":
+		"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3":
 			return _sprite_portrait(1, int(key.right(1)))
 		_:
 			if key.begins_with("icon_weapon_"):
@@ -731,19 +731,29 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 	var jacket := Color(0.42, 0.36, 0.22) if team == 0 else Color(0.24, 0.24, 0.26)
 	_draw_rect(img, 16, 48, 40, 18, jacket)
 	_draw_rect(img, 24, 22, 24, 28, Color(0.94, 0.76, 0.62))
-	# Eyes / Sunglasses
-	if class_id == 1 or class_id == 2:
+	# Eyes / Sunglasses / Blast Goggles
+	if class_id == 3:
+		_draw_rect(img, 21, 46, 30, 8, jacket.lightened(0.12)) # Heavy blast collar
+		_draw_rect(img, 25, 29, 10, 7, Color(0.16, 0.16, 0.18))
+		_draw_rect(img, 37, 29, 10, 7, Color(0.16, 0.16, 0.18))
+		_draw_rect(img, 27, 30, 6, 5, Color(0.98, 0.56, 0.14))
+		_draw_rect(img, 39, 30, 6, 5, Color(0.98, 0.56, 0.14))
+		_draw_rect(img, 28, 41, 16, 4, Color(0.24, 0.15, 0.10)) # Heavy mustache
+	elif class_id == 1 or class_id == 2:
 		_draw_rect(img, 26, 31, 9, 5, Color(0.1, 0.1, 0.12))
 		_draw_rect(img, 37, 31, 9, 5, Color(0.1, 0.1, 0.12))
 	else:
 		_draw_rect(img, 28, 32, 4, 4, Color(0.12, 0.12, 0.12))
 		_draw_rect(img, 40, 32, 4, 4, Color(0.12, 0.12, 0.12))
 		_draw_rect(img, 29, 41, 14, 4, Color(0.28, 0.18, 0.12)) # Mustache
-	# Hat / Beret
-	var hat_col := Color(0.75, 0.16, 0.16) if class_id == 1 else (Color(0.12, 0.12, 0.14) if class_id == 2 else jacket.darkened(0.25))
+	# Hat / Beret / Visor Helmet
+	var hat_col := Color(0.75, 0.16, 0.16) if class_id == 1 else (Color(0.12, 0.12, 0.14) if class_id == 2 else (Color(0.32, 0.36, 0.28) if (class_id == 3 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 3 else jacket.darkened(0.25))))
 	_draw_rect(img, 20, 14, 32, 10, hat_col)
 	if class_id == 2:
 		_draw_rect(img, 12, 21, 48, 4, hat_col)
+	elif class_id == 3:
+		_draw_rect(img, 18, 21, 36, 5, Color(0.22, 0.24, 0.28))
+		_draw_rect(img, 24, 21, 24, 2, Color(0.92, 0.52, 0.14))
 	_draw_ring(img, 36, 36, 34.0, 30.0, Color(0.92, 0.92, 0.95))
 	return ImageTexture.create_from_image(img)
 
@@ -1071,6 +1081,70 @@ static func _sprite_weapon(kind_str: String) -> ImageTexture:
 				_draw_line(img, Vector2(76, 18), Vector2(82, 25), 3.0, brass_mid)
 				_draw_line(img, Vector2(82, 25), Vector2(78, 32), 3.0, brass_mid)
 
+		"8": # Flamethrower (arch 0=Industrial Tank+Nozzle, 1=Double-Tank Napalm, 2=Dragon Fire Cannon)
+			if arch == 1:
+				_draw_rect(img, 12, 34, 8, 14, steel_dark)
+				_draw_rect(img, 12, 20, 38, 11, steel_hi)
+				_draw_rect(img, 16, 31, 24, 15, red_hi)
+				_draw_rect(img, 22, 33, 24, 15, red_dark)
+				_draw_rect(img, 50, 22, 26, 6, copper_hi)
+				_draw_rect(img, 74, 19, 10, 14, brass_hi)
+				_draw_triangle(img, Vector2(84, 22), Vector2(93, 25), Vector2(84, 30), Color(1.0, 0.56, 0.12))
+			elif arch == 2:
+				_draw_rect(img, 8, 28, 16, 10, walnut_mid)
+				_draw_rect(img, 20, 36, 7, 14, walnut_dark)
+				_draw_rect(img, 22, 20, 32, 12, copper_hi)
+				_draw_rect(img, 26, 32, 24, 14, red_hi)
+				_draw_rect(img, 54, 22, 26, 8, steel_dark)
+				_draw_rect(img, 76, 17, 13, 17, brass_hi)
+				_draw_triangle(img, Vector2(78, 17), Vector2(86, 10), Vector2(89, 17), red_hi)
+				_draw_triangle(img, Vector2(88, 20), Vector2(95, 25), Vector2(88, 31), Color(1.0, 0.78, 0.16))
+			else:
+				_draw_rect(img, 14, 36, 7, 13, steel_dark)
+				_draw_rect(img, 12, 22, 36, 10, olive_hi)
+				_draw_rect(img, 20, 32, 24, 15, red_hi)
+				_draw_rect(img, 20, 38, 24, 4, red_dark)
+				_draw_rect(img, 48, 24, 28, 5, steel_hi)
+				_draw_rect(img, 74, 21, 9, 11, brass_hi)
+				_draw_triangle(img, Vector2(83, 23), Vector2(92, 26), Vector2(83, 30), Color(1.0, 0.62, 0.14))
+
+		"9": # Grenade Launcher (arch 0=6-Chamber Drum, 1=Twin-Rail Sticky Trapper, 2=Pirate Cannon)
+			if arch == 1:
+				_draw_rect(img, 8, 26, 18, 9, steel_dark)
+				_draw_rect(img, 26, 36, 7, 13, steel_dark)
+				_draw_rect(img, 26, 23, 24, 12, steel_mid)
+				_draw_rect(img, 50, 20, 32, 5, steel_hi)
+				_draw_rect(img, 50, 31, 32, 5, steel_hi)
+				_draw_rect(img, 58, 25, 6, 6, glass_cyan)
+				_draw_rect(img, 70, 25, 6, 6, glass_cyan)
+				_draw_rect(img, 36, 35, 14, 12, brass_hi)
+			elif arch == 2:
+				_draw_rect(img, 8, 29, 20, 11, walnut_hi)
+				_draw_rect(img, 22, 38, 7, 13, walnut_dark)
+				_draw_rect(img, 24, 19, 54, 18, steel_dark)
+				_draw_rect(img, 24, 21, 54, 7, steel_mid)
+				_draw_rect(img, 76, 17, 10, 22, brass_hi)
+				_draw_circle(img, 84, 28, 6.0, steel_hi)
+			else:
+				_draw_rect(img, 8, 27, 20, 9, walnut_hi)
+				_draw_rect(img, 26, 37, 7, 13, walnut_dark)
+				_draw_rect(img, 28, 23, 24, 11, steel_mid)
+				_draw_circle(img, 42, 33, 12.0, steel_dark)
+				_draw_circle(img, 42, 33, 9.0, steel_mid)
+				_draw_circle(img, 42, 28, 2.5, steel_dark)
+				_draw_circle(img, 37, 35, 2.5, steel_dark)
+				_draw_circle(img, 47, 35, 2.5, steel_dark)
+				_draw_rect(img, 52, 24, 28, 10, steel_hi)
+				_draw_rect(img, 76, 22, 6, 14, brass_hi)
+
+		"10": # Stick Grenade (Caber: wooden shaft + iron pommel + segmented explosive head)
+			_draw_circle(img, 18, 48, 5.0, steel_mid)
+			_draw_line(img, Vector2(20, 46), Vector2(54, 24), 7.0, walnut_hi)
+			_draw_line(img, Vector2(21, 47), Vector2(55, 25), 3.0, walnut_dark)
+			_draw_line(img, Vector2(52, 24), Vector2(72, 12), 18.0, olive_dark)
+			_draw_line(img, Vector2(53, 23), Vector2(71, 13), 13.0, olive_hi)
+			_draw_line(img, Vector2(58, 20), Vector2(66, 16), 14.0, red_hi)
+
 		_: # Default to Pistol
 			_draw_rect(img, 32, 32, 14, 18, walnut_dark)
 			_draw_rect(img, 34, 34, 10, 14, walnut_hi)
@@ -1330,6 +1404,55 @@ static func _sprite_skill(slot_str: String) -> ImageTexture:
 			_draw_line(img, Vector2(26, 20), Vector2(34, 20), 2.2, white)
 			_draw_triangle(img, Vector2(15, 16), Vector2(25, 16), Vector2(20, 25), Color(1.0, 0.18, 0.18))
 			_draw_circle(img, 20.0, 20.0, 2.5, Color(1.0, 0.88, 0.30))
+
+		"3_0": # Escudo Balístico (Riot Shield): steel/slate badge + heavy riot shield with cyan viewport slit
+			_draw_rounded_badge(img, Color(0.24, 0.34, 0.48), Color(0.10, 0.14, 0.22), Color(0.68, 0.82, 0.96))
+			_draw_rect(img, 11, 8, 18, 24, ink)
+			_draw_rect(img, 12, 9, 16, 22, Color(0.42, 0.48, 0.56))
+			_draw_rect(img, 14, 12, 12, 4, Color(0.45, 0.88, 1.0))
+			_draw_rect(img, 12, 20, 16, 3, Color(0.90, 0.62, 0.18))
+			_draw_circle(img, 14.5, 27.5, 1.4, white)
+			_draw_circle(img, 25.5, 27.5, 1.4, white)
+
+		"3_1": # Haste (Adrenalina): orange-gold badge + sharp lightning bolt & speed chevrons
+			_draw_rounded_badge(img, Color(0.88, 0.44, 0.10), Color(0.48, 0.16, 0.06), Color(1.0, 0.86, 0.28))
+			_draw_line(img, Vector2(7, 15), Vector2(14, 15), 2.2, white)
+			_draw_line(img, Vector2(6, 21), Vector2(13, 21), 2.2, white)
+			_draw_line(img, Vector2(7, 27), Vector2(14, 27), 2.2, white)
+			_draw_triangle(img, Vector2(21, 7), Vector2(15, 21), Vector2(24, 21), ink)
+			_draw_triangle(img, Vector2(17, 19), Vector2(27, 19), Vector2(19, 33), ink)
+			_draw_triangle(img, Vector2(21, 9), Vector2(16, 20), Vector2(23, 20), Color(1.0, 0.94, 0.32))
+			_draw_triangle(img, Vector2(18, 20), Vector2(25, 20), Vector2(19, 31), Color(1.0, 0.88, 0.22))
+
+		"3_2": # Corda de TNTs (TNT Rope): crimson/amber badge + bundled red dynamite sticks tied with rope + fuse spark
+			_draw_rounded_badge(img, Color(0.66, 0.16, 0.14), Color(0.28, 0.08, 0.08), Color(1.0, 0.72, 0.24))
+			for dx in [12, 18, 24]:
+				_draw_rect(img, dx - 1, 13, 6, 18, ink)
+				_draw_rect(img, dx, 14, 4, 16, Color(0.92, 0.20, 0.16))
+			_draw_rect(img, 10, 19, 20, 3, Color(0.76, 0.56, 0.28))
+			_draw_rect(img, 10, 24, 20, 3, Color(0.76, 0.56, 0.28))
+			_draw_line(img, Vector2(20, 13), Vector2(26, 8), 2.0, Color(0.90, 0.75, 0.36))
+			_draw_circle(img, 27.0, 8.0, 2.6, Color(1.0, 0.95, 0.38))
+
+		"3_3": # Dreno de Escudo (Shield Drain): teal-crimson badge + glowing blue shield receiving energy arrows
+			_draw_rounded_badge(img, Color(0.14, 0.42, 0.62), Color(0.26, 0.10, 0.24), Color(0.45, 0.92, 1.0))
+			_draw_rect(img, 13, 11, 14, 11, ink)
+			_draw_triangle(img, Vector2(13, 22), Vector2(27, 22), Vector2(20, 30), ink)
+			_draw_rect(img, 14, 12, 12, 10, Color(0.30, 0.85, 1.0))
+			_draw_triangle(img, Vector2(14, 22), Vector2(26, 22), Vector2(20, 28), Color(0.30, 0.85, 1.0))
+			_draw_line(img, Vector2(7, 20), Vector2(13, 20), 2.4, Color(1.0, 0.42, 0.32))
+			_draw_line(img, Vector2(33, 20), Vector2(27, 20), 2.4, Color(1.0, 0.42, 0.32))
+			_draw_rect(img, 18, 15, 4, 8, white)
+			_draw_rect(img, 16, 17, 8, 4, white)
+
+		"3_4": # Quebra-Tanques (Vehicle Buster): olive/gold badge + tank silhouette + 3x explosive burst
+			_draw_rounded_badge(img, Color(0.40, 0.44, 0.16), Color(0.24, 0.14, 0.08), Color(1.0, 0.82, 0.24))
+			_draw_rect(img, 8, 22, 22, 8, ink)
+			_draw_rect(img, 9, 23, 20, 6, Color(0.36, 0.46, 0.26))
+			_draw_rect(img, 13, 17, 11, 6, Color(0.44, 0.54, 0.30))
+			_draw_rect(img, 24, 18, 9, 3, Color(0.65, 0.70, 0.75))
+			_draw_star(img, 20.0, 16.0, 7.0, Color(1.0, 0.42, 0.12))
+			_draw_circle(img, 20.0, 16.0, 2.8, Color(1.0, 0.94, 0.38))
 
 		_: # Fallback outlined badge
 			_draw_rounded_badge(img, Color(0.24, 0.36, 0.56), Color(0.12, 0.18, 0.30), Color(0.75, 0.85, 0.98))

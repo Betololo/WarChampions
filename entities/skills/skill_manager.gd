@@ -167,9 +167,14 @@ func try_activate_widget(widget_idx: int, context: Dictionary) -> bool:
 			var repaired: bool = _repair_nearest_vehicle(context)
 			if not repaired:
 				return false
-		2: # Fireproof Underwear: Cleanse burn + 2.0s fire immunity
+		2: # Fireproof Underwear / Water ("Água"): Cleanse burn + 2.0s fire immunity + extinguish FirePatchEntity hazards
 			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("cleanse_burn_and_grant_immunity"):
 				owner_hero.status_effects.cleanse_burn_and_grant_immunity(2.0)
+			var h_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+			var patch_root: Node = context.get("projectiles_root", owner_hero.get_parent())
+			var demo_script: Variant = load("res://entities/skills/demolisher_skills.gd")
+			if demo_script != null and demo_script.FirePatchEntity != null:
+				demo_script.FirePatchEntity.extinguish_near(h_pos, 6.0, patch_root)
 		3: # Antidote: Cleanse poison + remove green screen tint immediately
 			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("cleanse_poison"):
 				owner_hero.status_effects.cleanse_poison()

@@ -23,6 +23,10 @@ const BUFF_ICON_TABLE: Array[Array] = [
 	[NetSerializer.BUFF_COMBAT_MED_HOT, "icon_skill_0_0"],
 	[NetSerializer.BUFF_BANDAGE, "icon_widget_0"],
 	[NetSerializer.BUFF_FIREPROOF, "icon_widget_2"],
+	[NetSerializer.BUFF_HASTE, "icon_skill_3_1"],
+	[NetSerializer.BUFF_SHIELD_DRAIN, "icon_skill_3_3"],
+	[NetSerializer.BUFF_VEHICLE_BUSTER, "icon_skill_3_4"],
+	[NetSerializer.BUFF_TNT_ROPE, "icon_skill_3_2"],
 ]
 
 static var _xray_mat: ShaderMaterial = null
@@ -348,6 +352,18 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	elif pierce_flag == 1:
 		rim_col = Color(1.0, 0.28, 0.22)
 		rim_str = 1.45
+	elif (hero.active_buffs & NetSerializer.BUFF_SHIELD_DRAIN) != 0:
+		rim_col = Color(0.28, 0.84, 1.0)
+		rim_str = 1.50
+	elif (hero.active_buffs & NetSerializer.BUFF_VEHICLE_BUSTER) != 0:
+		rim_col = Color(1.0, 0.42, 0.16)
+		rim_str = 1.50
+	elif (hero.active_buffs & NetSerializer.BUFF_HASTE) != 0:
+		rim_col = Color(1.0, 0.80, 0.20)
+		rim_str = 1.45
+	elif (hero.active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0:
+		rim_col = Color(1.0, 0.38, 0.14)
+		rim_str = 1.40
 	elif speed_flag == 1:
 		rim_col = Color(0.72, 1.0, 0.32)
 		rim_str = 1.35
@@ -413,6 +429,10 @@ static func _has_continuous_particle_buff(hero: HeroCharacter) -> bool:
 		| NetSerializer.BUFF_COMBAT_MED_HOT
 		| NetSerializer.BUFF_BANDAGE
 		| NetSerializer.BUFF_FIREPROOF
+		| NetSerializer.BUFF_HASTE
+		| NetSerializer.BUFF_SHIELD_DRAIN
+		| NetSerializer.BUFF_VEHICLE_BUSTER
+		| NetSerializer.BUFF_TNT_ROPE
 	)
 	if (hero.active_buffs & PARTICLE_BUFF_MASK) != 0:
 		return true
@@ -484,6 +504,15 @@ static func _spawn_active_buff_tick_vfx(parent: Node, hero: HeroCharacter) -> vo
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.30, 0.30), 1.15, randf_range(-0.30, 0.30)), Color(1.0, 0.26, 0.22, 0.90), 0.10, 0.60, false)
 	elif (b & NetSerializer.BUFF_FIREPROOF) != 0:
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.38, 0.38), 0.95, randf_range(-0.38, 0.38)), Color(0.95, 0.68, 0.22, 0.82), 0.10, 0.55, false)
+
+	if (b & NetSerializer.BUFF_HASTE) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 0.95, randf_range(-0.36, 0.36)), Color(1.0, 0.78, 0.16, 0.92), 0.11, 0.65, false)
+	if (b & NetSerializer.BUFF_SHIELD_DRAIN) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 1.05, randf_range(-0.36, 0.36)), Color(0.32, 0.86, 1.0, 0.90), 0.11, 0.62, true)
+	if (b & NetSerializer.BUFF_VEHICLE_BUSTER) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.34, 0.34), 1.15, randf_range(-0.34, 0.34)), Color(1.0, 0.34, 0.14, 0.92), 0.12, 0.65, false)
+	if (b & NetSerializer.BUFF_TNT_ROPE) != 0:
+		_spawn_rising_mote(parent, base + Vector3(0.24, 1.18, -0.22), Color(1.0, 0.58, 0.14, 0.92), 0.10, 0.50, false)
 
 
 static func _spawn_sixth_sense_radar_pulse(parent: Node, origin: Vector3, radius: float) -> void:
@@ -945,6 +974,48 @@ static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_po
 							tw.tween_property(beam, "scale", Vector3(0.02, 9.5, 0.02), dur)
 							tw.tween_property(diam_pivot, "rotation:y", TAU, dur)
 							tw.tween_property(diam_pivot, "position:y", 2.55, dur)
+
+			NetworkManager.CLASS_DEMOLISHER:
+				match slot_idx:
+					0: # Escudo Balístico: forward steel/cyan deploy shockwave + expanding barrier ring
+						dur = 0.52
+						var mat_sh := _get_shared_mat(Color(0.32, 0.82, 1.0, 0.86), true)
+						var plate := _vfx_part(root, box, mat_sh, Vector3(0.0, 1.0, -1.8), Vector3(1.6, 1.4, 0.12), Vector3.ZERO, fade_meshes)
+						var s_ring := _vfx_part(root, torus, mat_sh, Vector3(0.0, 0.12, -1.8), Vector3(1.2, 0.7, 1.2), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(plate, "scale", Vector3(1.9, 1.7, 0.16), dur)
+							tw.tween_property(s_ring, "scale", Vector3(2.8, 0.7, 2.8), dur)
+					1: # Haste: amber speed streaks & fiery adrenaline aura
+						dur = 0.54
+						var mat_hst := _get_shared_mat(Color(1.0, 0.78, 0.18, 0.94), true)
+						for i in range(4):
+							var sx: float = (float(i) - 1.5) * 0.34
+							var stk := _vfx_part(root, box, mat_hst, Vector3(sx, 0.24 + (i % 2) * 0.18, 0.20), Vector3(0.07, 0.07, 0.80), Vector3.ZERO, fade_meshes)
+							if tw != null:
+								tw.tween_property(stk, "position:z", 1.75, dur)
+					2: # Corda de TNTs: crimson-orange fuse spark cluster around hand
+						dur = 0.48
+						var mat_tnt := _get_shared_mat(Color(1.0, 0.42, 0.12, 0.92), true)
+						for i in range(3):
+							var a: float = float(i) * (TAU / 3.0)
+							var sp := _vfx_part(root, sph, mat_tnt, Vector3(0.24 + cos(a) * 0.20, 1.15 + sin(a) * 0.15, -0.22), Vector3(0.16, 0.16, 0.16), Vector3.ZERO, fade_meshes)
+							if tw != null:
+								tw.tween_property(sp, "position:y", 1.55, dur)
+					3: # Dreno de Escudo: inward-pulling cyan energy dome + rising crosses
+						dur = 0.56
+						var mat_drn := _get_shared_mat(Color(0.28, 0.88, 1.0, 0.88), true)
+						var dome_d := _vfx_part(root, torus, mat_drn, Vector3(0.0, 1.05, 0.0), Vector3(2.2, 0.8, 2.2), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(dome_d, "scale", Vector3(0.8, 0.8, 0.8), dur)
+						_vfx_plus_cross(root, mat_drn, Vector3(0.0, 1.85, 0.0), 0.38, 0.10, fade_meshes)
+					_: # Quebra-Tanques: fiery orange-gold armor-buster shock ring & upward lance
+						dur = 0.54
+						var mat_vb := _get_shared_mat(Color(1.0, 0.36, 0.12, 0.94), true)
+						var lance := _vfx_part(root, cone, mat_vb, Vector3(0.0, 1.25, -0.45), Vector3(0.48, 1.4, 0.48), Vector3(-PI * 0.5, 0.0, 0.0), fade_meshes)
+						var vring := _vfx_part(root, torus, mat_vb, Vector3(0.0, 0.12, 0.0), Vector3(1.2, 0.8, 1.2), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(lance, "position:z", -1.65, dur)
+							tw.tween_property(vring, "scale", Vector3(3.2, 0.8, 3.2), dur)
 
 	if tw != null:
 		for mi in fade_meshes:

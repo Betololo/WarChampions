@@ -189,6 +189,64 @@ const COMMANDO_SKILLS: Array[Dictionary] = [
 	},
 ]
 
+const DEMOLISHER_SKILLS: Array[Dictionary] = [
+	{
+		"icon": "icon_skill_3_0",
+		"name": "Escudo Balístico",
+		"category": "Defesa / Barreira",
+		"cooldown": "16s",
+		"duration": "25.0s",
+		"area": "150 HP (2m à frente)",
+		"effect_stats": "Barreira 150 HP",
+		"description": "Posiciona um escudo balístico portátil à sua frente que bloqueia disparos inimigos.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_3_1",
+		"name": "Haste",
+		"category": "Buff Pessoal",
+		"cooldown": "16s",
+		"duration": "6.0s",
+		"area": "Individual",
+		"effect_stats": "+38% Vel / +50% Cadência / +60% Recarga",
+		"description": "Adrenalina que acelera movimento, cadência de tiro e velocidade de recarga.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_3_2",
+		"name": "Corda de TNTs",
+		"category": "Explosivo Pesado",
+		"cooldown": "15s (ao lançar)",
+		"duration": "Sem limite",
+		"area": "Raio 9m",
+		"effect_stats": "Salva pesada de TNTs",
+		"description": "Prepara um feixe de TNTs na mão sem limite de tempo até você clicar para lançar.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_3_3",
+		"name": "Dreno de Escudo",
+		"category": "Buff Pessoal",
+		"cooldown": "17s",
+		"duration": "3.0s",
+		"area": "Individual",
+		"effect_stats": "100% Dano -> Escudo Temp.",
+		"description": "Converte o dano causado em escudo temporário que expira após 3.0s.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_3_4",
+		"name": "Quebra-Tanques",
+		"category": "Buff Antiveículo",
+		"cooldown": "18s",
+		"duration": "3.0s",
+		"area": "Individual",
+		"effect_stats": "3x Dano em Veículos",
+		"description": "Triplica todo o dano causado contra veículos por 3.0s.",
+		"aoe_radius": 0.0,
+	},
+]
+
 const WIDGETS: Array[Dictionary] = [
 	{
 		"icon": "icon_widget_0",
@@ -246,6 +304,8 @@ static func get_class_skills(class_id: int) -> Array[Dictionary]:
 			src = GUNNER_SKILLS
 		NetworkManager.CLASS_COMMANDO:
 			src = COMMANDO_SKILLS
+		NetworkManager.CLASS_DEMOLISHER:
+			src = DEMOLISHER_SKILLS
 		_:
 			return []
 	var out: Array[Dictionary] = []
@@ -262,7 +322,7 @@ static func get_widgets() -> Array[Dictionary]:
 
 
 static func get_entry_by_key(icon_key: String) -> Dictionary:
-	for arr in [SOLDIER_SKILLS, GUNNER_SKILLS, COMMANDO_SKILLS, WIDGETS]:
+	for arr in [SOLDIER_SKILLS, GUNNER_SKILLS, COMMANDO_SKILLS, DEMOLISHER_SKILLS, WIDGETS]:
 		for item in arr:
 			if str(item.get("icon", "")) == icon_key:
 				return item.duplicate()

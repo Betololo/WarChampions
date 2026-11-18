@@ -11,6 +11,8 @@ func _load_weapon_stats() -> void:
 		projectile_speed = 42.0
 	elif weapon_kind == WeaponKind.TNT:
 		projectile_speed = 15.0
+	elif weapon_kind == WeaponKind.GRENADE_LAUNCHER:
+		projectile_speed = 38.0 if archetype == 2 else 28.0
 
 
 func fire_server(cmd: InputCmd, context: Dictionary) -> void:
@@ -27,12 +29,18 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state, lag_comp, heroes_by_id)
 	var origin: Vector3 = aim["origin"] + (aim["dir"] as Vector3) * 0.9
 	var dir: Vector3 = apply_spread(aim["dir"])
-	var pkind: int = ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET if weapon_kind == WeaponKind.BAZOOKA else ProjectileEntity.ProjectileKind.TNT_SATCHEL
+	var pkind: int = ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET
+	var dmg_override: float = -1.0
+	if weapon_kind == WeaponKind.TNT:
+		pkind = ProjectileEntity.ProjectileKind.TNT_SATCHEL
+	elif weapon_kind == WeaponKind.GRENADE_LAUNCHER:
+		pkind = ProjectileEntity.ProjectileKind.TNT_SATCHEL if archetype == 1 else ProjectileEntity.ProjectileKind.FRAG_GRENADE
+		dmg_override = damage_max
 
 	var launch_vel: Vector3 = dir * projectile_speed
-	if pkind == ProjectileEntity.ProjectileKind.TNT_SATCHEL:
-		launch_vel += Vector3(0.0, 4.5, 0.0)
-	ProjectileEntity.spawn_server_projectile(pkind, owner_hero.entity_id, owner_hero.team, origin, launch_vel, context, -1.0, owner_hero.get_parent())
+	if pkind == ProjectileEntity.ProjectileKind.TNT_SATCHEL or pkind == ProjectileEntity.ProjectileKind.FRAG_GRENADE:
+		launch_vel += Vector3(0.0, 3.5 if weapon_kind == WeaponKind.GRENADE_LAUNCHER else 4.5, 0.0)
+	ProjectileEntity.spawn_server_projectile(pkind, owner_hero.entity_id, owner_hero.team, origin, launch_vel, context, dmg_override, owner_hero.get_parent())
 
 	var end_pos: Vector3 = origin + dir * 20.0
 	fired.emit(weapon_kind, origin, end_pos)

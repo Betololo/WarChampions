@@ -15,6 +15,7 @@ const TEAM_NATIONAL: int = 1
 const CLASS_SOLDIER: int = 0
 const CLASS_GUNNER: int = 1
 const CLASS_COMMANDO: int = 2
+const CLASS_DEMOLISHER: int = 3
 
 const ARCHETYPE_BALANCED: int = 0
 const ARCHETYPE_FAST_SHORT: int = 1
@@ -268,17 +269,26 @@ func get_view_interp_tick_delta() -> int:
 
 
 func set_slot_archetype(p_class_id: int, slot_idx: int, arch: int) -> void:
-	local_slot_archetypes["%d_%d" % [clampi(p_class_id, 0, 2), maxi(0, slot_idx)]] = clampi(arch, 0, 2)
+	var cid: int = clampi(p_class_id, 0, 3)
+	var clean_arch: int = 0 if (cid == CLASS_DEMOLISHER and slot_idx == 2) else clampi(arch, 0, 2)
+	local_slot_archetypes["%d_%d" % [cid, maxi(0, slot_idx)]] = clean_arch
 
 
 func get_slot_archetype(p_class_id: int, slot_idx: int, fallback: int = ARCHETYPE_BALANCED) -> int:
-	return int(local_slot_archetypes.get("%d_%d" % [clampi(p_class_id, 0, 2), maxi(0, slot_idx)], fallback))
+	var cid: int = clampi(p_class_id, 0, 3)
+	if cid == CLASS_DEMOLISHER and slot_idx == 2:
+		return 0
+	return int(local_slot_archetypes.get("%d_%d" % [cid, maxi(0, slot_idx)], fallback))
 
 
 func build_class_slot_archetypes(p_class_id: int, fallback: int = ARCHETYPE_BALANCED) -> Dictionary:
 	var out: Dictionary = {}
+	var cid: int = clampi(p_class_id, 0, 3)
 	for slot in range(4):
-		var key: String = "%d_%d" % [clampi(p_class_id, 0, 2), slot]
+		if cid == CLASS_DEMOLISHER and slot == 2:
+			out[slot] = 0
+			continue
+		var key: String = "%d_%d" % [cid, slot]
 		if local_slot_archetypes.has(key):
 			out[slot] = int(local_slot_archetypes[key])
 		elif fallback != ARCHETYPE_BALANCED:
@@ -287,13 +297,15 @@ func build_class_slot_archetypes(p_class_id: int, fallback: int = ARCHETYPE_BALA
 
 
 func set_local_loadout(player_name: String, team: int, class_id: int, archetype: int, slot_archetypes: Dictionary = {}) -> void:
-	var merged_slots: Dictionary = build_class_slot_archetypes(class_id, archetype)
+	var cid: int = clampi(class_id, 0, 3)
+	var merged_slots: Dictionary = build_class_slot_archetypes(cid, archetype)
 	for k in slot_archetypes.keys():
-		merged_slots[int(k)] = clampi(int(slot_archetypes[k]), 0, 2)
+		var s_idx: int = int(k)
+		merged_slots[s_idx] = 0 if (cid == CLASS_DEMOLISHER and s_idx == 2) else clampi(int(slot_archetypes[k]), 0, 2)
 	local_profile = {
 		"name": player_name,
 		"team": clampi(team, 0, 1),
-		"class_id": clampi(class_id, 0, 2),
+		"class_id": cid,
 		"archetype": clampi(archetype, 0, 2),
 		"slot_archetypes": merged_slots,
 	}
@@ -524,7 +536,7 @@ func _register_player_internal(peer_id: int, profile: Dictionary) -> void:
 	var info: Dictionary = {
 		"name": str(profile.get("name", "Player_%d" % peer_id)),
 		"team": clampi(int(profile.get("team", TEAM_ROYAL)), 0, 1),
-		"class_id": clampi(int(profile.get("class_id", CLASS_SOLDIER)), 0, 2),
+		"class_id": clampi(int(profile.get("class_id", CLASS_SOLDIER)), 0, 3),
 		"archetype": clampi(int(profile.get("archetype", ARCHETYPE_BALANCED)), 0, 2),
 		"slot_archetypes": clean_slots,
 		"is_bot": false,

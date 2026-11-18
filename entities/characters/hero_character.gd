@@ -211,6 +211,8 @@ func configure_class_loadout() -> void:
 			ClassGunner.configure_hero(self)
 		NetworkManager.CLASS_COMMANDO:
 			ClassCommando.configure_hero(self)
+		NetworkManager.CLASS_DEMOLISHER:
+			ClassDemolisher.configure_hero(self)
 
 	for w in weapons:
 		if w is WeaponBase:
@@ -237,6 +239,10 @@ func _apply_class_defaults() -> void:
 			max_hp = 80
 			base_move_speed = 7.2
 			capsule_radius = 0.36
+		NetworkManager.CLASS_DEMOLISHER:
+			max_hp = 110
+			base_move_speed = 5.4
+			capsule_radius = 0.46
 	hp = max_hp
 	if _capsule_shape != null:
 		_capsule_shape.radius = capsule_radius
@@ -337,6 +343,17 @@ func _get_visual_style(is_royal: bool) -> Dictionary:
 		style["fedora_col"] = Color(0.32, 0.34, 0.22) if is_royal else Color(0.12, 0.12, 0.14)
 		style["fedora_band"] = Color(0.82, 0.66, 0.24) if is_royal else Color(0.84, 0.16, 0.18)
 		style["scarf_col"] = Color(0.46, 0.40, 0.22) if is_royal else Color(0.68, 0.14, 0.16)
+	elif class_id == NetworkManager.CLASS_DEMOLISHER:
+		style["hip_x"] = 0.165
+		style["thigh_r"] = 0.106
+		style["sh_x"] = 0.285
+		style["arm_r_scale"] = 1.12
+		style["arm_len_scale"] = 1.05
+		style["beard_style"] = 1
+		style["use_shades"] = true
+		style["shade_col"] = Color(1.0, 0.66, 0.26)
+		style["headgear"] = "visor_helmet"
+		style["pauldron"] = true
 	return style
 
 
@@ -472,6 +489,9 @@ func _attach_head_and_gear(style: Dictionary, mats: Dictionary) -> void:
 		"helmet":
 			var helmet_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.36)
 			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_helmet_mesh(bool(style["is_royal"])), Vector3(0.0, 0.288, 0.0), Vector3(0.04, 0.0, 0.0), helmet_mat, _mesh_parts)
+		"visor_helmet":
+			var v_helmet_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.34)
+			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_visor_helmet_mesh(bool(style["is_royal"])), Vector3(0.0, 0.286, 0.0), Vector3(0.02, 0.0, 0.0), v_helmet_mat, _mesh_parts)
 		"officer_cap":
 			var cap_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.42)
 			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_officer_cap_mesh(), Vector3(0.0, 0.290, 0.0), Vector3(-0.04, 0.0, 0.0), cap_mat, _mesh_parts)
@@ -704,6 +724,8 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) ->
 			active_interval = 1.05
 		WeaponBase.WeaponKind.SNIPER:
 			active_interval = 0.90
+		WeaponBase.WeaponKind.GRENADE_LAUNCHER:
+			active_interval = 0.50
 	_cycle_anim_duration = active_interval
 	_cycle_anim_timer = active_interval
 	if apply_camera_kick and hero_camera != null:
@@ -1042,6 +1064,13 @@ func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
 					3: style = "plant_kneel"; dur = 0.65
 					4: style = "sprint_boost"; dur = 0.55
 					5: style = "mark_point"; dur = 0.70
+			NetworkManager.CLASS_DEMOLISHER:
+				match slot_idx:
+					0: style = "plant_kneel"; dur = 0.55
+					1: style = "sprint_boost"; dur = 0.55
+					2: style = "throw_overhead"; dur = 0.55
+					3: style = "flex_shield"; dur = 0.55
+					4: style = "weapon_charge"; dur = 0.50
 	_skill_anim_style = style
 	last_skill_anim_name = style
 	_skill_anim_duration = dur
@@ -1189,10 +1218,24 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 			WeaponBase.WeaponKind.PISTOL:
 				_held_weapon_root.position = Vector3(0.20, 0.44, -0.34 + kick * 0.05)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.75 + kick * 0.28, lerpf(0.16, 0.04, fire_blend), 0.42 if reloading else 0.0)
-			WeaponBase.WeaponKind.KNIFE:
+			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE:
 				var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				_held_weapon_root.position = Vector3(0.25 - swing_phase * 0.42, 0.34 + swing_phase * 0.10, -0.22 - swing_phase * 0.24)
 				_held_weapon_root.rotation = Vector3(-0.22 + aim_pitch * 0.45 - swing_phase * 0.55, 0.40 + swing_phase * 1.15, -0.35 - swing_phase * 0.65)
+			WeaponBase.WeaponKind.FLAMETHROWER:
+				var f_tilt: float = 0.45 if reloading else 0.0
+				_held_weapon_root.position = Vector3(0.23, 0.26, -0.14 + kick * 0.03)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.04 - f_tilt * 0.35, lerpf(0.32, 0.10, fire_blend), f_tilt)
+			WeaponBase.WeaponKind.GRENADE_LAUNCHER:
+				var g_tilt: float = 0.48 if reloading else 0.0
+				_held_weapon_root.position = Vector3(0.22, 0.30, -0.14 + kick * 0.07)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.60 + 0.10 + kick * 0.14 - g_tilt * 0.35, lerpf(0.38, 0.12, fire_blend), g_tilt)
+				if cycle_p > 0.0 and _weapon_parts_by_name.has("Drum"):
+					var d_entry: Dictionary = _weapon_parts_by_name["Drum"]
+					var d_mi := d_entry.get("node", null) as MeshInstance3D
+					if d_mi != null and is_instance_valid(d_mi):
+						var d_rot: Vector3 = d_entry.get("base_rot", Vector3.ZERO)
+						d_mi.rotation = d_rot + Vector3(0.0, 0.0, (TAU / 6.0) * cycle_p)
 			WeaponBase.WeaponKind.TNT:
 				var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
@@ -2089,6 +2132,7 @@ func reset_weapons_full() -> void:
 			w._burst_bloom = 0.0
 			w._was_first_shot = true
 			w._prev_fire_held = false
+			w.reset_caber_for_life()
 			w.ammo_changed.emit(w.ammo_in_mag, w.mag_size, false)
 
 

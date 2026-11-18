@@ -401,11 +401,13 @@ func _detonate() -> void:
 						h.status_effects.apply_concussion_slow(0.60, 5.0)
 
 					if dealt > 0:
+						var attacker_h: HeroCharacter = heroes_by_id.get(owner_id, null) as HeroCharacter
+						if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("notify_damage_dealt_server"):
+							attacker_h.status_effects.notify_damage_dealt_server(dealt)
 						var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
 						if xp_cb.is_valid():
-							var attacker: HeroCharacter = heroes_by_id.get(owner_id, null)
-							if attacker != null:
-								xp_cb.call(attacker, h, dealt)
+							if attacker_h != null:
+								xp_cb.call(attacker_h, h, dealt)
 						NetworkManager.broadcast_game_event("hit_vfx", {
 							"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
 							"kind": "spark",
@@ -417,6 +419,10 @@ func _detonate() -> void:
 
 		# Splash damage against vehicles & destructible props
 		if is_inside_tree():
+			var attacker_v: HeroCharacter = heroes_by_id.get(owner_id, null) as HeroCharacter
+			var veh_mult: float = 1.0
+			if attacker_v != null and attacker_v.status_effects != null and attacker_v.status_effects.has_method("get_vehicle_damage_mult"):
+				veh_mult = float(attacker_v.status_effects.get_vehicle_damage_mult())
 			for v in get_tree().get_nodes_in_group("vehicles"):
 				if v is Node3D and v.has_method("apply_damage_server"):
 					var vdist: float = (v as Node3D).global_position.distance_to(global_position)
@@ -424,10 +430,11 @@ func _detonate() -> void:
 						var hit_dir: Vector3 = ((v as Node3D).global_position - global_position).normalized()
 						if velocity.length_squared() > 1.0:
 							hit_dir = velocity.normalized()
-						if kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("apply_bazooka_damage_server"):
+						if kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("apply_bazooka_damage_server") and is_equal_approx(veh_mult, 1.0):
 							v.apply_bazooka_damage_server(owner_id, hit_dir, global_position)
 						else:
-							var vdmg: int = maxi(5, int(roundf(base_damage * 1.15 * clampf(1.0 - vdist / (splash_radius + 3.5), 0.25, 1.0))))
+							var base_v: float = float(v.compute_bazooka_directional_damage(hit_dir, global_position)) if (kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("compute_bazooka_directional_damage")) else (base_damage * 1.15 * clampf(1.0 - vdist / (splash_radius + 3.5), 0.25, 1.0))
+							var vdmg: int = maxi(5, int(roundf(base_v * veh_mult)))
 							v.apply_damage_server(vdmg, owner_id, hit_dir, global_position, true)
 
 			for d in get_tree().get_nodes_in_group("destructible"):

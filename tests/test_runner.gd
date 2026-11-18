@@ -45,6 +45,7 @@ func _ready() -> void:
 	await _test_phase11_task1_fixes()
 	await _test_phase11_task2_vehicles()
 	await _test_phase11_task3_crosshair_and_animations()
+	await _test_phase11_task4_demolisher()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6211,3 +6212,322 @@ func _test_phase11_task3_crosshair_and_animations() -> void:
 		arch_parts_ok and shotgun_ok and bazooka_ok and bolt_mid_ok and bolt_end_ok,
 		"Phase 11.3b: Shotgun Pump (+Z rack), Bazooka Warhead feed/tilt, and Sniper Bolt-action cycle animate mid-cycle and reset cleanly"
 	)
+
+
+func _test_phase11_task4_demolisher() -> void:
+	# 1. NetworkManager CLASS_DEMOLISHER & NetSerializer BUFF_* bits (preserving INPUT_CMD_BYTES == 15)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_DEMOLISHER, 0, 2)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_DEMOLISHER, 1, 1)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_DEMOLISHER, 2, 2) # Stick grenade stays 0
+	var demo_slots: Dictionary = NetworkManager.build_class_slot_archetypes(NetworkManager.CLASS_DEMOLISHER, 2)
+	NetworkManager.set_local_loadout("DemoHero", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 1, demo_slots)
+	var nm_ok: bool = (
+		NetworkManager.CLASS_DEMOLISHER == 3
+		and int(demo_slots.get(0, -1)) == 2
+		and int(demo_slots.get(1, -1)) == 1
+		and int(demo_slots.get(2, -1)) == 0
+		and int(NetworkManager.local_profile.get("class_id", -1)) == 3
+	)
+	var demo_buffs: int = NetSerializer.BUFF_HASTE | NetSerializer.BUFF_SHIELD_DRAIN | NetSerializer.BUFF_VEHICLE_BUSTER | NetSerializer.BUFF_TNT_ROPE
+	var auth_b: PackedByteArray = NetSerializer.pack_authoritative_state(50, Vector3.ZERO, Vector3.ZERO, 1, 110, 25, -1, -1, 0, demo_buffs)
+	var auth_d: Dictionary = NetSerializer.unpack_authoritative_state(auth_b)
+	var ws_b: PackedByteArray = NetSerializer.pack_world_snapshot(50, 1000, 50, 50, [{
+		"id": 99, "team": 0, "class_id": NetworkManager.CLASS_DEMOLISHER, "weapon_slot": 1,
+		"flags": 1, "buffs": demo_buffs, "pos": Vector3.ZERO, "vel": Vector3.ZERO,
+		"yaw": 0.0, "pitch": 0.0, "hp": 110, "shield": 25, "vehicle_id": -1, "seat_idx": -1,
+	}], [], [])
+	var ws_d: Dictionary = NetSerializer.unpack_world_snapshot(ws_b)
+	var ws_h: Dictionary = (ws_d.get("heroes", []) as Array)[0]
+	var net_ok: bool = (
+		NetSerializer.INPUT_CMD_BYTES == 15
+		and int(auth_d.get("buffs", 0)) == demo_buffs
+		and int(ws_h.get("class_id", -1)) == 3
+		and int(ws_h.get("buffs", 0)) == demo_buffs
+	)
+	_assert(nm_ok and net_ok, "Phase 11.4a: NetworkManager CLASS_DEMOLISHER=3 clamping/loadout & NetSerializer BUFF_HASTE/SHIELD_DRAIN/VEHICLE_BUSTER/TNT_ROPE roundtrip")
+
+	# 2. ClassDemolisher stats, Weapons 8..10 stats, Fire Breath 10-ammo shot, Caber 60 AoE + 60 self-dmg, 3D meshes & 2D icons
+	var demo := HeroCharacter.new()
+	demo.setup_identity(11401, "P11Demo", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, true, false)
+	add_child(demo)
+	var demo_nat := HeroCharacter.new()
+	demo_nat.setup_identity(11402, "P11DemoNat", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_DEMOLISHER, 0, false, false)
+	add_child(demo_nat)
+	demo._animate_character(0.016)
+	demo_nat._animate_character(0.016)
+
+	var rig_ok: bool = (
+		demo.max_hp == 110 and is_equal_approx(demo.base_move_speed, 5.4)
+		and demo.weapons.size() == 3
+		and (demo.weapons[0] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.FLAMETHROWER
+		and (demo.weapons[1] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.GRENADE_LAUNCHER
+		and (demo.weapons[2] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE
+		and demo.skill_manager is DemolisherSkills
+		and (demo.skill_manager as SkillManager).skill_ranks.size() == 5
+		and demo._mesh_parts.size() >= 18 and demo_nat._mesh_parts.size() >= 18
+	)
+
+	var stats_ok: bool = true
+	var fw0 := HitscanWeapon.new(); fw0.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 0)
+	var fw1 := HitscanWeapon.new(); fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
+	var fw2 := HitscanWeapon.new(); fw2.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 2)
+	if not (is_equal_approx(fw0.damage_max, 5.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 11.0)):
+		stats_ok = false
+	if not (is_equal_approx(fw1.damage_max, 5.0) and is_equal_approx(fw1.fire_interval, 0.05) and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 15.5)):
+		stats_ok = false
+	if not (is_equal_approx(fw2.damage_max, 40.0) and is_equal_approx(fw2.fire_interval, 0.50) and fw2.mag_size == 100 and is_equal_approx(fw2.max_range_m, 52.0) and not fw2.is_automatic and is_equal_approx(fw2.bullet_speed_mps, 48.0)):
+		stats_ok = false
+	var fire_cmd := InputCmd.new()
+	fire_cmd.set_button(InputCmd.BTN_FIRE, true)
+	if not fw2.try_consume_fire(fire_cmd) or fw2.ammo_in_mag != 90:
+		stats_ok = false
+	fw0.free(); fw1.free(); fw2.free()
+
+	var gl0 := ProjectileWeapon.new(); gl0.configure(demo, WeaponBase.WeaponKind.GRENADE_LAUNCHER, 0)
+	var gl1 := ProjectileWeapon.new(); gl1.configure(demo, WeaponBase.WeaponKind.GRENADE_LAUNCHER, 1)
+	var gl2 := ProjectileWeapon.new(); gl2.configure(demo, WeaponBase.WeaponKind.GRENADE_LAUNCHER, 2)
+	if not (gl0.is_explosive_weapon and gl0.mag_size == 6 and is_equal_approx(gl0.fire_interval, 0.62) and is_equal_approx(gl0.damage_max, 60.0) and WeaponBase.get_variant_display_name(9, 0) == "Lança-Granadas"):
+		stats_ok = false
+	if not (gl1.is_explosive_weapon and gl1.mag_size == 6 and is_equal_approx(gl1.fire_interval, 0.52) and is_equal_approx(gl1.damage_max, 40.0) and WeaponBase.get_variant_display_name(9, 1) == "Trapper"):
+		stats_ok = false
+	if not (gl2.is_explosive_weapon and gl2.mag_size == 1 and is_equal_approx(gl2.fire_interval, 0.90) and is_equal_approx(gl2.damage_max, 100.0) and WeaponBase.get_variant_display_name(9, 2) == "Canhão"):
+		stats_ok = false
+	gl0.free(); gl1.free(); gl2.free()
+
+	var caber := demo.weapons[2] as HitscanWeapon
+	if not (caber.is_melee and not caber.is_automatic and caber.mag_size == 1 and is_equal_approx(caber.fire_interval, 0.68) and is_equal_approx(caber.max_range_m, 3.2) and is_equal_approx(caber.damage_max, 35.0) and WeaponBase.get_variant_display_name(10, 0) == "Granada de Cabo"):
+		stats_ok = false
+
+	# Named 3D weapon parts ("Drum", "Warhead", "CaberHead"), 2D icons, portraits, skill icons & SkillCatalog
+	var tmp_w := Node3D.new()
+	var w_mesh_ok: bool = true
+	for wk in [8, 9, 10]:
+		for ar in range(3):
+			var info: Dictionary = HeroMeshBuilder.populate_weapon_root(tmp_w, wk, ar)
+			if tmp_w.get_child_count() < 3:
+				w_mesh_ok = false
+			var pmap: Dictionary = info.get("parts_by_name", {})
+			if wk == 9 and ar == 0 and not pmap.has("Drum"):
+				w_mesh_ok = false
+			if wk == 9 and ar == 2 and not pmap.has("Warhead"):
+				w_mesh_ok = false
+			if wk == 10 and not pmap.has("CaberHead"):
+				w_mesh_ok = false
+			var wtex: ImageTexture = CartoonAssets.get_texture("icon_weapon_%d_%d" % [wk, ar])
+			if wtex == null or wtex.get_width() != 96 or wtex.get_height() != 64:
+				w_mesh_ok = false
+	tmp_w.free()
+
+	var skill_icons_ok: bool = (
+		CartoonAssets.get_texture("portrait_royal_3") != null
+		and CartoonAssets.get_texture("portrait_national_3") != null
+		and SkillCatalog.get_class_skills(NetworkManager.CLASS_DEMOLISHER).size() == 5
+	)
+	var seen_s3: Dictionary = {}
+	for s_i in range(5):
+		var stex: ImageTexture = CartoonAssets.get_texture("icon_skill_3_%d" % s_i)
+		if stex == null or stex.get_width() != 40 or stex.get_height() != 40:
+			skill_icons_ok = false
+		else:
+			seen_s3[Marshalls.raw_to_base64(stex.get_image().get_data())] = s_i
+	if seen_s3.size() != 5:
+		skill_icons_ok = false
+
+	SoundSynthesizer.play_weapon_fire(8)
+	SoundSynthesizer.play_weapon_fire(9)
+	SoundSynthesizer.play_weapon_fire(10)
+
+	_assert(rig_ok and stats_ok and w_mesh_ok and skill_icons_ok, "Phase 11.4b: ClassDemolisher rig, WeaponKind 8..10 stats/meshes (Drum/Warhead/CaberHead), portraits, 5 skill icons & SkillCatalog")
+
+	# 3. Stick Grenade (Caber) first live hit triggers 60 AoE + 60 self-damage, then resets on respawn
+	var arena := Node3D.new()
+	add_child(arena)
+	var caber_vic := HeroCharacter.new()
+	caber_vic.setup_identity(11403, "CaberVic", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(caber_vic)
+	demo.global_position = Vector3.ZERO
+	caber_vic.global_position = Vector3(0.0, 0.0, -1.8)
+	var c_ctx: Dictionary = {"heroes_by_id": {11401: demo, 11403: caber_vic}, "projectiles_root": arena}
+	var c_cmd := InputCmd.new()
+	c_cmd.aim_yaw = 0.0
+	var demo_hp0: int = demo.hp
+	var vic_hp0: int = caber_vic.hp
+	caber.fire_server(c_cmd, c_ctx)
+	var caber_first_ok: bool = (
+		caber.caber_spent
+		and demo.hp == demo_hp0 - 60
+		and caber_vic.hp == vic_hp0 - 95 # 35 melee + 60 AoE
+	)
+	var demo_hp1: int = demo.hp
+	var vic_hp1: int = caber_vic.hp
+	caber.fire_server(c_cmd, c_ctx)
+	var caber_second_ok: bool = (demo.hp == demo_hp1 and caber_vic.hp == vic_hp1 - 35)
+	demo.respawn_at(Vector3.ZERO, 0.0)
+	var caber_reset_ok: bool = (not caber.caber_spent and demo.hp == demo.max_hp)
+	_assert(caber_first_ok and caber_second_ok and caber_reset_ok, "Phase 11.4c: Stick Grenade first hit triggers 60 AoE + 60 self-damage, subsequent hit deals 35 only, and respawn resets caber_spent")
+
+	# 4. Demolisher Skills: Riot Shield (150 HP), Haste, TNT Rope (no timeout + deferred cd), Temp Shield (3s), 3x Vehicle Damage
+	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
+	var d_ctx: Dictionary = {"heroes_by_id": {11401: demo, 11402: demo_nat, 11403: caber_vic}, "projectiles_root": arena}
+	var d_cmd := InputCmd.new()
+	d_cmd.aim_yaw = 0.0
+
+	# Skill 0: Riot Shield (150 HP) 2.0m ahead
+	var pre_shield_children: int = arena.get_child_count()
+	var s0_ok: bool = dsm.try_activate_skill(0, d_cmd, d_ctx)
+	var spawned_shield: DemolisherSkills.RiotShieldEntity = null
+	for ch in arena.get_children():
+		if ch is DemolisherSkills.RiotShieldEntity:
+			spawned_shield = ch as DemolisherSkills.RiotShieldEntity
+	var shield_spawn_ok: bool = (
+		s0_ok and spawned_shield != null and spawned_shield.hp == 150 and spawned_shield.max_hp == 150
+		and spawned_shield.position.distance_to(Vector3(0.0, 0.0, -2.0)) < 0.05
+		and is_equal_approx(dsm.skill_cooldowns[0], 16.0)
+	)
+	spawned_shield.apply_damage_server(80, 11401, NetworkManager.TEAM_ROYAL) # friendly ignored
+	var shield_ff_ok: bool = (spawned_shield.hp == 150)
+	spawned_shield.apply_damage_server(80, 11402, NetworkManager.TEAM_NATIONAL)
+	var shield_dmg_ok: bool = (spawned_shield.hp == 70)
+	spawned_shield.apply_damage_server(80, 11402, NetworkManager.TEAM_NATIONAL)
+	var shield_free_ok: bool = spawned_shield.is_queued_for_deletion()
+	_assert(shield_spawn_ok and shield_ff_ok and shield_dmg_ok and shield_free_ok and arena.get_child_count() >= pre_shield_children, "Phase 11.4d: Skill 0 RiotShieldEntity (150 HP) spawns 2.0m ahead, ignores friendly fire, and frees at <=0 HP")
+
+	# Skill 1: Haste (1.38x move, 1.50x fire rate, 1.60x reload for 6.0s)
+	var s1_ok: bool = dsm.try_activate_skill(1, d_cmd, d_ctx)
+	demo.status_effects._physics_process(0.016)
+	var h_flame: WeaponBase = demo.weapons[0] as WeaponBase
+	h_flame.cooldown_timer = 1.0
+	h_flame.step_timers(0.5, InputCmd.new()) # 1.0 - 0.5*1.5 = 0.25
+	var cd_haste_ok: bool = is_equal_approx(h_flame.cooldown_timer, 0.25)
+	h_flame.ammo_in_mag = 50
+	h_flame.start_reload()
+	h_flame.step_timers(1.35, InputCmd.new()) # 2.1 - 1.35*1.6 = -0.06 -> finished!
+	var haste_ok: bool = (
+		s1_ok
+		and (demo.active_buffs & NetSerializer.BUFF_HASTE) != 0
+		and is_equal_approx(demo.speed_multiplier, 1.38)
+		and is_equal_approx(demo.status_effects.get_haste_fire_mult(), 1.50)
+		and is_equal_approx(demo.status_effects.get_haste_reload_mult(), 1.60)
+		and cd_haste_ok and not h_flame.is_reloading and h_flame.ammo_in_mag == h_flame.mag_size
+	)
+	_assert(haste_ok, "Phase 11.4e: Skill 1 Haste applies 1.38x move, 1.50x fire rate, and 1.60x reload speed via BUFF_HASTE")
+
+	# Skill 2: TNT Rope (no max duration, blocks normal weapon firing, deferred 15s cooldown until throw_tnt_rope)
+	var s2_ok: bool = dsm.try_activate_skill(2, d_cmd, d_ctx)
+	for _t in range(25):
+		demo.status_effects._physics_process(1.0) # 25s simulated: NO timeout!
+	var rope_held_ok: bool = (
+		s2_ok
+		and demo.status_effects.tnt_rope_active
+		and (demo.active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0
+		and is_equal_approx(dsm.skill_cooldowns[2], 0.0)
+		and dsm.blocks_weapon_fire()
+		and not h_flame.try_consume_fire(fire_cmd)
+	)
+	var pre_throw_count: int = arena.get_child_count()
+	var threw_ok: bool = dsm.throw_tnt_rope(d_cmd, d_ctx)
+	var rope_thrown_ok: bool = (
+		threw_ok
+		and not demo.status_effects.tnt_rope_active
+		and (demo.active_buffs & NetSerializer.BUFF_TNT_ROPE) == 0
+		and is_equal_approx(dsm.skill_cooldowns[2], 15.0)
+		and arena.get_child_count() > pre_throw_count
+	)
+	_assert(rope_held_ok and rope_thrown_ok, "Phase 11.4f: Skill 2 TNT Rope holds indefinitely, blocks normal firing, and starts 15s cooldown on throw_tnt_rope")
+
+	# Skill 3 (4th slot): Temp Shield (3.0s, adds raw_damage to shield, expires cleanly without touching HP)
+	demo.hp = 85
+	demo.shield = 0
+	var s3_ok: bool = dsm.try_activate_skill(3, d_cmd, d_ctx)
+	demo.status_effects.notify_damage_dealt_server(45)
+	var shield_gained_ok: bool = (
+		s3_ok
+		and (demo.active_buffs & NetSerializer.BUFF_SHIELD_DRAIN) != 0
+		and demo.shield == 45
+		and demo.status_effects.damage_to_shield_temp == 45
+		and demo.hp == 85
+	)
+	demo.heal_server(10) # 85 -> 95 HP, must NOT touch shield or damage_to_shield_temp
+	var heal_isolated_ok: bool = (demo.hp == 95 and demo.shield == 45 and demo.status_effects.damage_to_shield_temp == 45)
+	for _s in range(4):
+		demo.status_effects._physics_process(1.0) # 4.0s > 3.0s expiry
+	var shield_expired_ok: bool = (
+		demo.shield == 0
+		and demo.status_effects.damage_to_shield_temp == 0
+		and (demo.active_buffs & NetSerializer.BUFF_SHIELD_DRAIN) == 0
+		and demo.hp == 95
+	)
+	_assert(shield_gained_ok and heal_isolated_ok and shield_expired_ok, "Phase 11.4g: Skill 4 Temp Shield converts damage to temporary shield and expires after 3s without touching HP")
+
+	# Skill 4 (5th slot): Quebra-Tanques (3x Vehicle damage multiplier)
+	var tank := VehicleTank.new()
+	tank.id = 11499
+	tank.team = NetworkManager.TEAM_NATIONAL
+	arena.add_child(tank)
+	tank.global_position = Vector3(0.0, 0.0, -14.0)
+	await get_tree().physics_frame
+
+	var norm_proj := ProjectileEntity.spawn_server_projectile(ProjectileEntity.ProjectileKind.FRAG_GRENADE, 11401, NetworkManager.TEAM_ROYAL, tank.global_position + Vector3(0.0, 0.5, 0.0), Vector3.ZERO, d_ctx, 50.0, arena)
+	var hp_pre_norm: int = tank.hp
+	norm_proj._detonate()
+	var dmg_norm: int = hp_pre_norm - tank.hp
+
+	var s4_ok: bool = dsm.try_activate_skill(4, d_cmd, d_ctx)
+	var mult_ok: bool = is_equal_approx(demo.status_effects.get_vehicle_damage_mult(), 3.0) and (demo.active_buffs & NetSerializer.BUFF_VEHICLE_BUSTER) != 0
+	var boost_proj := ProjectileEntity.spawn_server_projectile(ProjectileEntity.ProjectileKind.FRAG_GRENADE, 11401, NetworkManager.TEAM_ROYAL, tank.global_position + Vector3(0.0, 0.5, 0.0), Vector3.ZERO, d_ctx, 50.0, arena)
+	var hp_pre_boost: int = tank.hp
+	boost_proj._detonate()
+	var dmg_boost: int = hp_pre_boost - tank.hp
+	_assert(s4_ok and mult_ok and dmg_norm > 0 and dmg_boost == dmg_norm * 3, "Phase 11.4h: Skill 5 Quebra-Tanques applies exact 3x vehicle damage (%d vs %d)" % [dmg_boost, dmg_norm])
+
+	# 5. FirePatchEntity hazard + Water ("Água", Widget 2) extinguish_near
+	caber_vic.respawn_at(Vector3(30.0, 0.0, 0.0), 0.0)
+	caber_vic.is_in_water = false
+	caber_vic.status_effects.fire_immunity_timer = 0.0
+	var fp_near := DemolisherSkills.FirePatchEntity.new()
+	fp_near.owner_id = 11401
+	fp_near.owner_team = NetworkManager.TEAM_ROYAL
+	fp_near.position = Vector3(30.0, 0.0, 0.0)
+	fp_near._context = d_ctx
+	arena.add_child(fp_near)
+	var fp_far := DemolisherSkills.FirePatchEntity.new()
+	fp_far.owner_id = 11401
+	fp_far.owner_team = NetworkManager.TEAM_ROYAL
+	fp_far.position = Vector3(60.0, 0.0, 0.0)
+	fp_far._context = d_ctx
+	arena.add_child(fp_far)
+
+	var vic_pre_fp: int = caber_vic.hp
+	fp_near.step_hazard(0.1, d_ctx) # First contact: -20 instant + burn(10, 3s)
+	var fp_first_ok: bool = (caber_vic.hp == vic_pre_fp - 20 and caber_vic.status_effects.is_burning() and is_equal_approx(caber_vic.status_effects.burn_timer, 3.0))
+	caber_vic.status_effects._physics_process(0.55) # Burn tick: -5 dmg
+	var fp_burn_tick_ok: bool = (caber_vic.hp == vic_pre_fp - 25)
+	fp_near.step_hazard(0.55, d_ctx) # Refresh burn without repeating 20 instant dmg
+	var fp_refresh_ok: bool = (caber_vic.hp == vic_pre_fp - 25 and is_equal_approx(caber_vic.status_effects.burn_timer, 3.0))
+
+	var water_ok: bool = (caber_vic.skill_manager as SkillManager).try_activate_widget(2, d_ctx)
+	var fp_ext_ok: bool = (
+		water_ok
+		and fp_near.is_queued_for_deletion()
+		and not fp_far.is_queued_for_deletion()
+		and not caber_vic.status_effects.is_burning()
+		and caber_vic.status_effects.fire_immunity_timer > 1.5
+	)
+	_assert(fp_first_ok and fp_burn_tick_ok and fp_refresh_ok and fp_ext_ok, "Phase 11.4i: FirePatchEntity deals 20 contact + 5/0.5s burn, refreshes on contact, and Water widget extinguishes nearby patches")
+
+	# 6. StatusEffectsVFX continuous buff mapping + spawn_skill_vfx for Demolisher
+	var vfx_stage4 := Node3D.new()
+	arena.add_child(vfx_stage4)
+	demo.active_buffs = NetSerializer.BUFF_HASTE | NetSerializer.BUFF_SHIELD_DRAIN | NetSerializer.BUFF_VEHICLE_BUSTER | NetSerializer.BUFF_TNT_ROPE
+	var vfx_buff_ok: bool = StatusEffectsVFX._has_continuous_particle_buff(demo)
+	var vfx_skills_ok: bool = true
+	for s_i in range(5):
+		StatusEffectsVFX.spawn_skill_vfx(vfx_stage4, NetworkManager.CLASS_DEMOLISHER, s_i, Vector3(float(s_i) * 3.0, 0.0, 0.0), 0.0)
+		if vfx_stage4.get_node_or_null("SkillVFX_3_%d" % s_i) == null:
+			vfx_skills_ok = false
+	_assert(vfx_buff_ok and vfx_skills_ok, "Phase 11.4j: StatusEffectsVFX maps new BUFF_* bits & spawns 3D SkillVFX_3_0..4 cleanly")
+
+	demo.queue_free()
+	demo_nat.queue_free()
+	arena.queue_free()
+	await _flush_deferred()

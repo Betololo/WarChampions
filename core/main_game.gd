@@ -549,7 +549,8 @@ func _physics_process(delta: float) -> void:
 					w.step_timers(delta, hero.latest_server_input)
 					if not was_reloading and w.is_reloading and hero.entity_id == NetworkManager.local_peer_id and not hero.is_bot:
 						SoundSynthesizer.play_sfx("reload", 0.0, true)
-					if w.try_consume_fire(hero.latest_server_input):
+					var fire_blocked_by_skill: bool = hero.skill_manager != null and hero.skill_manager.has_method("blocks_weapon_fire") and bool(hero.skill_manager.blocks_weapon_fire())
+					if not fire_blocked_by_skill and w.try_consume_fire(hero.latest_server_input):
 						w.fire_server(hero.latest_server_input, combat_ctx)
 
 			if not hero.is_bot and hero.entity_id != 1:
@@ -918,6 +919,40 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			SoundSynthesizer.play_sfx("heal", 0.0, skill_caster_id == NetworkManager.local_peer_id, skill_pos)
 		"eat_grenades":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)
+		"riot_shield_spawn":
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				var rs := DemolisherSkills.RiotShieldEntity.new()
+				rs.set_meta("visual_only", true)
+				rs.owner_id = int(payload.get("owner_id", -1))
+				rs.owner_team = int(payload.get("team", 0))
+				rs.shield_uid = int(payload.get("shield_uid", 0))
+				rs.lifetime_remaining = float(payload.get("lifetime", 25.0))
+				rs.position = payload.get("pos", Vector3.ZERO)
+				rs.rotation.y = float(payload.get("yaw", 0.0))
+				projectiles_root.add_child(rs)
+		"riot_shield_destroyed":
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				var target_uid: int = int(payload.get("shield_uid", 0))
+				for ch in projectiles_root.get_children():
+					if ch is DemolisherSkills.RiotShieldEntity and (ch as DemolisherSkills.RiotShieldEntity).shield_uid == target_uid:
+						ch.queue_free()
+		"fire_patch_spawn":
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				var fp := DemolisherSkills.FirePatchEntity.new()
+				fp.set_meta("visual_only", true)
+				fp.owner_id = int(payload.get("owner_id", -1))
+				fp.owner_team = int(payload.get("team", 0))
+				fp.radius = float(payload.get("radius", 2.6))
+				fp.max_lifetime = float(payload.get("lifetime", 6.0))
+				fp.position = payload.get("pos", Vector3.ZERO)
+				projectiles_root.add_child(fp)
+		"fire_patch_extinguish":
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				DemolisherSkills.FirePatchEntity.extinguish_near(
+					payload.get("pos", Vector3.ZERO),
+					float(payload.get("radius", 6.0)),
+					projectiles_root
+				)
 		"kill_event":
 			if int(payload.get("killer_id", -1)) == NetworkManager.local_peer_id and hud != null:
 				hud.show_hitmarker(false, true)

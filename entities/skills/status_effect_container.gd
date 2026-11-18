@@ -59,6 +59,17 @@ var bandage_heal_amount: int = 40
 
 var fire_immunity_timer: float = 0.0
 
+var haste_timer: float = 0.0
+var haste_fire_mult: float = 1.0
+var haste_reload_mult: float = 1.0
+
+var damage_to_shield_timer: float = 0.0
+var damage_to_shield_temp: int = 0
+
+var vehicle_triple_dmg_timer: float = 0.0
+
+var tnt_rope_active: bool = false
+
 var marked_timer: float = 0.0
 var mark_sweep_timer: float = 0.0
 var mark_sweep_range: float = 120.0
@@ -165,6 +176,24 @@ func _physics_process(delta: float) -> void:
 	fire_immunity_timer = maxf(0.0, fire_immunity_timer - delta)
 	marked_timer = maxf(0.0, marked_timer - delta)
 
+	if haste_timer > 0.0:
+		haste_timer -= delta
+		if haste_timer <= 0.0:
+			haste_timer = 0.0
+			haste_fire_mult = 1.0
+			haste_reload_mult = 1.0
+
+	if damage_to_shield_timer > 0.0:
+		damage_to_shield_timer -= delta
+		if damage_to_shield_timer <= 0.0:
+			damage_to_shield_timer = 0.0
+			if owner_hero != null and damage_to_shield_temp > 0:
+				owner_hero.shield = maxi(0, owner_hero.shield - damage_to_shield_temp)
+				damage_to_shield_temp = 0
+				owner_hero.stats_changed.emit()
+
+	vehicle_triple_dmg_timer = maxf(0.0, vehicle_triple_dmg_timer - delta)
+
 	# Combat Medicine Heal-over-Time
 	if hot_timer > 0.0:
 		hot_timer = maxf(0.0, hot_timer - delta)
@@ -252,6 +281,14 @@ func _sync_buffs() -> void:
 		b |= NetSerializer.BUFF_BANDAGE
 	if fire_immunity_timer > 0.0:
 		b |= NetSerializer.BUFF_FIREPROOF
+	if haste_timer > 0.0:
+		b |= NetSerializer.BUFF_HASTE
+	if damage_to_shield_timer > 0.0:
+		b |= NetSerializer.BUFF_SHIELD_DRAIN
+	if vehicle_triple_dmg_timer > 0.0:
+		b |= NetSerializer.BUFF_VEHICLE_BUSTER
+	if tnt_rope_active:
+		b |= NetSerializer.BUFF_TNT_ROPE
 	owner_hero.active_buffs = b
 
 
@@ -611,6 +648,67 @@ func get_piercing_shot_mult() -> float:
 	return piercing_mult if piercing_timer > 0.0 else 1.0
 
 
+func activate_haste(speed_mult: float, fire_mult: float, reload_mult: float, duration: float) -> void:
+	speed_boost_mult = maxf(speed_boost_mult, speed_mult)
+	speed_boost_timer = maxf(speed_boost_timer, duration)
+	haste_fire_mult = maxf(haste_fire_mult, fire_mult)
+	haste_reload_mult = maxf(haste_reload_mult, reload_mult)
+	haste_timer = maxf(haste_timer, duration)
+	_sync_flags()
+
+
+func get_haste_fire_mult() -> float:
+	if haste_timer > 0.0:
+		return haste_fire_mult
+	if owner_hero != null and (owner_hero.active_buffs & NetSerializer.BUFF_HASTE) != 0:
+		return 1.50
+	return 1.0
+
+
+func get_haste_reload_mult() -> float:
+	if haste_timer > 0.0:
+		return haste_reload_mult
+	if owner_hero != null and (owner_hero.active_buffs & NetSerializer.BUFF_HASTE) != 0:
+		return 1.60
+	return 1.0
+
+
+func activate_damage_to_shield(duration: float) -> void:
+	damage_to_shield_timer = maxf(damage_to_shield_timer, duration)
+	_sync_flags()
+
+
+func notify_damage_dealt_server(raw_damage: int) -> void:
+	if damage_to_shield_timer > 0.0 and raw_damage > 0 and owner_hero != null and not owner_hero.is_defeated:
+		owner_hero.shield += raw_damage
+		damage_to_shield_temp += raw_damage
+		owner_hero.stats_changed.emit()
+		_sync_flags()
+
+
+func activate_vehicle_triple_dmg(duration: float) -> void:
+	vehicle_triple_dmg_timer = maxf(vehicle_triple_dmg_timer, duration)
+	_sync_flags()
+
+
+func get_vehicle_damage_mult() -> float:
+	return 3.0 if vehicle_triple_dmg_timer > 0.0 else 1.0
+
+
+func activate_tnt_rope() -> void:
+	tnt_rope_active = true
+	_sync_flags()
+
+
+func clear_tnt_rope() -> void:
+	tnt_rope_active = false
+	_sync_flags()
+
+
+func is_tnt_rope_active() -> bool:
+	return tnt_rope_active
+
+
 func clear_all() -> void:
 	burn_timer = 0.0
 	burn_dps = 0.0
@@ -638,6 +736,13 @@ func clear_all() -> void:
 	hot_tick_accum = 0.0
 	bandage_channel_timer = 0.0
 	fire_immunity_timer = 0.0
+	haste_timer = 0.0
+	haste_fire_mult = 1.0
+	haste_reload_mult = 1.0
+	damage_to_shield_timer = 0.0
+	damage_to_shield_temp = 0
+	vehicle_triple_dmg_timer = 0.0
+	tnt_rope_active = false
 	marked_timer = 0.0
 	mark_sweep_timer = 0.0
 	if owner_hero != null:
