@@ -8918,6 +8918,7 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 		and menu._preview_viewport.own_world_3d
 		and menu._preview_hero != null
 		and is_instance_valid(menu._preview_hero)
+		and not menu._preview_hero.is_processing()
 		and not menu._preview_hero.is_physics_processing()
 	)
 	var yaw_before: float = menu._preview_hero.rotation.y if menu._preview_hero != null else 0.0
@@ -9033,23 +9034,48 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 	var cmd_mid: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
 	var bot_mid_ok: bool = (cmd_mid.selected_weapon_slot == 1)
 
-	# Close enemy & low HP -> Welding Torch (slot 2) + Invulnerability (BTN_SKILL_5)
+	# Close enemy & low HP -> Welding Torch (slot 2), off-pulse releases skill buttons, % 12 == 0 triggers Invulnerability (BTN_SKILL_5)
 	enemy_b.position = Vector3(0.0, 0.0, -2.5)
 	eng_bot.hp = 40
+	var cmd_off_pulse: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	var off_pulse_ok: bool = (
+		cmd_off_pulse.selected_weapon_slot == 2
+		and not cmd_off_pulse.has_button(InputCmd.BTN_SKILL_1)
+		and not cmd_off_pulse.has_button(InputCmd.BTN_SKILL_2)
+		and not cmd_off_pulse.has_button(InputCmd.BTN_SKILL_3)
+		and not cmd_off_pulse.has_button(InputCmd.BTN_SKILL_4)
+		and not cmd_off_pulse.has_button(InputCmd.BTN_SKILL_5)
+	)
+	brain._ai_tick = 11
 	var cmd_close: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
 	var bot_close_invuln_ok: bool = (
 		cmd_close.selected_weapon_slot == 2
 		and cmd_close.has_button(InputCmd.BTN_SKILL_5)
+		and off_pulse_ok
 	)
 
-	# Out of sight of enemy, next to damaged allied vehicle -> Welding Torch repair + Armor vehicle
+	# Out of sight of enemy, next to damaged allied vehicle -> Welding Torch repair + pulsed Armor vehicle; armored vehicle skips BTN_SKILL_3
 	enemy_b.is_defeated = true
 	eng_bot.hp = eng_bot.max_hp
+	var cmd_heal_off: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	var heal_off_ok: bool = (
+		cmd_heal_off.selected_weapon_slot == 2
+		and cmd_heal_off.has_button(InputCmd.BTN_FIRE)
+		and not cmd_heal_off.has_button(InputCmd.BTN_SKILL_3)
+		and not cmd_heal_off.has_button(InputCmd.BTN_SKILL_5)
+	)
+	brain._ai_tick = 23
 	var cmd_heal_veh: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	damaged_jeep.is_armored = true
+	brain._ai_tick = 35
+	var cmd_armored_skip: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	damaged_jeep.is_armored = false
 	var bot_heal_veh_ok: bool = (
 		cmd_heal_veh.selected_weapon_slot == 2
 		and cmd_heal_veh.has_button(InputCmd.BTN_FIRE)
 		and cmd_heal_veh.has_button(InputCmd.BTN_SKILL_3)
+		and heal_off_ok
+		and not cmd_armored_skip.has_button(InputCmd.BTN_SKILL_3)
 	)
 
 	# GameCache warm_meshes covers Engineer cap, torso_4, backpack_4, and WeaponKind 11..13

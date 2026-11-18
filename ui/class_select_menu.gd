@@ -132,6 +132,9 @@ func _exit_tree() -> void:
 func _process(delta: float) -> void:
 	if visible and current_screen == "armory" and _preview_hero != null and is_instance_valid(_preview_hero):
 		_preview_hero.rotation.y = wrapf(_preview_hero.rotation.y + delta * PREVIEW_ROTATE_SPEED, 0.0, TAU)
+		if _preview_hero.visual_root != null:
+			_preview_hero.visual_root.rotation.y = _preview_hero.aim_yaw
+		_preview_hero._animate_character(delta)
 
 
 func _input(event: InputEvent) -> void:
@@ -963,10 +966,13 @@ func _build_preview_viewport(parent: Control) -> void:
 	_preview_hero.is_local_player = false
 	_preview_hero.is_bot = false
 	_preview_world_root.add_child(_preview_hero)
+	_preview_hero.set_process(false)
 	_preview_hero.set_physics_process(false)
 	_preview_hero.collision_layer = 0
 	_preview_hero.collision_mask = 0
 	_preview_hero.aim_yaw = PI
+	if _preview_hero.visual_root != null:
+		_preview_hero.visual_root.rotation.y = _preview_hero.aim_yaw
 
 
 func _teardown_preview_viewport() -> void:
@@ -1003,10 +1009,13 @@ func _sync_preview_hero() -> void:
 	if sig != _last_preview_sig:
 		_last_preview_sig = sig
 		_preview_hero.setup_identity(0, "PreviewHero", selected_team, cid, 0, false, false, slot_archs)
+		_preview_hero.set_process(false)
 		_preview_hero.set_physics_process(false)
 		_preview_hero.collision_layer = 0
 		_preview_hero.collision_mask = 0
 		_preview_hero.aim_yaw = PI
+		if _preview_hero.visual_root != null:
+			_preview_hero.visual_root.rotation.y = _preview_hero.aim_yaw
 
 	var safe_slot: int = clampi(_preview_weapon_slot, 0, maxi(0, _preview_hero.weapons.size() - 1))
 	_preview_weapon_slot = safe_slot
