@@ -186,7 +186,26 @@ static func attach_hero_vfx_and_shader(hero: HeroCharacter) -> void:
 	hero.apply_character_shader(HERO_SHADER)
 
 
-static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroCharacter, delta: float, vehicles_by_id: Dictionary = {}) -> void:
+static func _is_stealthed_hero_near_enemy(hero: HeroCharacter, local_hero: HeroCharacter, heroes_by_id: Dictionary, detect_r: float) -> bool:
+	if hero == null:
+		return false
+	var h_pos: Vector3 = hero.global_position if hero.is_inside_tree() else hero.position
+	var r_sq: float = detect_r * detect_r
+	if local_hero != null and is_instance_valid(local_hero) and not local_hero.is_defeated and local_hero.team != hero.team:
+		var l_pos: Vector3 = local_hero.global_position if local_hero.is_inside_tree() else local_hero.position
+		if h_pos.distance_squared_to(l_pos) <= r_sq:
+			return true
+	for id_key in heroes_by_id.keys():
+		var cand: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+		if cand == null or not is_instance_valid(cand) or cand.is_defeated or cand.team == hero.team:
+			continue
+		var c_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
+		if h_pos.distance_squared_to(c_pos) <= r_sq:
+			return true
+	return false
+
+
+static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroCharacter, delta: float, vehicles_by_id: Dictionary = {}, heroes_by_id: Dictionary = {}) -> void:
 	if hero == null or hero.visual_root == null:
 		return
 
@@ -206,9 +225,8 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var hidden_in_vehicle: bool = (hero.current_vehicle_id >= 0 and hero.current_seat_pose == "hidden" and not hero.is_defeated)
 	var is_enemy: bool = local_hero != null and hero.team != local_hero.team
 	var stealthed: bool = (hero.active_flags & NetSerializer.SNAP_STEALTHED) != 0 or hero.is_stealthed
-	var sense_r_sq: float = StatusEffectContainer.SIXTH_SENSE_RADIUS * StatusEffectContainer.SIXTH_SENSE_RADIUS
 	var marked_enemy: bool = is_enemy and ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0)
-	var sensed_enemy: bool = is_enemy and local_hero != null and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (hero.global_position.distance_squared_to(local_hero.global_position) <= sense_r_sq)
+	var sensed_enemy: bool = is_enemy and local_hero != null and StatusEffectContainer.is_enemy_sensed_by_team(hero, local_hero.team, heroes_by_id, local_hero)
 	var show_xray: bool = (marked_enemy or sensed_enemy) and not hero.is_defeated
 	var cloak_val: float = 0.0
 	var vis: bool = true
@@ -216,20 +234,22 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	if hidden_in_vehicle:
 		vis = false
 	elif stealthed:
+		var detect_r: float = hero.status_effects.stealth_detection_radius if hero.status_effects != null else 10.0
 		if is_enemy and local_hero != null:
-			var detect_r: float = hero.status_effects.stealth_detection_radius if hero.status_effects != null else 10.0
 			var dist_sq: float = hero.global_position.distance_squared_to(local_hero.global_position)
-			if marked_enemy or sensed_enemy:
+			if marked_enemy or sensed_enemy or dist_sq <= detect_r * detect_r or _is_stealthed_hero_near_enemy(hero, local_hero, heroes_by_id, detect_r):
 				vis = not hero.is_scoping
-				cloak_val = 0.72
-			elif dist_sq > detect_r * detect_r:
-				vis = false
+				cloak_val = 0.12
 			else:
-				vis = not hero.is_scoping
-				cloak_val = 0.88
+				vis = false
 		else:
 			vis = not (hero.is_local_player and hero.is_scoping)
-			cloak_val = 0.55
+			var revealed_to_enemies: bool = (
+				_is_stealthed_hero_near_enemy(hero, local_hero, heroes_by_id, detect_r)
+				or ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0)
+				or StatusEffectContainer.is_enemy_sensed_by_team(hero, 1 - hero.team, heroes_by_id)
+			)
+			cloak_val = 0.0 if revealed_to_enemies else 0.55
 	else:
 		vis = not (hero.is_local_player and hero.is_scoping)
 		cloak_val = 0.0
@@ -346,13 +366,12 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 			smat.set_shader_parameter("rim_strength", rim_str)
 
 
-static func update_vehicle_client_visuals(veh: VehicleBase, local_hero: HeroCharacter) -> void:
+static func update_vehicle_client_visuals(veh: VehicleBase, local_hero: HeroCharacter, heroes_by_id: Dictionary = {}) -> void:
 	if veh == null or veh.is_destroyed or veh._visual_root == null:
 		return
 	var is_non_ally: bool = local_hero != null and veh.team != local_hero.team
 	var is_enemy: bool = local_hero != null and veh.team >= 0 and veh.team != local_hero.team
-	var sense_r_sq: float = StatusEffectContainer.SIXTH_SENSE_RADIUS * StatusEffectContainer.SIXTH_SENSE_RADIUS
-	var local_senses: bool = is_enemy and ((local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0) and (veh.global_position.distance_squared_to(local_hero.global_position) <= sense_r_sq)
+	var local_senses: bool = is_enemy and StatusEffectContainer.is_pos_sensed_by_team(veh.global_position, local_hero.team, heroes_by_id, local_hero)
 	var show_xray: bool = (is_non_ally and veh.is_marked) or local_senses
 	var next_xray: int = 1 if show_xray else 0
 	var meshes: Array[MeshInstance3D] = veh.get_cached_visual_meshes()

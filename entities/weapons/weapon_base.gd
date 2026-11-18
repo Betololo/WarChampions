@@ -143,9 +143,9 @@ func _load_weapon_stats() -> void:
 			weapon_name = "Sniper Rifle"
 			base_damage_max = 46.0
 			base_damage_min = 34.0
-			falloff_start_m = 60.0
-			falloff_end_m = 150.0
-			max_range_m = 360.0
+			falloff_start_m = 120.0
+			falloff_end_m = 400.0
+			max_range_m = 1500.0
 			base_fire_interval = 1.1
 			base_mag_size = 5
 			reload_duration = 2.0
@@ -159,9 +159,9 @@ func _load_weapon_stats() -> void:
 			weapon_name = "Commando Knife"
 			base_damage_max = 42.0
 			base_damage_min = 42.0
-			falloff_start_m = 2.8
-			falloff_end_m = 3.0
-			max_range_m = 2.9
+			falloff_start_m = 3.6
+			falloff_end_m = 4.0
+			max_range_m = 3.8
 			base_fire_interval = 0.48
 			base_mag_size = 1
 			reload_duration = 0.0
@@ -231,7 +231,19 @@ func _apply_archetype_modifiers() -> void:
 	mag_size = base_mag_size
 	spread_rad = base_spread_rad
 
-	if is_melee or is_explosive_weapon:
+	if is_explosive_weapon:
+		return
+
+	if is_melee:
+		match archetype:
+			NetworkManager.ARCHETYPE_FAST_SHORT:
+				fire_interval = base_fire_interval * 0.72
+				damage_max = base_damage_max * 0.85
+				damage_min = damage_max
+			NetworkManager.ARCHETYPE_SLOW_LONG:
+				fire_interval = base_fire_interval * 1.25
+				damage_max = base_damage_max * 1.28
+				damage_min = damage_max
 		return
 
 	match archetype:
@@ -390,7 +402,7 @@ func get_aim_origin_and_dir(
 
 	var pivot_pt: Vector3 = cam_ray.get("pivot", cam_origin)
 	var spring_len: float = float(cam_ray.get("spring_length", 0.0))
-	var convergence_range: float = clampf(spring_len + maxf(max_range_m, 30.0), spring_len + 2.0, 260.0)
+	var convergence_range: float = clampf(spring_len + maxf(max_range_m, 30.0), spring_len + 2.0, maxf(260.0, max_range_m))
 	var min_dist: float = maxf(1.4, spring_len + 0.45)
 
 	var best_hit_dist: float = convergence_range

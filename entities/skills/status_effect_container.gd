@@ -41,7 +41,7 @@ var piercing_mult: float = 1.5
 
 var stealth_timer: float = 0.0
 var stealth_infinite: bool = false
-var stealth_detection_radius: float = 12.0
+var stealth_detection_radius: float = 10.0
 
 var sixth_sense_timer: float = 0.0
 var sixth_sense_radius: float = 55.0
@@ -255,12 +255,14 @@ func apply_burn(attacker_id: int, dps: float, duration: float) -> void:
 	burn_attacker_id = attacker_id
 	burn_dps = maxf(burn_dps, dps)
 	burn_timer = maxf(burn_timer, duration)
+	_sync_flags()
 
 
 func apply_poison(attacker_id: int, dps: float, duration: float) -> void:
 	poison_attacker_id = attacker_id
 	poison_dps = maxf(poison_dps, dps)
 	poison_timer = maxf(poison_timer, duration)
+	_sync_flags()
 
 
 func cleanse_burn_and_grant_immunity(immunity_sec: float = 2.0) -> void:
@@ -531,6 +533,39 @@ func activate_sixth_sense(radius: float, duration: float) -> void:
 	sixth_sense_radius = maxf(sixth_sense_radius, radius)
 	sixth_sense_timer = maxf(sixth_sense_timer, duration)
 	_sync_flags()
+
+
+static func _hero_has_sixth_sense_active(h: HeroCharacter) -> bool:
+	if h == null or not is_instance_valid(h) or h.is_defeated:
+		return false
+	if (h.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0:
+		return true
+	return h.status_effects != null and h.status_effects.sixth_sense_timer > 0.0
+
+
+static func is_pos_sensed_by_team(world_pos: Vector3, viewer_team: int, heroes_by_id: Dictionary, fallback_viewer: HeroCharacter = null) -> bool:
+	var r_sq: float = SIXTH_SENSE_RADIUS * SIXTH_SENSE_RADIUS
+	if fallback_viewer != null and is_instance_valid(fallback_viewer) and fallback_viewer.team == viewer_team and _hero_has_sixth_sense_active(fallback_viewer):
+		var fv_pos: Vector3 = fallback_viewer.global_position if fallback_viewer.is_inside_tree() else fallback_viewer.position
+		if fv_pos.distance_squared_to(world_pos) <= r_sq:
+			return true
+	for id_key in heroes_by_id.keys():
+		var ally: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+		if ally == null or not is_instance_valid(ally) or ally.team != viewer_team:
+			continue
+		if not _hero_has_sixth_sense_active(ally):
+			continue
+		var a_pos: Vector3 = ally.global_position if ally.is_inside_tree() else ally.position
+		if a_pos.distance_squared_to(world_pos) <= r_sq:
+			return true
+	return false
+
+
+static func is_enemy_sensed_by_team(enemy: HeroCharacter, viewer_team: int, heroes_by_id: Dictionary, fallback_viewer: HeroCharacter = null) -> bool:
+	if enemy == null or not is_instance_valid(enemy) or enemy.is_defeated or enemy.team == viewer_team:
+		return false
+	var e_pos: Vector3 = enemy.global_position if enemy.is_inside_tree() else enemy.position
+	return is_pos_sensed_by_team(e_pos, viewer_team, heroes_by_id, fallback_viewer)
 
 
 func has_burning_bullets() -> bool:

@@ -531,6 +531,11 @@ func _physics_process(delta: float) -> void:
 
 			_handle_vehicle_interact(hero)
 
+			if hero.is_local_player and not hero.is_bot and hero.hero_camera != null:
+				hero.latest_server_input.aim_yaw = hero.hero_camera.yaw
+				hero.latest_server_input.aim_pitch = hero.hero_camera.pitch
+				hero.latest_server_input.view_interp_tick_delta = 0
+
 			if hero.skill_manager != null and hero.skill_manager.has_method("step_server"):
 				hero.skill_manager.step_server(delta, hero.latest_server_input, combat_ctx)
 
@@ -795,9 +800,9 @@ func _process(delta: float) -> void:
 			SoundSynthesizer.set_listener_position(cam.global_position)
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key]
-		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id)
+		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id, heroes_by_id)
 	for v_key in vehicles_by_id.keys():
-		StatusEffectsVFX.update_vehicle_client_visuals(vehicles_by_id[v_key] as VehicleBase, local_hero)
+		StatusEffectsVFX.update_vehicle_client_visuals(vehicles_by_id[v_key] as VehicleBase, local_hero, heroes_by_id)
 
 
 func _on_game_event(event_type: String, payload: Dictionary) -> void:

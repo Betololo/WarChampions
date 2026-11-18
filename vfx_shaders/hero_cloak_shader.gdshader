@@ -21,7 +21,7 @@ void fragment() {
 	EMISSION = mix(rim_color.rgb, vec3(0.55, 0.90, 1.0), 0.65) * fresnel * (0.22 + cloak_amount * 0.85);
 	ROUGHNESS = clamp(specular_roughness, 0.05, 1.0);
 	METALLIC = 0.0;
-	ALPHA = mix(0.38, 0.18, cloak_amount) + fresnel * 0.45;
+	ALPHA = clamp(mix(0.92, 0.20, cloak_amount) + fresnel * 0.35, 0.0, 1.0);
 }
 
 void light() {

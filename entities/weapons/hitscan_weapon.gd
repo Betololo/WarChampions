@@ -115,12 +115,49 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			}
 
 		var hit_pos: Vector3 = trace.get("hit_pos", origin + shot_dir * max_range_m)
+		var target_id: int = int(trace.get("target_hero_id", -1))
+		if is_melee and target_id < 0:
+			var owner_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+			var shot_xz := Vector3(shot_dir.x, 0.0, shot_dir.z)
+			if shot_xz.length_squared() > 0.0001:
+				shot_xz = shot_xz.normalized()
+			else:
+				shot_xz = (-Basis(Vector3.UP, cmd.aim_yaw).z).normalized()
+			var max_cleave_dist: float = max_range_m + 0.55
+			var best_melee_dist: float = max_cleave_dist + 0.01
+			var best_melee_enemy: HeroCharacter = null
+			for hid_key in heroes_by_id.keys():
+				var cand: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
+				if cand == null or not is_instance_valid(cand) or cand.is_defeated:
+					continue
+				if cand.entity_id == owner_hero.entity_id or cand.team == owner_hero.team:
+					continue
+				if cand.current_vehicle_id >= 0 and cand.current_seat_enclosed:
+					continue
+				var cand_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
+				var d: float = owner_pos.distance_to(cand_pos)
+				if d > max_cleave_dist:
+					continue
+				var to_cand_xz := Vector3(cand_pos.x - owner_pos.x, 0.0, cand_pos.z - owner_pos.z)
+				if to_cand_xz.length_squared() > 0.0001 and to_cand_xz.normalized().dot(shot_xz) < 0.45:
+					continue
+				if d < best_melee_dist:
+					best_melee_dist = d
+					best_melee_enemy = cand
+			if best_melee_enemy != null:
+				var best_pos: Vector3 = best_melee_enemy.global_position if best_melee_enemy.is_inside_tree() else best_melee_enemy.position
+				target_id = best_melee_enemy.entity_id
+				hit_pos = best_pos + Vector3(0.0, 1.15, 0.0)
+				trace["target_hero_id"] = target_id
+				trace["hit_pos"] = hit_pos
+				trace["distance"] = best_melee_dist
+				trace["hit"] = true
+
 		var arc_pts := PackedVector3Array([origin, hit_pos])
 		pellet_hits.append(hit_pos)
 		pellet_arcs.append(arc_pts)
 		fired.emit(weapon_kind, origin, hit_pos)
 
-		var target_id: int = int(trace.get("target_hero_id", -1))
 		if target_id >= 0 and heroes_by_id.has(target_id):
 			_apply_hero_hit(
 				heroes_by_id[target_id] as HeroCharacter,
@@ -208,12 +245,18 @@ func _apply_hero_hit(
 
 	var dealt: int = victim.apply_damage_server(dmg, owner_hero.entity_id, false)
 
-	# Burning Bullets (SMG/Pistol) or Poisoned Blade (Knife: 12 dmg/s * 6s = 72 total)
+	# Burning Bullets (SMG/Pistol) or Poisoned Blade (Knife)
 	if victim.status_effects != null and owner_hero.status_effects != null:
 		if (weapon_kind == WeaponKind.SMG or weapon_kind == WeaponKind.PISTOL) and owner_hero.status_effects.has_method("has_burning_bullets") and owner_hero.status_effects.has_burning_bullets():
 			victim.status_effects.apply_burn(owner_hero.entity_id, owner_hero.status_effects.get_burning_dps(), 4.5)
 		elif weapon_kind == WeaponKind.KNIFE and owner_hero.status_effects.has_method("has_poisoned_blade") and owner_hero.status_effects.has_poisoned_blade():
 			victim.status_effects.apply_poison(owner_hero.entity_id, owner_hero.status_effects.get_poison_dps(), 6.0)
+			var init_pdmg: int = maxi(1, int(roundf(owner_hero.status_effects.get_poison_dps() * 0.5)))
+			var p_dealt: int = victim.apply_damage_server(init_pdmg, owner_hero.entity_id, false, false, true)
+			dealt += p_dealt
+			dmg += init_pdmg
+			var v_pos: Vector3 = victim.global_position if victim.is_inside_tree() else victim.position
+			StatusEffectsVFX.spawn_cartoon_burst(owner_hero.get_parent(), v_pos + Vector3(0.0, 1.1, 0.0), "heal", 0.85)
 
 	# Frenzy Fire: Every 4th accurate MG hit heals Gunner
 	if weapon_kind == WeaponKind.MG and owner_hero.status_effects != null and owner_hero.status_effects.has_method("has_frenzy_fire") and owner_hero.status_effects.has_frenzy_fire():

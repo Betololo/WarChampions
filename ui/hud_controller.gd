@@ -1573,8 +1573,6 @@ func _update_sixth_sense_markers() -> void:
 	if _local_hero == null or _local_hero.hero_camera == null or _local_hero.hero_camera.camera == null:
 		_hide_all_sixth_sense_markers()
 		return
-	var local_sixth_sense: bool = (_local_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0
-	var sense_r_sq: float = StatusEffectContainer.SIXTH_SENSE_RADIUS * StatusEffectContainer.SIXTH_SENSE_RADIUS
 	var pulse_alpha: float = 0.52 + 0.48 * (0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.008))
 	var cam: Camera3D = _local_hero.hero_camera.camera
 	var used_count: int = 0
@@ -1584,7 +1582,7 @@ func _update_sixth_sense_markers() -> void:
 		if enemy == null or enemy.is_defeated or enemy.team == _local_hero.team:
 			continue
 		var enemy_marked: bool = (enemy.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0
-		var enemy_sensed: bool = local_sixth_sense and (enemy.global_position.distance_squared_to(_local_hero.global_position) <= sense_r_sq)
+		var enemy_sensed: bool = StatusEffectContainer.is_enemy_sensed_by_team(enemy, _local_hero.team, _heroes_ref, _local_hero)
 		if not enemy_sensed and not enemy_marked:
 			continue
 		var world_p: Vector3 = enemy.global_position + Vector3(0.0, 2.2, 0.0)
@@ -1602,7 +1600,7 @@ func _update_sixth_sense_markers() -> void:
 		if veh.team == _local_hero.team:
 			continue
 		var veh_marked: bool = veh.is_marked
-		var veh_sensed: bool = local_sixth_sense and veh.team >= 0 and (veh.global_position.distance_squared_to(_local_hero.global_position) <= sense_r_sq)
+		var veh_sensed: bool = veh.team >= 0 and StatusEffectContainer.is_pos_sensed_by_team(veh.global_position, _local_hero.team, _heroes_ref, _local_hero)
 		if not veh_marked and not veh_sensed:
 			continue
 		var v_world_p: Vector3 = veh.global_position + Vector3(0.0, 2.6, 0.0)

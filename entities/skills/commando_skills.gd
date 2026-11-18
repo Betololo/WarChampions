@@ -98,7 +98,7 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 				return false
 			if owner_hero.status_effects != null and owner_hero.status_effects.is_marked():
 				return false
-			var detect_r: float = maxf(4.0, 12.0 - float(rank - 1) * 2.0)
+			var detect_r: float = maxf(9.0, 12.0 - float(rank - 1) * 0.5)
 			if owner_hero.status_effects != null:
 				owner_hero.status_effects.activate_stealth(detect_r, -1.0)
 				return owner_hero.is_stealthed
@@ -110,9 +110,13 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 				return true
 			return false
 
-		2: # Poisoned Blade: Coats Knife with intense green DoT (12 dmg/s * 6s = 72)
+		2: # Poisoned Blade: Coats Knife with intense green DoT & auto-equips Knife
 			if owner_hero.status_effects != null:
-				owner_hero.status_effects.activate_poisoned_blade(9.0 + float(rank) * 3.0, 6.0 + float(rank))
+				owner_hero.status_effects.activate_poisoned_blade(10.0 + float(rank) * 3.0, 8.0 + float(rank))
+				if owner_hero.weapons.size() > 1 and (owner_hero.weapons[1] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.KNIFE:
+					owner_hero.switch_weapon_slot(1)
+					if cmd != null:
+						cmd.selected_weapon_slot = 1
 				return true
 			return false
 

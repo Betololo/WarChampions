@@ -103,8 +103,8 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			var b_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
 			var c_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
 			var dist_sq: float = b_pos.distance_squared_to(c_pos)
-			var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 8.0
-			var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r)
+			var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 10.0
+			var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r) or ((cand.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) or StatusEffectContainer.is_enemy_sensed_by_team(cand, bot_hero.team, heroes_by_id, bot_hero)
 			if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth and is_in_vision_cone(cand):
 				if has_line_of_sight(space_state, cand):
 					target_enemy = cand
@@ -234,8 +234,9 @@ func _find_nearest_visible_enemy(heroes_by_id: Dictionary, space_state: PhysicsD
 		if dist_sq > max_range_sq:
 			continue
 		if h.is_stealthed:
-			var detect_r: float = h.status_effects.stealth_detection_radius if h.status_effects != null else 8.0
-			if dist_sq > detect_r * detect_r:
+			var detect_r: float = h.status_effects.stealth_detection_radius if h.status_effects != null else 10.0
+			var revealed: bool = (dist_sq <= detect_r * detect_r) or ((h.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) or StatusEffectContainer.is_enemy_sensed_by_team(h, bot_hero.team, heroes_by_id, bot_hero)
+			if not revealed:
 				continue
 		if not is_in_vision_cone(h):
 			continue

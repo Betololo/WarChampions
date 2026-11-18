@@ -464,14 +464,21 @@ func _trace_segment(
 
 static func _compute_hero_bounds(hero: HeroCharacter) -> Dictionary:
 	var h_pos: Vector3 = hero.global_position if hero.is_inside_tree() else hero.position
-	var height: float = HeroCharacter.CROUCH_HEIGHT if hero.is_crouching else HeroCharacter.STAND_HEIGHT
-	var r: float = hero.capsule_radius
+	var r: float = maxf(hero.capsule_radius, 0.46)
+	if hero.is_crouching:
+		return {
+			"body_radius": r,
+			"body_bottom": h_pos + Vector3(0.0, r, 0.0),
+			"body_top": h_pos + Vector3(0.0, 1.18, 0.0),
+			"head_center": h_pos + Vector3(0.0, 1.34, 0.0),
+			"head_radius": 0.30,
+		}
 	return {
 		"body_radius": r,
 		"body_bottom": h_pos + Vector3(0.0, r, 0.0),
-		"body_top": h_pos + Vector3(0.0, maxf(r + 0.1, height - r), 0.0),
-		"head_center": h_pos + Vector3(0.0, height - 0.14, 0.0),
-		"head_radius": 0.24,
+		"body_top": h_pos + Vector3(0.0, 1.55, 0.0),
+		"head_center": h_pos + Vector3(0.0, 1.66, 0.0),
+		"head_radius": 0.30,
 	}
 
 

@@ -261,6 +261,8 @@ func get_estimated_server_tick() -> int:
 
 
 func get_view_interp_tick_delta() -> int:
+	if is_server_authority():
+		return 0
 	var interp_ticks: int = int(roundf(SnapshotInterpolator.INTERPOLATION_OFFSET_MS / TICK_INTERVAL_MS))
 	return clampi(interp_ticks, 0, 65535)
 
