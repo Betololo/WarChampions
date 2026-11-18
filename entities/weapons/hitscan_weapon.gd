@@ -263,11 +263,6 @@ func _apply_hero_hit(
 			victim.status_effects.apply_burn(owner_hero.entity_id, owner_hero.status_effects.get_burning_dps(), 4.5)
 		elif weapon_kind == WeaponKind.KNIFE and owner_hero.status_effects.has_method("has_poisoned_blade") and owner_hero.status_effects.has_poisoned_blade():
 			victim.status_effects.apply_poison(owner_hero.entity_id, owner_hero.status_effects.get_poison_dps(), 6.0)
-			var init_pdmg: int = maxi(1, int(roundf(owner_hero.status_effects.get_poison_dps() * 0.5)))
-			var p_dealt: int = victim.apply_damage_server(init_pdmg, owner_hero.entity_id, false, false, true)
-			dealt += p_dealt
-			if p_dealt > 0:
-				dmg += p_dealt
 			var v_pos: Vector3 = victim.global_position if victim.is_inside_tree() else victim.position
 			NetworkManager.broadcast_game_event("hit_vfx", {
 				"pos": v_pos + Vector3(0.0, 1.1, 0.0),

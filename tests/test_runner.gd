@@ -21,7 +21,7 @@ func _ready() -> void:
 	_test_seaside_map_and_12v12_bots_integration()
 	_test_double_map_architecture_and_landmarks()
 	await _test_client_vehicle_freeze_and_buoyancy_sync()
-	_test_overhaul_net_u32_fall_damage_and_assets()
+	await _test_overhaul_net_u32_fall_damage_and_assets()
 	_test_hero_visuals_camera_and_audio()
 	_test_ik_weapon_grip_shot_fx_and_scope()
 	_test_ballistic_bullet_drop_and_tracers()
@@ -42,6 +42,7 @@ func _ready() -> void:
 	await _test_phase8_task3_plane_accel_and_crash()
 	await _test_phase9_all_9_fixes()
 	await _test_phase10_all_8_items()
+	await _test_phase11_task1_fixes()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -709,12 +710,39 @@ func _test_overhaul_net_u32_fall_damage_and_assets() -> void:
 	h._airborne_fall_time = 1.05
 	_assert(h.can_open_parachute(), "Airborne falling hero >= 1.0s reports can_open_parachute() == true")
 
+	var fall_floor := StaticBody3D.new()
+	fall_floor.collision_layer = 1
+	var fall_col := CollisionShape3D.new()
+	var fall_box := BoxShape3D.new()
+	fall_box.size = Vector3(20.0, 1.0, 20.0)
+	fall_col.shape = fall_box
+	fall_col.position = Vector3(0.0, -0.5, 0.0)
+	fall_floor.add_child(fall_col)
+	add_child(fall_floor)
+	await get_tree().physics_frame
+
+	# Small drop (2.2m, 0.50s) deals 0 fall damage
+	h.global_position = Vector3(0.0, 0.02, 0.0)
+	h.velocity = Vector3(0.0, -4.0, 0.0)
+	h.simulate_movement(InputCmd.new(), 1.0 / 60.0)
 	var start_hp: int = h.hp
 	h._was_airborne = true
+	h._airborne_start_y = h.global_position.y + 2.2
+	h._airborne_fall_time = 0.50
+	h._max_air_fall_speed = 18.0
+	h.is_parachuting = false
+	h.simulate_movement(InputCmd.new(), 1.0 / 60.0)
+	_assert(h.hp == start_hp, "Small drop (2.2m, 0.50s) deals 0 fall damage (%d -> %d HP)" % [start_hp, h.hp])
+
+	# High un-parachuted drop (8.0m, 1.1s, >16.5 m/s) deals fall damage
+	h._was_airborne = true
+	h._airborne_start_y = h.global_position.y + 8.0
+	h._airborne_fall_time = 1.1
 	h._max_air_fall_speed = 23.0
 	h.is_parachuting = false
-	h.apply_damage_server(maxi(5, int(roundf((h._max_air_fall_speed - HeroCharacter.FALL_DAMAGE_THRESHOLD_SPEED) * 6.5))), -1, false)
+	h.simulate_movement(InputCmd.new(), 1.0 / 60.0)
 	_assert(h.hp < start_hp, "Fast un-parachuted fall speed triggers fall damage (%d -> %d HP)" % [start_hp, h.hp])
+	fall_floor.free()
 	h.free()
 
 	# 3. Verify procedural CartoonAssets sprites & HUD textures load non-null
@@ -5149,15 +5177,20 @@ func _test_phase10_all_8_items() -> void:
 	NetworkManager.game_event_received.disconnect(pb_vfx_cb)
 	var hp_after_cleave: int = target_s.hp
 	var immediate_poison_ok: bool = (
-		hp_after_cleave <= hp_before_cleave - 50
+		hp_after_cleave == hp_before_cleave - 75
 		and target_s.status_effects.is_poisoned()
 		and (target_s.active_flags & NetSerializer.SNAP_POISONED) != 0
 		and pb_heal_vfx_seen[0]
 	)
-	for _pt in range(40):
+	for _pt in range(35):
 		target_s.status_effects._physics_process(0.016)
 	var hp_after_dot: int = target_s.hp
-	var dot_tick_ok: bool = hp_after_dot < hp_after_cleave
+	var dot_tick_ok: bool = (hp_after_dot == hp_after_cleave - 13)
+	target_s.status_effects.cleanse_poison()
+	var antidote_cleanse_ok: bool = (
+		not target_s.status_effects.is_poisoned()
+		and (target_s.active_flags & NetSerializer.SNAP_POISONED) == 0
+	)
 
 	# Verify remote ENet client Poisoned Blade weapon_slot sync & stale InputCmd protection
 	var stale_cmd := InputCmd.new()
@@ -5210,9 +5243,9 @@ func _test_phase10_all_8_items() -> void:
 	melee_wall.queue_free()
 
 	_assert(
-		pb_exec_ok and auto_knife_ok and immediate_poison_ok and dot_tick_ok
+		pb_exec_ok and auto_knife_ok and immediate_poison_ok and dot_tick_ok and antidote_cleanse_ok
 		and server_holds_knife_ok and remote_synced_knife_ok and manual_switch_back_ok and melee_wall_blocked_ok,
-		"Phase 10.2: Poisoned Blade auto-equips Knife (syncs remote client), broadcasts heal VFX, melee cleave hits (%d->%d->%d), and Layer-1 wall blocks cleave" % [hp_before_cleave, hp_after_cleave, hp_after_dot]
+		"Phase 10.2: Poisoned Blade auto-equips Knife (pure melee %d->%d, 0.5s DoT %d + Antidote cleanse), broadcasts heal VFX, and Layer-1 wall blocks cleave" % [hp_before_cleave, hp_after_cleave, hp_after_dot]
 	)
 
 	# 3. Commando Stealth 10m detection radius, enemy reveal cloak_val <= 0.15, and local Commando uncloak within 10m
@@ -5262,9 +5295,11 @@ func _test_phase10_all_8_items() -> void:
 	moto_drv.latest_server_input = drv_cmd
 
 	target_s.respawn_at(Vector3(-12.0, 0.0, -35.0), 0.0)
+	lc10.record_frame(103, moto_heroes)
+	NetworkManager.server_tick = 103
 	var pax_cmd := InputCmd.new()
 	pax_cmd.aim_yaw = 0.0
-	pax_cmd.aim_pitch = 0.0
+	pax_cmd.aim_pitch = -0.07
 	pax_cmd.selected_weapon_slot = 0
 	pax_cmd.set_button(InputCmd.BTN_FIRE, true)
 	pax_cmd.set_button(InputCmd.BTN_SKILL_1, true)
@@ -5564,6 +5599,165 @@ func _test_phase10_all_8_items() -> void:
 	_assert(
 		all_exp_ok and ceiling_occluded_ok,
 		"Phase 10.8: Bazooka (8.0m), TNT (9.0m), and Frag (7.5m) cross low curb (vy=%s), while horizontal ceiling slab occludes upstairs target" % str(exp_vy_log)
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_task1_fixes() -> void:
+	var arena := Node3D.new()
+	add_child(arena)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(80.0, 1.0, 80.0)
+	floor_col.shape = floor_box
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	# 1. Poisoned Blade pure DoT (frontal Knife slash deals ONLY 42 dmg, -13 tick at 0.5s, Antidote cleanses + resets _poison_tick_accum)
+	var com := HeroCharacter.new()
+	com.setup_identity(11001, "P11Com", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	arena.add_child(com)
+	com.global_position = Vector3(0.0, 0.0, 0.0)
+
+	var vic := HeroCharacter.new()
+	vic.setup_identity(11002, "P11Vic", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(vic)
+	vic.global_position = Vector3(0.0, 0.0, -1.6)
+	vic.aim_yaw = PI # Facing +Z toward attacker so NOT a backstab
+
+	await get_tree().physics_frame
+	var ctx: Dictionary = {"heroes_by_id": {11001: com, 11002: vic}, "projectiles_root": arena, "vehicles_by_id": {}}
+	com.status_effects.activate_poisoned_blade(25.0, 13.0)
+	com.switch_weapon_slot(1)
+	var knife: WeaponBase = com.weapons[1] as WeaponBase
+	var slash_cmd := InputCmd.new()
+	slash_cmd.tick = 10
+	slash_cmd.aim_yaw = 0.0
+	slash_cmd.aim_pitch = 0.0
+	slash_cmd.selected_weapon_slot = 1
+	var hp0: int = vic.hp
+	knife.fire_server(slash_cmd, ctx)
+	var hp_slash: int = vic.hp
+	var slash_pure_ok: bool = (hp0 - hp_slash == 42 and vic.status_effects.is_poisoned() and is_equal_approx(vic.status_effects._poison_tick_accum, 0.0))
+	for _i in range(32):
+		vic.status_effects._physics_process(0.016)
+	var hp_dot: int = vic.hp
+	var dot_13_ok: bool = (hp_slash - hp_dot == 13)
+	var vsm: SkillManager = vic.skill_manager as SkillManager
+	var ant_ok: bool = vsm.try_activate_widget(3, ctx)
+	var clean_ok: bool = (
+		ant_ok
+		and not vic.status_effects.is_poisoned()
+		and is_equal_approx(vic.status_effects._poison_tick_accum, 0.0)
+	)
+	_assert(
+		slash_pure_ok and dot_13_ok and clean_ok,
+		"Phase 11.1a: Poisoned Blade deals pure Knife slash (%d->%d = -42), -13 DoT at 0.5s (->%d), and Antidote cleanses & resets _poison_tick_accum" % [hp0, hp_slash, hp_dot]
+	)
+
+	# 2. Airborne < 1.0s does NOT enter skydiving freefall; >= 1.0s DOES enter skydiving freefall
+	var air_h := HeroCharacter.new()
+	air_h.setup_identity(11003, "P11Air", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(air_h)
+	air_h.global_position = Vector3(10.0, 20.0, 0.0)
+	air_h.velocity = Vector3(0.0, -6.0, 0.0)
+	air_h.is_in_water = false
+	air_h.is_parachuting = false
+	air_h._airborne_fall_time = 0.45
+	for _i in range(10):
+		air_h._animate_character(0.016)
+	var under_1s_ok: bool = (
+		air_h._held_weapon_root.visible
+		and absf(air_h._hips_pivot.rotation.x) < 0.05
+	)
+	air_h._airborne_fall_time = 1.05
+	for _i in range(10):
+		air_h._animate_character(0.05)
+	var over_1s_ok: bool = (
+		not air_h._held_weapon_root.visible
+		and air_h._hips_pivot.rotation.x < -0.2
+	)
+	_assert(
+		under_1s_ok and over_1s_ok,
+		"Phase 11.1b: Airborne <1.0s keeps weapon visible & upright hips (rotX=%.2f), while >=1.0s enters skydiving freefall (rotX=%.2f)" % [0.0 if under_1s_ok else air_h._hips_pivot.rotation.x, air_h._hips_pivot.rotation.x]
+	)
+
+	# 3. Articulated Crouch Rig (hips >= 0.48, thigh > 0.7, calf < -1.0, torso above hips)
+	var cr_h := HeroCharacter.new()
+	cr_h.setup_identity(11004, "P11Crouch", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(cr_h)
+	cr_h.global_position = Vector3(15.0, 0.05, 0.0)
+	cr_h.is_crouching = true
+	for _i in range(25):
+		cr_h._animate_character(0.05)
+	var crouch_ok: bool = (
+		cr_h._hips_pivot.position.y >= 0.48
+		and cr_h._leg_l_pivot.rotation.x > 0.7
+		and cr_h._calf_l_pivot != null
+		and cr_h._calf_l_pivot.rotation.x < -1.0
+		and cr_h._torso_pivot.global_position.y > cr_h._hips_pivot.global_position.y
+	)
+	_assert(
+		crouch_ok,
+		"Phase 11.1c: Articulated crouch keeps hips.y=%.2f (>=0.48), thigh.x=%.2f (>0.7), calf.x=%.2f (<-1.0), torso above hips" % [cr_h._hips_pivot.position.y, cr_h._leg_l_pivot.rotation.x, cr_h._calf_l_pivot.rotation.x if cr_h._calf_l_pivot != null else 0.0]
+	)
+
+	# 4. Gunner Hero Shield (155) + Frenzy Fire 4th MG shot heals HP strictly and never touches shield
+	var gun := HeroCharacter.new()
+	gun.setup_identity(11005, "P11Gun", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, true, false)
+	arena.add_child(gun)
+	gun.global_position = Vector3(20.0, 0.0, 0.0)
+	var gsm: SkillManager = gun.skill_manager as SkillManager
+	var g_ctx: Dictionary = {"heroes_by_id": {11005: gun, 11002: vic}, "projectiles_root": arena, "vehicles_by_id": {}}
+	gsm.try_activate_skill(0, InputCmd.new(), g_ctx) # Hero Shield (+155)
+	gsm.try_activate_skill(3, InputCmd.new(), g_ctx) # Frenzy Fire
+	gun.hp = gun.max_hp - 30
+	var hp_pre_frenzy: int = gun.hp
+	var shield_pre_frenzy: int = gun.shield
+	vic.respawn_at(Vector3(20.0, 0.0, -5.0), 0.0)
+	await get_tree().physics_frame
+	var mg_w: HitscanWeapon = gun.weapons[0] as HitscanWeapon
+	for _s in range(4):
+		mg_w._apply_hero_hit(vic, Vector3(0.0, 0.0, -1.0), 5.0, false, vic.global_position + Vector3(0.0, 1.0, 0.0), 1.0, g_ctx, {}, {}, {})
+	var frenzy_isolated_ok: bool = (
+		shield_pre_frenzy == 155
+		and gun.shield == 155
+		and gun.hp > hp_pre_frenzy
+	)
+	_assert(
+		frenzy_isolated_ok,
+		"Phase 11.1d: Gunner Hero Shield (%d->%d) stays isolated while Frenzy Fire 4th MG hit heals HP (%d->%d)" % [shield_pre_frenzy, gun.shield, hp_pre_frenzy, gun.hp]
+	)
+
+	# 5. Water ("Água") widget at slot 2 cleanses burn, resets _burn_tick_accum, grants 2.0s immunity, and water blocks burn
+	var wat_widgets: Array[Dictionary] = SkillCatalog.get_widgets()
+	var wat_cat_ok: bool = (wat_widgets.size() > 2 and str(wat_widgets[2].get("name", "")) == "Água")
+	var wat_sm_ok: bool = (vsm.widget_names.size() > 2 and vsm.widget_names[2] == "Agua")
+	vic.respawn_at(Vector3(25.0, 0.0, 0.0), 0.0)
+	vic.is_in_water = false
+	vic.status_effects.fire_immunity_timer = 0.0
+	vic.status_effects.apply_burn(11001, 16.0, 4.5)
+	vic.status_effects._burn_tick_accum = 0.35
+	var wat_act_ok: bool = vsm.try_activate_widget(2, g_ctx)
+	var wat_clean_ok: bool = (
+		vic.status_effects.burn_timer == 0.0
+		and is_equal_approx(vic.status_effects._burn_tick_accum, 0.0)
+		and is_equal_approx(vic.status_effects.fire_immunity_timer, 2.0)
+	)
+	vic.status_effects.apply_burn(11001, 16.0, 4.5)
+	var wat_immune_ok: bool = (vic.status_effects.burn_timer == 0.0)
+	vic.status_effects.fire_immunity_timer = 0.0
+	vic.is_in_water = true
+	vic.status_effects.apply_burn(11001, 16.0, 4.5)
+	var water_blocks_ok: bool = (vic.status_effects.burn_timer == 0.0)
+	_assert(
+		wat_cat_ok and wat_sm_ok and wat_act_ok and wat_clean_ok and wat_immune_ok and water_blocks_ok,
+		"Phase 11.1e: Water (Água) slot 2 cleanses burn + resets accum + grants 2.0s fire immunity and water blocks burn"
 	)
 
 	arena.queue_free()

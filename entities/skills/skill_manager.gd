@@ -39,7 +39,7 @@ var skill_names: Array[String] = ["Skill 1", "Skill 2", "Skill 3", "Skill 4", "S
 ## 4 Consumable Widgets: 0 = Bandages, 1 = Wrench, 2 = Fireproof Underwear, 3 = Antidote
 var widget_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var widget_max_cooldowns: Array[float] = [15.0, 8.0, 14.0, 14.0]
-var widget_names: Array[String] = ["Bandages", "Wrench", "Fireproof", "Antidote"]
+var widget_names: Array[String] = ["Bandages", "Wrench", "Agua", "Antidote"]
 
 var _prev_skill_btns: int = 0
 var _prev_widget_btns: int = 0

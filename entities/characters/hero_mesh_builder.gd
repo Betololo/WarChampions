@@ -1030,6 +1030,32 @@ static func build_leg_mesh(thigh_r: float) -> ArrayMesh:
 	], 16))
 
 
+static func build_thigh_mesh(thigh_r: float) -> ArrayMesh:
+	var k := "thigh_%.4f" % thigh_r
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, make_loft([
+		{"y": -0.35, "rx": thigh_r * 0.82, "rz": thigh_r * 0.84, "p": 2.2, "col": Color(0.84, 0.84, 0.88), "v": 0.58},
+		{"y": -0.31, "rx": thigh_r * 0.90, "rz": thigh_r * 0.92, "p": 2.2, "col": Color(0.88, 0.88, 0.92), "v": 0.52},
+		{"y": -0.22, "rx": thigh_r * 1.06, "rz": thigh_r * 1.08, "p": 2.2, "col": Color.WHITE, "v": 0.38},
+		{"y": -0.06, "rx": thigh_r * 1.02, "rz": thigh_r * 1.05, "p": 2.2, "col": Color.WHITE, "v": 0.14},
+		{"y": 0.05, "rx": thigh_r * 0.92, "rz": thigh_r * 0.96, "p": 2.1, "col": Color(0.92, 0.92, 0.94), "v": 0.00},
+	], 16))
+
+
+static func build_calf_mesh(thigh_r: float) -> ArrayMesh:
+	var k := "calf_%.4f" % thigh_r
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	return _store_mesh(k, make_loft([
+		{"y": -0.24, "rx": thigh_r * 0.70, "rz": thigh_r * 0.72, "p": 2.1, "col": Color(0.80, 0.80, 0.84), "v": 1.00},
+		{"y": -0.14, "rx": thigh_r * 0.86, "rz": thigh_r * 0.88, "p": 2.1, "col": Color(0.90, 0.90, 0.94), "v": 0.80},
+		{"y": -0.05, "rx": thigh_r * 0.90, "rz": thigh_r * 0.92, "p": 2.1, "col": Color(0.92, 0.92, 0.96), "v": 0.66},
+		{"y": 0.00, "rx": thigh_r * 0.86, "rz": thigh_r * 0.88, "p": 2.2, "col": Color(0.88, 0.88, 0.92), "v": 0.58},
+		{"y": 0.02, "rx": thigh_r * 0.72, "rz": thigh_r * 0.74, "p": 2.2, "col": Color(0.84, 0.84, 0.88), "v": 0.54},
+	], 16))
+
+
 static func build_boot_mesh() -> ArrayMesh:
 	if _mesh_cache.has("boot"):
 		return _mesh_cache["boot"] as ArrayMesh

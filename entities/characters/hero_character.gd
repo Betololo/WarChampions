@@ -21,7 +21,7 @@ const WATER_LEVEL: float = 0.0
 const RECONCILE_THRESHOLD_METERS: float = 0.05
 const STAND_HEIGHT: float = 1.85
 const CROUCH_HEIGHT: float = 1.15
-const FALL_DAMAGE_THRESHOLD_SPEED: float = 13.5
+const FALL_DAMAGE_THRESHOLD_SPEED: float = 16.5
 const MAX_STEP_HEIGHT: float = 0.50
 
 var entity_id: int = 1
@@ -75,6 +75,7 @@ var last_killer_id: int = -1
 var defeat_explosive: bool = false
 var _max_air_fall_speed: float = 0.0
 var _was_airborne: bool = false
+var _airborne_start_y: float = 0.0
 @export var _airborne_fall_time: float = 0.0
 @export var _knockback_stun_timer: float = 0.0
 @export var _defeat_elapsed: float = 0.0
@@ -102,6 +103,8 @@ var _forearm_l_pivot: Node3D
 var _forearm_r_pivot: Node3D
 var _leg_l_pivot: Node3D
 var _leg_r_pivot: Node3D
+var _calf_l_pivot: Node3D
+var _calf_r_pivot: Node3D
 var _held_weapon_root: Node3D
 var _parachute_rig: Node3D
 var _defeat_prop: Node3D
@@ -148,6 +151,7 @@ func _ready() -> void:
 	StatusEffectsVFX.attach_hero_vfx_and_shader(self)
 	_prev_phys_pos = global_position
 	_curr_phys_pos = global_position
+	_airborne_start_y = global_position.y
 
 	if is_local_player:
 		hero_camera = HeroCamera.new()
@@ -331,13 +335,26 @@ func _get_visual_style(is_royal: bool) -> Dictionary:
 	return style
 
 
-func _create_leg_rig(side_sign: float, hip_x: float, leg_mesh: Mesh, boot_mesh: Mesh, pants_mat: Material, boot_mat: Material) -> Node3D:
-	var pivot := Node3D.new()
-	pivot.position = Vector3(side_sign * hip_x, 0.0, 0.0)
-	_hips_pivot.add_child(pivot)
-	HeroMeshBuilder.add_part(pivot, leg_mesh, Vector3.ZERO, Vector3.ZERO, pants_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(pivot, boot_mesh, Vector3(0.0, -0.56, 0.0), Vector3.ZERO, boot_mat, _mesh_parts)
-	return pivot
+func _create_leg_rig(
+	side_sign: float,
+	hip_x: float,
+	thigh_mesh: Mesh,
+	calf_mesh: Mesh,
+	boot_mesh: Mesh,
+	pants_mat: Material,
+	boot_mat: Material
+) -> Array[Node3D]:
+	var leg_pivot := Node3D.new()
+	leg_pivot.position = Vector3(side_sign * hip_x, 0.0, 0.0)
+	_hips_pivot.add_child(leg_pivot)
+	HeroMeshBuilder.add_part(leg_pivot, thigh_mesh, Vector3.ZERO, Vector3.ZERO, pants_mat, _mesh_parts)
+
+	var calf_pivot := Node3D.new()
+	calf_pivot.position = Vector3(0.0, -0.34, 0.0)
+	leg_pivot.add_child(calf_pivot)
+	HeroMeshBuilder.add_part(calf_pivot, calf_mesh, Vector3.ZERO, Vector3.ZERO, pants_mat, _mesh_parts)
+	HeroMeshBuilder.add_part(calf_pivot, boot_mesh, Vector3(0.0, -0.22, 0.0), Vector3.ZERO, boot_mat, _mesh_parts)
+	return [leg_pivot, calf_pivot]
 
 
 func _create_arm_rig(
@@ -498,12 +515,18 @@ func _rebuild_cartoon_visuals() -> void:
 	_hips_pivot.position = Vector3(0.0, 0.76, 0.0)
 	visual_root.add_child(_hips_pivot)
 
-	# Articulated Sculpted Legs & Chunky Combat Boots
+	# Articulated Sculpted Legs (Thigh + Knee/Calf) & Chunky Combat Boots
 	var hip_x: float = float(style["hip_x"])
-	var leg_mesh: ArrayMesh = HeroMeshBuilder.build_leg_mesh(float(style["thigh_r"]))
+	var thigh_r: float = float(style["thigh_r"])
+	var thigh_mesh: ArrayMesh = HeroMeshBuilder.build_thigh_mesh(thigh_r)
+	var calf_mesh: ArrayMesh = HeroMeshBuilder.build_calf_mesh(thigh_r)
 	var boot_mesh: ArrayMesh = HeroMeshBuilder.build_boot_mesh()
-	_leg_l_pivot = _create_leg_rig(-1.0, hip_x, leg_mesh, boot_mesh, mats["pants"], mats["boot"])
-	_leg_r_pivot = _create_leg_rig(1.0, hip_x, leg_mesh, boot_mesh, mats["pants"], mats["boot"])
+	var left_leg: Array[Node3D] = _create_leg_rig(-1.0, hip_x, thigh_mesh, calf_mesh, boot_mesh, mats["pants"], mats["boot"])
+	_leg_l_pivot = left_leg[0]
+	_calf_l_pivot = left_leg[1]
+	var right_leg: Array[Node3D] = _create_leg_rig(1.0, hip_x, thigh_mesh, calf_mesh, boot_mesh, mats["pants"], mats["boot"])
+	_leg_r_pivot = right_leg[0]
+	_calf_r_pivot = right_leg[1]
 
 	# Upper Torso + Collar Lapels + Belt/Buckle/Pouches + Back Gear + Bandolier/Suspenders
 	_torso_pivot = Node3D.new()
@@ -753,6 +776,10 @@ func _animate_character(delta: float) -> void:
 
 		_leg_l_pivot.rotation.x = lerpf(1.2, 1.45, slump_t)
 		_leg_r_pivot.rotation.x = lerpf(1.2, 1.45, slump_t)
+		if _calf_l_pivot != null:
+			_calf_l_pivot.rotation.x = 0.0
+		if _calf_r_pivot != null:
+			_calf_r_pivot.rotation.x = 0.0
 
 		# Left arm braces on ground
 		_arm_l_pivot.rotation = Vector3(lerpf(0.5, -0.35, slump_t), 0.0, lerpf(0.2, 0.65, slump_t))
@@ -791,6 +818,10 @@ func _animate_character(delta: float) -> void:
 			# +X rotation swings downward -Y legs forward toward -Z into the cockpit/footwell
 			_leg_l_pivot.rotation.x = 1.45
 			_leg_r_pivot.rotation.x = 1.45
+			if _calf_l_pivot != null:
+				_calf_l_pivot.rotation.x = 0.0
+			if _calf_r_pivot != null:
+				_calf_r_pivot.rotation.x = 0.0
 			_torso_pivot.rotation.x = -0.04
 			_torso_pivot.rotation.y = 0.0
 			_head_pivot.rotation.x = clampf(aim_pitch * 0.25, -0.35, 0.35)
@@ -798,6 +829,10 @@ func _animate_character(delta: float) -> void:
 			_hips_pivot.position.y = 0.76
 			_leg_l_pivot.rotation.x = 0.0
 			_leg_r_pivot.rotation.x = 0.0
+			if _calf_l_pivot != null:
+				_calf_l_pivot.rotation.x = 0.0
+			if _calf_r_pivot != null:
+				_calf_r_pivot.rotation.x = 0.0
 			_torso_pivot.rotation.x = aim_pitch * 0.25 - kick * 0.05
 			_torso_pivot.rotation.y = 0.0
 			_head_pivot.rotation.x = aim_pitch * 0.35
@@ -829,7 +864,7 @@ func _animate_character(delta: float) -> void:
 		elif is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0 or is_in_water or is_parachuting:
 			_airborne_fall_time = 0.0
 
-	var is_falling_air: bool = (not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting and (velocity.y < -4.5 or _airborne_fall_time > 0.35))
+	var is_falling_air: bool = (not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting and _airborne_fall_time >= 1.0)
 
 	if is_falling_air:
 		if _held_weapon_root != null:
@@ -855,6 +890,10 @@ func _animate_character(delta: float) -> void:
 		# Legs bent backward
 		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, -0.55 + flutter * 0.5, 10.0 * delta)
 		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.55 - flutter * 0.5, 10.0 * delta)
+		if _calf_l_pivot != null:
+			_calf_l_pivot.rotation.x = lerpf(_calf_l_pivot.rotation.x, -0.70, 10.0 * delta)
+		if _calf_r_pivot != null:
+			_calf_r_pivot.rotation.x = lerpf(_calf_r_pivot.rotation.x, -0.70, 10.0 * delta)
 		return
 
 	_hips_pivot.rotation.x = 0.0
@@ -870,12 +909,16 @@ func _animate_character(delta: float) -> void:
 	var stride: float = sin(_walk_phase) * clampf(horiz_speed / 7.0, 0.0, 1.0)
 	var bob: float = absf(sin(_walk_phase * 2.0)) * 0.012 * clampf(horiz_speed / 7.0, 0.0, 1.0)
 
-	var target_hips_y: float = 0.50 if is_crouching else (0.76 + bob)
+	var target_hips_y: float = 0.52 if is_crouching else (0.76 + bob)
 	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, 14.0 * delta)
 
 	if is_parachuting:
 		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, 0.35, 10.0 * delta)
 		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.25, 10.0 * delta)
+		if _calf_l_pivot != null:
+			_calf_l_pivot.rotation.x = 0.0
+		if _calf_r_pivot != null:
+			_calf_r_pivot.rotation.x = 0.0
 		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(2.65, 0.0, 0.25), 10.0 * delta)
 		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(2.65, 0.0, -0.25), 10.0 * delta)
 		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
@@ -886,18 +929,42 @@ func _animate_character(delta: float) -> void:
 		emote_timer += delta
 		_leg_l_pivot.rotation.x = 0.0
 		_leg_r_pivot.rotation.x = 0.0
+		if _calf_l_pivot != null:
+			_calf_l_pivot.rotation.x = 0.0
+		if _calf_r_pivot != null:
+			_calf_r_pivot.rotation.x = 0.0
 		_arm_l_pivot.rotation = Vector3(2.2 + sin(emote_timer * 12.0) * 0.55, 0.0, 0.4)
 		_arm_r_pivot.rotation = Vector3(0.5, 0.0, -0.2)
 		_forearm_l_pivot.rotation = Vector3(0.4, 0.0, 0.0)
 		_forearm_r_pivot.rotation = Vector3(0.8, 0.0, 0.0)
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
 	else:
-		_leg_l_pivot.rotation.x = stride * 0.72 + (-0.55 if is_crouching else 0.0)
-		_leg_r_pivot.rotation.x = -stride * 0.72 + (-0.55 if is_crouching else 0.0)
+		var is_grounded_anim: bool = is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0
+		if is_crouching:
+			_leg_l_pivot.rotation.x = 1.10 + stride * 0.42
+			_leg_r_pivot.rotation.x = 1.10 - stride * 0.42
+			if _calf_l_pivot != null:
+				_calf_l_pivot.rotation.x = -1.45 + stride * 0.18
+			if _calf_r_pivot != null:
+				_calf_r_pivot.rotation.x = -1.45 - stride * 0.18
+		elif not is_grounded_anim and not is_in_water and _airborne_fall_time < 1.0:
+			_leg_l_pivot.rotation.x = 0.28
+			_leg_r_pivot.rotation.x = -0.18
+			if _calf_l_pivot != null:
+				_calf_l_pivot.rotation.x = -0.55
+			if _calf_r_pivot != null:
+				_calf_r_pivot.rotation.x = -0.25
+		else:
+			_leg_l_pivot.rotation.x = stride * 0.72
+			_leg_r_pivot.rotation.x = -stride * 0.72
+			if _calf_l_pivot != null:
+				_calf_l_pivot.rotation.x = -maxf(0.0, -stride) * 0.45
+			if _calf_r_pivot != null:
+				_calf_r_pivot.rotation.x = -maxf(0.0, stride) * 0.45
 		_leg_l_pivot.rotation.z = 0.0
 		_leg_r_pivot.rotation.z = 0.0
 		var counter_twist: float = -stride * 0.08 * (1.0 - fire_blend)
-		_torso_pivot.rotation.x = aim_pitch * 0.25 + (-0.14 if is_crouching else 0.0) - kick * 0.05
+		_torso_pivot.rotation.x = aim_pitch * 0.25 + (0.14 if is_crouching else 0.0) - kick * 0.05
 		_torso_pivot.rotation.y = lerpf(counter_twist, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
 		_head_pivot.rotation.x = aim_pitch * 0.35
 		_pose_held_weapon_and_arms(stride, fire_blend, kick, reloading)
@@ -1341,6 +1408,30 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	is_in_water = global_position.y < WATER_LEVEL - 0.55
 	var grounded: bool = is_on_floor()
 
+	# Fall Damage Check BEFORE resetting _airborne_fall_time so landing frame preserves fall duration
+	if (grounded or is_in_water) and _was_airborne:
+		var drop_h: float = _airborne_start_y - global_position.y
+		if not is_parachuting and not is_in_water and _max_air_fall_speed > FALL_DAMAGE_THRESHOLD_SPEED and drop_h >= 4.2 and _airborne_fall_time >= 0.72:
+			if NetworkManager.is_server_authority():
+				var fall_dmg: int = maxi(5, int(roundf((_max_air_fall_speed - FALL_DAMAGE_THRESHOLD_SPEED) * 6.5)))
+				apply_damage_server(fall_dmg, -1, false)
+		_max_air_fall_speed = 0.0
+		_was_airborne = false
+		is_parachuting = false
+		_airborne_start_y = global_position.y
+	elif grounded or is_in_water:
+		_airborne_start_y = global_position.y
+	elif not grounded and not is_in_water:
+		if not _was_airborne:
+			_airborne_start_y = global_position.y
+		else:
+			_airborne_start_y = maxf(_airborne_start_y, global_position.y)
+		_was_airborne = true
+		if is_parachuting:
+			_max_air_fall_speed = 0.0
+		elif velocity.y < 0.0:
+			_max_air_fall_speed = maxf(_max_air_fall_speed, -velocity.y)
+
 	# Airborne fall time tracking: resets on ground, water, vehicle; only increments when falling past apex
 	if grounded or is_in_water or current_vehicle_id >= 0:
 		_airborne_fall_time = 0.0
@@ -1348,22 +1439,6 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 		_airborne_fall_time += delta
 	else:
 		_airborne_fall_time = 0.0
-
-	# Fall Damage Check when hitting ground after airborne drop without parachute
-	if (grounded or is_in_water) and _was_airborne:
-		if not is_parachuting and not is_in_water and _max_air_fall_speed > FALL_DAMAGE_THRESHOLD_SPEED:
-			if NetworkManager.is_server_authority():
-				var fall_dmg: int = maxi(5, int(roundf((_max_air_fall_speed - FALL_DAMAGE_THRESHOLD_SPEED) * 6.5)))
-				apply_damage_server(fall_dmg, -1, false)
-		_max_air_fall_speed = 0.0
-		_was_airborne = false
-		is_parachuting = false
-	elif not grounded and not is_in_water:
-		_was_airborne = true
-		if is_parachuting:
-			_max_air_fall_speed = 0.0
-		elif velocity.y < 0.0:
-			_max_air_fall_speed = maxf(_max_air_fall_speed, -velocity.y)
 
 	# Jump & Infinite Reusable Parachute (requires >= 1.0s fall delay)
 	if jump_just_pressed:
@@ -1510,6 +1585,9 @@ func _move_and_slide_with_steps(delta: float, wish_dir: Vector3, grounded: bool)
 
 	if valid_floor and stepped_progress > actual_progress + 0.005:
 		velocity.y = maxf(0.0, pre_vel.y)
+		_airborne_fall_time = 0.0
+		_max_air_fall_speed = 0.0
+		_airborne_start_y = global_position.y
 		return
 
 	# Step failed or didn't improve progress; cleanly restore move_and_slide result
@@ -1767,7 +1845,7 @@ func reconcile_with_server(state: Dictionary) -> void:
 		if hero_camera != null:
 			hero_camera.global_position = global_position
 
-	visual_error_offset = _pred_error_offset
+		visual_error_offset = _pred_error_offset
 	_prev_phys_pos = global_position
 	_curr_phys_pos = global_position
 
@@ -1906,6 +1984,7 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	is_crouching = false
 	_max_air_fall_speed = 0.0
 	_was_airborne = false
+	_airborne_start_y = spawn_pos.y
 	clear_vehicle_state()
 	_prev_phys_pos = spawn_pos
 	_curr_phys_pos = spawn_pos

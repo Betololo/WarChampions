@@ -80,6 +80,12 @@ func _physics_process(delta: float) -> void:
 	if not NetworkManager.is_server_authority():
 		return
 
+	if owner_hero != null and owner_hero.is_in_water and burn_timer > 0.0:
+		burn_timer = 0.0
+		burn_dps = 0.0
+		_burn_tick_accum = 0.0
+		_sync_flags()
+
 	# Process Burn DoT (1 tick/sec)
 	if burn_timer > 0.0:
 		burn_timer -= delta
@@ -250,7 +256,7 @@ func _sync_buffs() -> void:
 
 
 func apply_burn(attacker_id: int, dps: float, duration: float) -> void:
-	if fire_immunity_timer > 0.0:
+	if (owner_hero != null and owner_hero.is_in_water) or fire_immunity_timer > 0.0:
 		return
 	burn_attacker_id = attacker_id
 	burn_dps = maxf(burn_dps, dps)
@@ -262,12 +268,14 @@ func apply_poison(attacker_id: int, dps: float, duration: float) -> void:
 	poison_attacker_id = attacker_id
 	poison_dps = maxf(poison_dps, dps)
 	poison_timer = maxf(poison_timer, duration)
+	_poison_tick_accum = 0.0
 	_sync_flags()
 
 
 func cleanse_burn_and_grant_immunity(immunity_sec: float = 2.0) -> void:
 	burn_timer = 0.0
 	burn_dps = 0.0
+	_burn_tick_accum = 0.0
 	fire_immunity_timer = maxf(fire_immunity_timer, immunity_sec)
 	_sync_flags()
 
@@ -275,6 +283,7 @@ func cleanse_burn_and_grant_immunity(immunity_sec: float = 2.0) -> void:
 func cleanse_poison() -> void:
 	poison_timer = 0.0
 	poison_dps = 0.0
+	_poison_tick_accum = 0.0
 	_sync_flags()
 
 
@@ -604,7 +613,11 @@ func get_piercing_shot_mult() -> float:
 
 func clear_all() -> void:
 	burn_timer = 0.0
+	burn_dps = 0.0
+	_burn_tick_accum = 0.0
 	poison_timer = 0.0
+	poison_dps = 0.0
+	_poison_tick_accum = 0.0
 	shield_timer = 0.0
 	hero_shield_timer = 0.0
 	speed_boost_timer = 0.0

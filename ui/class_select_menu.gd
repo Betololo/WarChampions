@@ -1186,7 +1186,7 @@ func _refresh_hotkey_buttons() -> void:
 	for s_i in range(_skill_hotkey_buttons.size()):
 		var lbl: String = InputCmd.key_short_label(InputCmd.get_skill_key(s_i))
 		_skill_hotkey_buttons[s_i].text = "Skill %d: %s" % [s_i + 1, lbl]
-	var w_names: Array[String] = ["Bandagem", "Chave", "Antifogo", "Antídoto"]
+	var w_names: Array[String] = ["Bandagem", "Chave", "Água", "Antídoto"]
 	for w_i in range(_widget_hotkey_buttons.size()):
 		var wlbl: String = InputCmd.key_short_label(InputCmd.get_widget_key(w_i))
 		_widget_hotkey_buttons[w_i].text = "%s: %s" % [w_names[w_i], wlbl]
