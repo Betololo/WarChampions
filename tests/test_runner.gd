@@ -55,6 +55,7 @@ func _ready() -> void:
 	await _test_phase12_task2_demolisher_rework()
 	await _test_phase12_task3_hotkeys_drag_minimap()
 	await _test_phase12_task4_field_engineer()
+	await _test_phase12_task5_menus_5classes_integration()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -4290,7 +4291,7 @@ func _test_phase8_task1_skill_icons_and_guide() -> void:
 			found_combat_med = true
 			break
 
-	menu.select_skills_tab(4)
+	menu.select_skills_tab(5)
 	var widget_tab_count: int = menu._skills_grid.get_child_count()
 
 	menu._skills_back_btn.pressed.emit()
@@ -6952,16 +6953,16 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	print("--- Phase 11 Task 6: 4-Class UI, HUD, Bot AI, GameCache & Full Verification ---")
 
-	# 1. ClassSelectMenu: 4 class cards fitting inside 980x620 panel, Demolisher slots/variants, 5-tab Skills guide
+	# 1. ClassSelectMenu: 5 class cards fitting inside 1040x660 panel, Demolisher slots/variants, 6-tab Skills guide
 	var menu := ClassSelectMenu.new()
 	menu.hotkeys_config_path = "user://test_hotkeys_p11t6.cfg"
 	add_child(menu)
 	await _flush_deferred()
 
 	menu.show_screen("armory")
-	var cards_ok: bool = (menu._class_cards.size() == 4 and menu._class_buttons.size() == 4)
+	var cards_ok: bool = (menu._class_cards.size() == 5 and menu._class_buttons.size() == 5)
 	var cards_fit_ok: bool = true
-	if menu._class_cards.size() == 4:
+	if menu._class_cards.size() == 5:
 		var cls_row_node := menu._class_cards[0].get_parent() as Control
 		if cls_row_node != null and cls_row_node.get_combined_minimum_size().x > 932.0:
 			cards_fit_ok = false
@@ -6993,7 +6994,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	await _flush_deferred()
 	var skills_tabs_ok: bool = (
 		menu.current_screen == "skills"
-		and menu._skills_tab_buttons.size() == 5
+		and menu._skills_tab_buttons.size() == 6
 		and menu._skills_tab_class == NetworkManager.CLASS_DEMOLISHER
 		and menu._skills_grid.get_child_count() == 5
 	)
@@ -7006,7 +7007,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 		if txt.contains("Quebra-Tanques"):
 			found_buster_skill = true
 
-	menu.select_skills_tab(4)
+	menu.select_skills_tab(5)
 	await _flush_deferred()
 	var found_agua: bool = false
 	var found_cueca: bool = false
@@ -7022,7 +7023,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	_assert(
 		cards_ok and cards_fit_ok and slots_ok and royal_demo_sel_ok and nat_demo_sel_ok
 		and skills_tabs_ok and found_shield_skill and found_buster_skill and widgets_tab_ok,
-		"Phase 11.6a: ClassSelectMenu 4-class cards fit 980x620, Demolisher slots/variants, 5-tab Skills guide, and Água widget"
+		"Phase 11.6a: ClassSelectMenu 5-class cards fit 1040x660, Demolisher slots/variants, 6-tab Skills guide, and Água widget"
 	)
 
 	# 2. HUDController Demolisher portraits, 5 skill icons/tooltips, Água widget tooltip, and Caber label
@@ -8876,5 +8877,299 @@ func _test_phase12_task4_field_engineer() -> void:
 		]
 	)
 
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase12_task5_menus_5classes_integration() -> void:
+	print("--- Phase 12 Task 5: 3D Preview Menus, 5-Class Bot/HUD/Cache & Task 2 Polish ---")
+
+	# 1. Hub & Armory symmetrical flags, 5 class cards, live 3D SubViewport preview, Arsenal 96x64 cards & 6 Skills tabs
+	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys_p12t5.cfg"
+	add_child(menu)
+	await _flush_deferred()
+
+	var hub_flags_ok: bool = false
+	var hub_texs: Array[Texture2D] = []
+	for tr in menu._hub_screen.find_children("*", "TextureRect", true, false):
+		var tex: Texture2D = (tr as TextureRect).texture
+		if tex != null:
+			hub_texs.append(tex)
+	hub_flags_ok = (
+		hub_texs.has(CartoonAssets.get_texture("flag_royal"))
+		and hub_texs.has(CartoonAssets.get_texture("flag_national"))
+	)
+
+	menu.show_screen("armory")
+	await _flush_deferred()
+
+	var sym_flags_ok: bool = (
+		menu._royal_flag_rect != null and menu._royal_flag_rect.visible
+		and menu._royal_flag_rect.texture == CartoonAssets.get_texture("flag_royal")
+		and menu._national_flag_rect != null and menu._national_flag_rect.visible
+		and menu._national_flag_rect.texture == CartoonAssets.get_texture("flag_national")
+		and menu._royal_btn != null and menu._royal_btn.visible
+		and menu._nat_btn != null and menu._nat_btn.visible
+	)
+
+	var vp_ok: bool = (
+		menu._preview_viewport != null
+		and menu._preview_viewport.own_world_3d
+		and menu._preview_hero != null
+		and is_instance_valid(menu._preview_hero)
+		and not menu._preview_hero.is_physics_processing()
+	)
+	var yaw_before: float = menu._preview_hero.rotation.y if menu._preview_hero != null else 0.0
+	menu._process(0.5)
+	var yaw_after: float = menu._preview_hero.rotation.y if menu._preview_hero != null else 0.0
+	var rotates_ok: bool = absf(yaw_after - yaw_before) > 0.35
+
+	var all_classes_preview_ok: bool = (menu._class_cards.size() == 5 and menu._class_buttons.size() == 5)
+	for cid in range(5):
+		menu.select_class(cid)
+		if menu.selected_class != cid or menu._preview_hero.class_id != cid:
+			all_classes_preview_ok = false
+			break
+
+	menu.select_team(NetworkManager.TEAM_NATIONAL)
+	menu.select_class(NetworkManager.CLASS_ENGINEER)
+	await _flush_deferred()
+
+	var eng_slots: Array[int] = ClassSelectMenu.get_class_weapon_slots(NetworkManager.CLASS_ENGINEER)
+	var eng_arsenal_ok: bool = (
+		eng_slots.size() == 3
+		and menu._arsenal_cards.size() == 3
+		and menu._weapon_variant_selectors.size() == 3
+		and menu._weapon_variant_selectors[0].item_count == 2
+		and menu._weapon_variant_selectors[0].get_item_text(0) == "2 Revólveres"
+		and menu._weapon_variant_selectors[0].get_item_text(1) == "2 Pistolas"
+		and menu._weapon_variant_selectors[1].item_count == 3
+		and menu._weapon_variant_selectors[2].item_count == 1
+		and menu._weapon_variant_selectors[2].get_item_text(0) == "Maçarico de Solda"
+		and menu._preview_portrait.texture == CartoonAssets.get_texture("portrait_national_4")
+		and menu._preview_hero.team == NetworkManager.TEAM_NATIONAL
+		and menu._preview_hero.class_id == NetworkManager.CLASS_ENGINEER
+	)
+
+	var arsenal_icon_96_ok: bool = false
+	for tr_a in menu._weapon_variant_row.find_children("*", "TextureRect", true, false):
+		var tex_a: Texture2D = (tr_a as TextureRect).texture
+		if tex_a != null and tex_a.get_width() == 96 and tex_a.get_height() == 64:
+			arsenal_icon_96_ok = true
+			break
+
+	# Clicking Arsenal card switches held weapon slot on rotating 3D hero; variant 1 switches to Dual Pistols
+	menu.select_preview_weapon_slot(2)
+	var slot2_preview_ok: bool = (
+		menu._preview_hero.selected_weapon_slot == 2
+		and menu._preview_hero._shown_weapon_kind == WeaponBase.WeaponKind.WELDING_TORCH
+	)
+	menu.select_weapon_variant(NetworkManager.CLASS_ENGINEER, 0, 1)
+	var dual_pistol_preview_ok: bool = (
+		menu._preview_hero.selected_weapon_slot == 0
+		and menu._preview_hero._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS
+		and menu._summary_lbl.text.contains("2 Pistolas")
+	)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_ENGINEER, 0, 0)
+
+	# 6 Skills Encyclopedia tabs including Field Engineer (5)
+	menu._armory_skills_btn.pressed.emit()
+	await _flush_deferred()
+	var eng_skills_tab_ok: bool = (
+		menu.current_screen == "skills"
+		and menu._skills_tab_buttons.size() == 6
+		and menu._skills_tab_class == NetworkManager.CLASS_ENGINEER
+		and menu._skills_grid.get_child_count() == 5
+	)
+	menu.select_skills_tab(5)
+	var widgets_tab6_ok: bool = (menu._skills_grid.get_child_count() == 4)
+
+	_assert(
+		hub_flags_ok and sym_flags_ok and vp_ok and rotates_ok and all_classes_preview_ok
+		and eng_arsenal_ok and arsenal_icon_96_ok and slot2_preview_ok and dual_pistol_preview_ok
+		and eng_skills_tab_ok and widgets_tab6_ok,
+		"Phase 12.5a: Hub/Armory symmetrical flags, 5 classes, live 3D rotating preview, 96x64 Arsenal cards & 6 Skills tabs"
+	)
+
+	menu.queue_free()
+	await _flush_deferred()
+
+	# 2. BotController CLASS_ENGINEER AI, GameCache.warm_meshes(), HUD [ALT] hint & MOUNTED_MG name
+	var arena := Node3D.new()
+	add_child(arena)
+
+	var eng_bot := HeroCharacter.new()
+	eng_bot.setup_identity(12501, "EngBot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 0, false, true)
+	eng_bot.position = Vector3(0.0, 0.0, 0.0)
+	arena.add_child(eng_bot)
+
+	var enemy_b := HeroCharacter.new()
+	enemy_b.setup_identity(12502, "EnemyTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	enemy_b.position = Vector3(0.0, 0.0, -24.0)
+	arena.add_child(enemy_b)
+
+	var damaged_jeep := VehicleJeep.new()
+	damaged_jeep.id = 60
+	damaged_jeep.team = NetworkManager.TEAM_ROYAL
+	damaged_jeep.position = Vector3(1.8, 0.0, 0.0)
+	arena.add_child(damaged_jeep)
+	damaged_jeep.hp = 140
+
+	var brain := BotController.new()
+	brain.setup(eng_bot)
+	arena.add_child(brain)
+
+	var heroes_dict: Dictionary = {eng_bot.entity_id: eng_bot, enemy_b.entity_id: enemy_b}
+	var veh_list: Array[VehicleBase] = [damaged_jeep]
+
+	# Long range enemy -> Dual Revolvers (slot 0)
+	eng_bot.aim_yaw = 0.0
+	var cmd_long: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	var bot_long_ok: bool = (cmd_long.selected_weapon_slot == 0)
+
+	# Mid range enemy -> Shotgun (slot 1)
+	enemy_b.position = Vector3(0.0, 0.0, -10.0)
+	var cmd_mid: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	var bot_mid_ok: bool = (cmd_mid.selected_weapon_slot == 1)
+
+	# Close enemy & low HP -> Welding Torch (slot 2) + Invulnerability (BTN_SKILL_5)
+	enemy_b.position = Vector3(0.0, 0.0, -2.5)
+	eng_bot.hp = 40
+	var cmd_close: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	var bot_close_invuln_ok: bool = (
+		cmd_close.selected_weapon_slot == 2
+		and cmd_close.has_button(InputCmd.BTN_SKILL_5)
+	)
+
+	# Out of sight of enemy, next to damaged allied vehicle -> Welding Torch repair + Armor vehicle
+	enemy_b.is_defeated = true
+	eng_bot.hp = eng_bot.max_hp
+	var cmd_heal_veh: InputCmd = brain.compute_input(0.05, [], heroes_dict, veh_list)
+	var bot_heal_veh_ok: bool = (
+		cmd_heal_veh.selected_weapon_slot == 2
+		and cmd_heal_veh.has_button(InputCmd.BTN_FIRE)
+		and cmd_heal_veh.has_button(InputCmd.BTN_SKILL_3)
+	)
+
+	# GameCache warm_meshes covers Engineer cap, torso_4, backpack_4, and WeaponKind 11..13
+	HeroMeshBuilder.clear_caches()
+	GameCache.clear_all()
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
+	var cache_5cls_ok: bool = (
+		HeroMeshBuilder._mesh_cache.has("torso_4")
+		and HeroMeshBuilder._mesh_cache.has("pack_4")
+		and HeroMeshBuilder._mesh_cache.has("ecap_true")
+		and HeroMeshBuilder._mesh_cache.has("ecap_false")
+		and HeroMeshBuilder._weapon_cache.has("11_0")
+		and HeroMeshBuilder._weapon_cache.has("12_0")
+		and HeroMeshBuilder._weapon_cache.has("13_0")
+	)
+
+	# HUD subtle [ALT] hint (MOUSE_FILTER_IGNORE) + MOUNTED_MG name + Engineer skill tooltips
+	var hud := HUDController.new()
+	arena.add_child(hud)
+	hud.set_local_hero(eng_bot)
+	hud._process(0.016)
+	var hud_alt_ok: bool = (
+		hud._hotbar_alt_hint_lbl != null
+		and hud._hotbar_alt_hint_lbl.visible
+		and hud._hotbar_alt_hint_lbl.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and hud._hotbar_alt_hint_lbl.text.contains("[ALT]")
+	)
+	var hud_mg_name_ok: bool = (HUDController.get_vehicle_display_name(VehicleBase.VehicleType.MOUNTED_MG) == "Metralhadora c/ Escudo")
+	var hud_eng_tooltips_ok: bool = (
+		hud._skill_slot_bgs.size() >= 5
+		and hud._skill_slot_bgs[0].tooltip_text.contains("Trincheira")
+		and hud._skill_slot_bgs[3].tooltip_text.contains("Morteiro")
+		and hud._skill_slot_bgs[4].tooltip_text.contains("Armadura Invulnerável")
+	)
+
+	_assert(
+		bot_long_ok and bot_mid_ok and bot_close_invuln_ok and bot_heal_veh_ok
+		and cache_5cls_ok and hud_alt_ok and hud_mg_name_ok and hud_eng_tooltips_ok,
+		"Phase 12.5b: Engineer Bot AI (long=%s mid=%s cls=%s heal=%s), GameCache 5-class meshes=%s, HUD ALT/MG/tips=(%s,%s,%s)" % [
+			str(bot_long_ok), str(bot_mid_ok), str(bot_close_invuln_ok), str(bot_heal_veh_ok),
+			str(cache_5cls_ok), str(hud_alt_ok), str(hud_mg_name_ok), str(hud_eng_tooltips_ok)
+		]
+	)
+
+	# 3. Task 2 carry-over polish guards (Demolisher Skill 0 in-vehicle, Parachute/Emote/TNT-Rope shield hide, Vest shield cap)
+	var demo := HeroCharacter.new()
+	demo.setup_identity(12503, "DemoPolish", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, false, false)
+	arena.add_child(demo)
+	var d_sm := demo.skill_manager as DemolisherSkills
+	damaged_jeep.try_enter_hero(demo)
+	var in_veh_res: bool = d_sm._execute_class_skill(0, 5, InputCmd.new(), {})
+	var skill0_veh_guard_ok: bool = (not in_veh_res and is_equal_approx(d_sm.skill_cooldowns[0], 0.0))
+	damaged_jeep.exit_hero(demo)
+
+	d_sm._execute_class_skill(0, 5, InputCmd.new(), {})
+	demo.selected_weapon_slot = 2
+	demo._animate_character(0.016)
+	var shield_vis_foot_ok: bool = demo._held_riot_shield != null and demo._held_riot_shield.visible
+	demo.is_parachuting = true
+	demo._animate_character(0.016)
+	var shield_hidden_para_ok: bool = demo._held_riot_shield != null and not demo._held_riot_shield.visible
+	demo.is_parachuting = false
+	demo.is_emoting = true
+	demo._animate_character(0.016)
+	var shield_hidden_emote_ok: bool = demo._held_riot_shield != null and not demo._held_riot_shield.visible
+	demo.is_emoting = false
+	demo.status_effects.activate_tnt_rope()
+	demo._animate_character(0.016)
+	var shield_hidden_rope_ok: bool = demo._held_riot_shield != null and not demo._held_riot_shield.visible
+	demo.status_effects.clear_tnt_rope()
+
+	# Vest shield cap when temporary 140 HP Hero Shield is already active
+	demo.status_effects.apply_shield(140, 2.0, true)
+	demo.status_effects.apply_vest_shield(70)
+	var vest_capped_ok: bool = (demo.shield == 140 and demo.status_effects.permanent_vest_shield == 70)
+	demo.status_effects._physics_process(2.5)
+	var vest_after_expiry_ok: bool = (demo.shield == 70 and demo.status_effects.permanent_vest_shield == 70)
+
+	_assert(
+		skill0_veh_guard_ok and shield_vis_foot_ok and shield_hidden_para_ok
+		and shield_hidden_emote_ok and shield_hidden_rope_ok and vest_capped_ok and vest_after_expiry_ok,
+		"Phase 12.5c: Demolisher Skill 0 in-vehicle guard, parachute/emote/TNT-Rope shield hide, and vest shield cap"
+	)
+
+	# 4. MainGame 14v14 5-class bot distribution + map budgets + INPUT_CMD_BYTES == 15
+	var prev_peer_id: int = NetworkManager.local_peer_id
+	var game := MainGame.new()
+	add_child(game)
+	game._start_bots_sync(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER)
+	var eng_bot_count: int = 0
+	var class_seen: Dictionary = {}
+	for h_val in game.heroes_by_id.values():
+		var hh := h_val as HeroCharacter
+		if hh != null:
+			class_seen[hh.class_id] = true
+			if hh.is_bot and hh.class_id == NetworkManager.CLASS_ENGINEER:
+				eng_bot_count += 1
+
+	var mesh_count: int = 0
+	var uniq_meshes: Dictionary = {}
+	var uniq_mats: Dictionary = {}
+	for node in game.map_instance.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		mesh_count += 1
+		if mi.mesh != null:
+			uniq_meshes[mi.mesh.get_instance_id()] = true
+		if mi.material_override != null:
+			uniq_mats[mi.material_override.get_instance_id()] = true
+	var budgets_ok: bool = (mesh_count <= 900 and uniq_meshes.size() <= 350 and uniq_mats.size() <= 200)
+
+	_assert(
+		game.heroes_by_id.size() == 28 and eng_bot_count >= 5 and class_seen.size() == 5 and budgets_ok and NetSerializer.INPUT_CMD_BYTES == 15,
+		"Phase 12.5d: 14v14 spawns all 5 classes (%d Engineer bots), map budgets (%d/%d/%d), INPUT_CMD=15B" % [
+			eng_bot_count, mesh_count, uniq_meshes.size(), uniq_mats.size()
+		]
+	)
+
+	NetworkManager.shutdown_network()
+	NetworkManager.local_peer_id = prev_peer_id
+	game.queue_free()
 	arena.queue_free()
 	await _flush_deferred()

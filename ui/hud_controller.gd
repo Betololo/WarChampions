@@ -529,6 +529,7 @@ var _drag_source_vis: int = -1
 var _drag_hover_vis: int = -1
 var _drag_preview: TextureRect = null
 var _alt_hint_lbl: Label = null
+var _hotbar_alt_hint_lbl: Label = null
 
 var _minimap: _TacticalMinimapControl = null
 var _mortar_targeting_active: bool = false
@@ -574,7 +575,7 @@ static func get_vehicle_display_name(v_type: int) -> String:
 		VehicleBase.VehicleType.APC:
 			return "BLINDADO"
 		VehicleBase.VehicleType.MOUNTED_MG:
-			return "TORRETA MG"
+			return "Metralhadora c/ Escudo"
 		_:
 			return "VEÍCULO"
 
@@ -1163,6 +1164,23 @@ func _build_hud() -> void:
 		_widget_slot_icons.append(icon)
 		_widget_slot_cd_lbls.append(cd_lbl)
 		_widget_slot_keys.append(kl)
+
+	# Subtle persistent hotbar ALT hint (non-blocking MOUSE_FILTER_IGNORE)
+	_hotbar_alt_hint_lbl = Label.new()
+	_hotbar_alt_hint_lbl.anchor_left = 0.5
+	_hotbar_alt_hint_lbl.anchor_right = 0.5
+	_hotbar_alt_hint_lbl.anchor_top = 1.0
+	_hotbar_alt_hint_lbl.anchor_bottom = 1.0
+	_hotbar_alt_hint_lbl.offset_left = -220.0
+	_hotbar_alt_hint_lbl.offset_right = 220.0
+	_hotbar_alt_hint_lbl.offset_top = -90.0
+	_hotbar_alt_hint_lbl.offset_bottom = -74.0
+	_hotbar_alt_hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hotbar_alt_hint_lbl.text = "[ALT] Cursor / Reorganizar Barra"
+	_hotbar_alt_hint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hotbar_alt_hint_lbl.visible = true
+	_style_label(_hotbar_alt_hint_lbl, 10, Color(0.84, 0.90, 0.98, 0.72))
+	add_child(_hotbar_alt_hint_lbl)
 
 	# Alt-mode drag hint above hotbar
 	_alt_hint_lbl = Label.new()
@@ -1925,6 +1943,8 @@ func _process(delta: float) -> void:
 			_cancel_hotbar_drag()
 	if _alt_hint_lbl != null:
 		_alt_hint_lbl.visible = _alt_cursor_mode and not _mortar_targeting_active
+	if _hotbar_alt_hint_lbl != null:
+		_hotbar_alt_hint_lbl.visible = not _alt_cursor_mode and not _mortar_targeting_active and (_local_hero == null or _local_hero.current_vehicle_id < 0)
 
 	if _hitmarker_timer > 0.0:
 		_hitmarker_timer -= delta

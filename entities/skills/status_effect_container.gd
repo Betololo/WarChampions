@@ -683,7 +683,7 @@ func apply_vest_shield(amount: int = 70) -> void:
 	if owner_hero == null or owner_hero.is_defeated or amount <= 0:
 		return
 	owner_hero.shield = maxi(owner_hero.shield, amount)
-	permanent_vest_shield = owner_hero.shield
+	permanent_vest_shield = clampi(maxi(permanent_vest_shield, amount), 0, owner_hero.shield)
 	owner_hero.stats_changed.emit()
 	_sync_flags()
 

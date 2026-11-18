@@ -91,7 +91,7 @@ static func warm_meshes() -> void:
 	VehicleMeshBuilder.build_apc_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
 	tmp_v.free()
 
-	# Warm common Hero meshes across Soldier (0), Gunner (1), Commando (2)
+	# Warm common Hero meshes across all 5 classes (Soldier 0 .. Engineer 4)
 	HeroMeshBuilder.build_head_mesh()
 	HeroMeshBuilder.build_hair_cap_mesh()
 	HeroMeshBuilder.build_ear_mesh()
@@ -111,22 +111,24 @@ static func warm_meshes() -> void:
 	HeroMeshBuilder.build_helmet_mesh(false)
 	HeroMeshBuilder.build_visor_helmet_mesh(true)
 	HeroMeshBuilder.build_visor_helmet_mesh(false)
+	HeroMeshBuilder.build_engineer_cap_mesh(true)
+	HeroMeshBuilder.build_engineer_cap_mesh(false)
 	HeroMeshBuilder.build_epaulet_mesh(true)
 	HeroMeshBuilder.build_epaulet_mesh(false)
 	for bs in range(3):
 		HeroMeshBuilder.build_beard_mesh(bs)
 
-	for cls in range(4):
+	for cls in range(5):
 		HeroMeshBuilder.build_torso_mesh(cls)
 		HeroMeshBuilder.build_collar_lapels_mesh(cls)
 		HeroMeshBuilder.build_backpack_mesh(cls)
 		HeroMeshBuilder.build_waist_belt_mesh(cls)
 		HeroMeshBuilder.build_bandolier_mesh(cls)
 
-	var arm_r_scales: Array[float] = [1.0, 1.22, 0.96, 1.12]
-	var arm_len_scales: Array[float] = [1.0, 1.12, 1.0, 1.05]
-	var thigh_radii: Array[float] = [0.095, 0.115, 0.090, 0.106]
-	for i in range(4):
+	var arm_r_scales: Array[float] = [1.0, 1.22, 0.96, 1.12, 1.02]
+	var arm_len_scales: Array[float] = [1.0, 1.12, 1.0, 1.05, 1.0]
+	var thigh_radii: Array[float] = [0.095, 0.115, 0.090, 0.106, 0.094]
+	for i in range(5):
 		var ars: float = arm_r_scales[i]
 		var als: float = arm_len_scales[i]
 		HeroMeshBuilder.build_arm_segment_mesh(0.088 * ars, 0.072 * ars, 0.30 * als, true)
@@ -138,7 +140,7 @@ static func warm_meshes() -> void:
 		HeroMeshBuilder.build_calf_mesh(thigh_radii[i])
 
 	var tmp_w := Node3D.new()
-	for wk in range(11):
+	for wk in range(14):
 		for arch in range(3):
 			HeroMeshBuilder.populate_weapon_root(tmp_w, wk, arch)
 	HeroMeshBuilder.populate_tnt_rope_root(tmp_w)

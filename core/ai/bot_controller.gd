@@ -132,6 +132,17 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 				if v_pos.distance_to(bot_pos_for_veh) <= 45.0:
 					near_enemy_veh = true
 					break
+	var eng_support_veh: VehicleBase = null
+	var eng_support_dist: float = 14.0
+	if bot_hero.class_id == NetworkManager.CLASS_ENGINEER and bot_hero.current_vehicle_id < 0:
+		for v in vehicles:
+			if v != null and is_instance_valid(v) and not v.is_destroyed and (v.team == bot_hero.team or v.team == -1):
+				if v.hp < v.max_hp or not v.is_armored:
+					var v_pos: Vector3 = v.global_position if v.is_inside_tree() else v.position
+					var d_v: float = v_pos.distance_to(bot_pos_for_veh)
+					if d_v <= eng_support_dist:
+						eng_support_dist = d_v
+						eng_support_veh = v
 
 	if target_enemy != null:
 		if target_enemy.entity_id != _engaged_target_id:
@@ -178,6 +189,19 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 				cmd.selected_weapon_slot = 1
 				max_fire_dist = 40.0
 				preferred_engage_dist = 12.0
+		elif bot_hero.class_id == NetworkManager.CLASS_ENGINEER and not bot_hero.weapons.is_empty():
+			if dist <= 3.5 and bot_hero.weapons.size() > 2:
+				cmd.selected_weapon_slot = 2 # Welding Torch melee/burn
+				max_fire_dist = 3.6
+				preferred_engage_dist = 2.5
+			elif dist <= 16.0 and bot_hero.weapons.size() > 1:
+				cmd.selected_weapon_slot = 1 # Shotgun
+				max_fire_dist = 24.0
+				preferred_engage_dist = 10.0
+			else:
+				cmd.selected_weapon_slot = 0 # Dual Revolvers / Dual Pistols
+				max_fire_dist = 55.0
+				preferred_engage_dist = 18.0
 
 		var flat_dir := Vector3(to_enemy.x, 0.0, to_enemy.z)
 		if flat_dir.length_squared() > 0.001:
@@ -208,6 +232,8 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			cmd.set_button(InputCmd.BTN_SKILL_5, near_enemy_veh or (can_fire and (_ai_tick % 300) == 0)) # Vehicle Buster
 			if cmd.selected_weapon_slot == 1 and (_ai_tick % 36) == 0:
 				cmd.set_button(InputCmd.BTN_AIM, true) # Detonate Trapper stickies when armed
+		elif bot_hero.class_id == NetworkManager.CLASS_ENGINEER:
+			_apply_engineer_skill_triggers(cmd, dist, can_fire, eng_support_veh, eng_support_dist)
 		else:
 			cmd.set_button(InputCmd.BTN_SKILL_2, can_fire and (_ai_tick % 180) == 0)
 			cmd.set_button(InputCmd.BTN_SKILL_3, can_fire and (_ai_tick % 240) == 0)
@@ -235,29 +261,80 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			_engaged_target_id = -1
 			_reaction_timer = 0.0
 
-		var bot_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
-		var to_obj: Vector3 = move_target - bot_pos
-		var flat := Vector3(to_obj.x, 0.0, to_obj.z)
-		if flat.length() > 3.5:
-			cmd.aim_yaw = atan2(-flat.x, -flat.z)
-			cmd.aim_pitch = -0.05
-			cmd.move_dir = Vector2(0.0, -1.0)
-		else:
-			cmd.move_dir = Vector2(_strafe_dir * 0.5, 0.0)
+		var welding_ally_veh: bool = false
+		if bot_hero.class_id == NetworkManager.CLASS_ENGINEER:
+			if _memory_timer > 0.0 and bot_hero.hp < int(float(bot_hero.max_hp) * 0.45):
+				cmd.set_button(InputCmd.BTN_SKILL_5, true) # Invulnerability under fire
+			if eng_support_veh != null:
+				var v_pos: Vector3 = eng_support_veh.global_position if eng_support_veh.is_inside_tree() else eng_support_veh.position
+				if eng_support_dist <= 7.0 and not eng_support_veh.is_armored:
+					cmd.set_button(InputCmd.BTN_SKILL_3, true) # Blindar Veículo
+				if eng_support_dist <= 3.6 and eng_support_veh.hp < eng_support_veh.max_hp and bot_hero.weapons.size() > 2:
+					welding_ally_veh = true
+					cmd.selected_weapon_slot = 2 # Welding Torch
+					cmd.set_button(InputCmd.BTN_FIRE, true)
+					var to_v: Vector3 = (v_pos + Vector3(0.0, 0.8, 0.0)) - (bot_pos_for_veh + Vector3(0.0, LOS_EYE_HEIGHT, 0.0))
+					var flat_v := Vector3(to_v.x, 0.0, to_v.z)
+					if flat_v.length_squared() > 0.001:
+						cmd.aim_yaw = atan2(-flat_v.x, -flat_v.z)
+						cmd.aim_pitch = clampf(atan2(to_v.y, flat_v.length()), -1.1, 1.1)
+					cmd.move_dir = Vector2.ZERO
+				elif eng_support_veh.hp < eng_support_veh.max_hp or not eng_support_veh.is_armored:
+					move_target = v_pos
 
-		# Periodically hop into an unoccupied nearby ground/water vehicle when far from flag
-		if _engaged_target_id < 0 and bot_hero.current_vehicle_id < 0 and flat.length() > 55.0 and (_ai_tick % 120) == 0:
-			for v in vehicles:
-				if not v.is_destroyed and v.vehicle_type != VehicleBase.VehicleType.PLANE:
-					if v.global_position.distance_to(bot_pos) <= 5.0:
-						cmd.set_button(InputCmd.BTN_INTERACT, true)
-						break
+		if not welding_ally_veh:
+			var bot_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
+			var to_obj: Vector3 = move_target - bot_pos
+			var flat := Vector3(to_obj.x, 0.0, to_obj.z)
+			if flat.length() > 3.5:
+				cmd.aim_yaw = atan2(-flat.x, -flat.z)
+				cmd.aim_pitch = -0.05
+				cmd.move_dir = Vector2(0.0, -1.0)
+			else:
+				cmd.move_dir = Vector2(_strafe_dir * 0.5, 0.0)
+
+			# Periodically hop into an unoccupied nearby ground/water vehicle when far from flag
+			if _engaged_target_id < 0 and bot_hero.current_vehicle_id < 0 and flat.length() > 55.0 and (_ai_tick % 120) == 0:
+				for v in vehicles:
+					if not v.is_destroyed and v.vehicle_type != VehicleBase.VehicleType.PLANE:
+						if v.global_position.distance_to(bot_pos) <= 5.0:
+							cmd.set_button(InputCmd.BTN_INTERACT, true)
+							break
 
 	# Parachute automatically if falling high
 	if not bot_hero.is_on_floor() and bot_hero.velocity.y < -6.5 and not bot_hero.is_parachuting:
 		cmd.set_button(InputCmd.BTN_JUMP, (_ai_tick % 2) == 0)
 
 	return cmd
+
+
+func _apply_engineer_skill_triggers(
+	cmd: InputCmd,
+	dist: float,
+	can_fire: bool,
+	eng_support_veh: VehicleBase,
+	eng_support_dist: float
+) -> void:
+	if bot_hero.hp < int(float(bot_hero.max_hp) * 0.45):
+		cmd.set_button(InputCmd.BTN_SKILL_5, true) # Skill 4: Invulnerability when low HP under fire
+	var eng_sm: EngineerSkills = bot_hero.skill_manager as EngineerSkills
+	var is_building_now: bool = eng_sm != null and eng_sm.is_building()
+	if is_building_now:
+		return
+	var can_armor_veh: bool = (bot_hero.current_vehicle_id >= 0) or (eng_support_veh != null and eng_support_dist <= 7.0 and not eng_support_veh.is_armored)
+	if can_armor_veh and (eng_sm == null or eng_sm.skill_cooldowns[2] <= 0.0):
+		cmd.set_button(InputCmd.BTN_SKILL_3, true) # Skill 2: Armor nearby/occupied vehicle
+		return
+	if bot_hero.current_vehicle_id >= 0:
+		return
+	if can_fire and (eng_sm == null and (_ai_tick % 30) == 0 or (eng_sm != null and eng_sm.skill_cooldowns[3] <= 0.0)):
+		cmd.set_button(InputCmd.BTN_SKILL_4, true) # Skill 3: Bot Mortar strike
+		return
+	if can_fire and dist < 35.0 and (eng_sm == null and (_ai_tick % 45) == 0 or (eng_sm != null and eng_sm.skill_cooldowns[1] <= 0.0 and eng_sm._active_turret == null)):
+		cmd.set_button(InputCmd.BTN_SKILL_2, true) # Skill 1: Shielded MG Turret
+		return
+	if (can_fire or dist > 12.0) and (eng_sm == null and (_ai_tick % 60) == 0 or (eng_sm != null and eng_sm.skill_cooldowns[0] <= 0.0 and eng_sm._active_trench == null)):
+		cmd.set_button(InputCmd.BTN_SKILL_1, true) # Skill 0: Trench
 
 
 func _pick_objective(capture_points: Array[CapturePoint]) -> void:

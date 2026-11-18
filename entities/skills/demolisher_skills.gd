@@ -533,6 +533,8 @@ func _execute_class_skill(slot_idx: int, _rank: int, cmd: InputCmd, context: Dic
 
 	match slot_idx:
 		0: # Escudo Balístico (Em Mãos): equips carried 150 HP frontal shield + STICK_GRENADE (slot 2)
+			if owner_hero.current_vehicle_id >= 0:
+				return false
 			if owner_hero.status_effects.carried_shield_active:
 				owner_hero.status_effects.deactivate_carried_shield(true)
 				return false

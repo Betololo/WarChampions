@@ -1189,6 +1189,8 @@ func _animate_character(delta: float) -> void:
 	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, 14.0 * delta)
 
 	if is_parachuting:
+		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+			_held_riot_shield.visible = false
 		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, 0.35, 10.0 * delta)
 		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.25, 10.0 * delta)
 		if _calf_l_pivot != null:
@@ -1202,6 +1204,8 @@ func _animate_character(delta: float) -> void:
 		_torso_pivot.rotation.x = 0.12
 		_torso_pivot.rotation.y = 0.0
 	elif is_emoting:
+		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+			_held_riot_shield.visible = false
 		emote_timer += delta
 		_leg_l_pivot.rotation.x = 0.0
 		_leg_r_pivot.rotation.x = 0.0
@@ -1393,7 +1397,7 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 
 	var cycle_p: float = _weapon_cycle_progress
 	var reload_p: float = _weapon_reload_progress
-	var shield_up: bool = is_carried_shield_active()
+	var shield_up: bool = is_carried_shield_active() and not is_parachuting and not is_emoting and _shown_weapon_kind != -99
 
 	if _held_weapon_root != null:
 		var custom_right_target: bool = false
