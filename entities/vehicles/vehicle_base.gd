@@ -518,11 +518,8 @@ func attach_engineer_armor_visuals() -> void:
 	get_cached_visual_meshes()
 
 
-func _respawn_vehicle() -> void:
-	if is_deployable:
-		return
-	is_destroyed = false
-	is_marked = false
+func _clear_engineer_armor() -> void:
+	var had_armor_nodes: bool = _armor_plates_root != null
 	is_armored = false
 	if _base_max_hp > 0:
 		max_hp = _base_max_hp
@@ -530,9 +527,18 @@ func _respawn_vehicle() -> void:
 		if _armor_plates_root.get_parent() != null:
 			_armor_plates_root.get_parent().remove_child(_armor_plates_root)
 		_armor_plates_root.queue_free()
-		_armor_plates_root = null
+	_armor_plates_root = null
+	if had_armor_nodes:
 		_cached_visual_meshes.clear()
 		get_cached_visual_meshes()
+
+
+func _respawn_vehicle() -> void:
+	if is_deployable:
+		return
+	is_destroyed = false
+	is_marked = false
+	_clear_engineer_armor()
 	marked_timer = 0.0
 	_respawn_timer = 0.0
 	_last_xray_state = -1
@@ -887,9 +893,12 @@ func _process(delta: float) -> void:
 
 
 func push_remote_snapshot(server_tick: int, server_time_ms: float, snap: Dictionary) -> void:
+	var was_destroyed: bool = is_destroyed
 	hp = int(snap.get("hp", hp))
 	is_marked = bool(snap.get("marked", false))
 	is_destroyed = (hp <= 0)
+	if was_destroyed and not is_destroyed:
+		_clear_engineer_armor()
 	visible = hp > 0
 	collision_layer = 8 if not is_destroyed else 0
 	snapshot_interpolator.push_snapshot(

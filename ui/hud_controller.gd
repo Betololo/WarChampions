@@ -214,6 +214,36 @@ class _TacticalMinimapControl extends Control:
 		draw_colored_polygon(outer, border)
 		draw_colored_polygon(inner, fill)
 
+	func get_visible_structure_markers() -> Array[Dictionary]:
+		var markers: Array[Dictionary] = []
+		if hud_owner == null or not hud_owner.is_inside_tree():
+			return markers
+		var local_hero: HeroCharacter = hud_owner._local_hero
+		var local_team: int = local_hero.team if (local_hero != null and is_instance_valid(local_hero)) else NetworkManager.TEAM_ROYAL
+		var local_pos: Vector3 = local_hero.global_position if (local_hero != null and is_instance_valid(local_hero) and local_hero.is_inside_tree()) else Vector3.ZERO
+		var has_local_pos: bool = (local_hero != null and is_instance_valid(local_hero))
+		for grp_name in ["armor_kits", "trenches", "client_trenches", "deployed_turrets"]:
+			for node in hud_owner.get_tree().get_nodes_in_group(grp_name):
+				if not (node is Node3D) or not is_instance_valid(node) or node.is_queued_for_deletion() or bool(node.get("is_destroyed")):
+					continue
+				var n3 := node as Node3D
+				var n_pos: Vector3 = n3.global_position if n3.is_inside_tree() else n3.position
+				var raw_team: Variant = n3.get("team")
+				if raw_team == null or (raw_team is int and int(raw_team) < 0):
+					var alt_team: Variant = n3.get("owner_team")
+					if alt_team != null:
+						raw_team = alt_team
+				var n_team: int = int(raw_team) if raw_team != null else -1
+				var near_local: bool = has_local_pos and n_pos.distance_to(local_pos) <= 45.0
+				if n_team != local_team and not near_local:
+					continue
+				markers.append({
+					"group": grp_name,
+					"pos": world_to_minimap(n_pos),
+					"team": n_team,
+				})
+		return markers
+
 	func _draw() -> void:
 		var s: Vector2 = _get_effective_size()
 		var proj: Dictionary = _get_projection_params()
@@ -300,31 +330,16 @@ class _TacticalMinimapControl extends Control:
 				if font != null:
 					draw_string(font, mp + Vector2(-3.5 if not mortar_active else -4.5, 3.5 if not mortar_active else 4.5), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz, Color.WHITE)
 
-		# 6. Structures (ArmorKit, Trench, Turret) when allied or nearby
-		if hud_owner.is_inside_tree():
-			var local_pos: Vector3 = local_hero.global_position if (local_hero != null and is_instance_valid(local_hero) and local_hero.is_inside_tree()) else Vector3.ZERO
-			var has_local_pos: bool = (local_hero != null and is_instance_valid(local_hero))
-			for grp_name in ["armor_kits", "trenches", "turrets"]:
-				for node in hud_owner.get_tree().get_nodes_in_group(grp_name):
-					if not (node is Node3D) or not is_instance_valid(node) or node.is_queued_for_deletion():
-						continue
-					var n3 := node as Node3D
-					var n_pos: Vector3 = n3.global_position if n3.is_inside_tree() else n3.position
-					var raw_team: Variant = n3.get("owner_team")
-					if raw_team == null:
-						raw_team = n3.get("team")
-					var n_team: int = int(raw_team) if raw_team != null else -1
-					var near_local: bool = has_local_pos and n_pos.distance_to(local_pos) <= 45.0
-					if n_team != local_team and not near_local:
-						continue
-					var sp: Vector2 = world_to_minimap(n_pos)
-					var s_col: Color = Color(0.32, 0.90, 0.96) if grp_name == "armor_kits" else (Color(0.86, 0.72, 0.36) if grp_name == "trenches" else Color(0.98, 0.62, 0.22))
-					if grp_name == "turrets":
-						_draw_diamond(sp, 3.2, s_col, Color(0.05, 0.06, 0.08))
-					elif grp_name == "trenches":
-						draw_rect(Rect2(sp - Vector2(3.5, 1.5), Vector2(7.0, 3.0)), s_col)
-					else:
-						draw_rect(Rect2(sp - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), s_col)
+		# 6. Structures (ArmorKit, Trench, Client Trench, Deployed Turret) when allied or nearby
+		for m in get_visible_structure_markers():
+			var grp_name: String = str(m["group"])
+			var sp: Vector2 = m["pos"] as Vector2
+			if grp_name == "deployed_turrets":
+				_draw_diamond(sp, 3.2, Color(0.98, 0.62, 0.22), Color(0.05, 0.06, 0.08))
+			elif grp_name == "trenches" or grp_name == "client_trenches":
+				draw_rect(Rect2(sp - Vector2(3.5, 1.5), Vector2(7.0, 3.0)), Color(0.86, 0.72, 0.36))
+			else:
+				draw_rect(Rect2(sp - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), Color(0.32, 0.90, 0.96))
 
 		# 7. Vehicles (allied, neutral, occupied by ally, marked, or sensed)
 		for v in hud_owner._vehicles_ref:

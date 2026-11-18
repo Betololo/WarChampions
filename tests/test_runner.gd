@@ -9199,3 +9199,98 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 	game.queue_free()
 	arena.queue_free()
 	await _flush_deferred()
+
+	# 5. Final fix-wave regressions: minimap client_trenches/deployed_turrets markers & client vehicle armor clear on respawn
+	var reg_arena := Node3D.new()
+	add_child(reg_arena)
+
+	var reg_hero := HeroCharacter.new()
+	reg_hero.setup_identity(12590, "RegMinimap", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_ENGINEER, 0, false, false)
+	reg_arena.add_child(reg_hero)
+
+	var reg_hud := HUDController.new()
+	reg_arena.add_child(reg_hud)
+	reg_hud.set_local_hero(reg_hero)
+
+	var cli_trench := EngineerSkills.TrenchEntity.new()
+	cli_trench._is_visual_only = true
+	cli_trench.team = NetworkManager.TEAM_NATIONAL
+	cli_trench.position = Vector3(120.0, 0.0, -80.0)
+	reg_arena.add_child(cli_trench)
+
+	var cli_turret := VehicleShieldedMG.new()
+	cli_turret.id = 12592
+	cli_turret.team = NetworkManager.TEAM_NATIONAL
+	cli_turret.position = Vector3(-140.0, 0.0, 95.0)
+	reg_arena.add_child(cli_turret)
+
+	reg_hud._minimap.queue_redraw()
+	await get_tree().process_frame
+
+	var markers: Array[Dictionary] = reg_hud._minimap.get_visible_structure_markers()
+	var has_cli_trench_marker: bool = false
+	var has_turret_marker: bool = false
+	for m in markers:
+		var grp: String = str(m.get("group", ""))
+		if grp == "client_trenches":
+			has_cli_trench_marker = true
+		elif grp == "deployed_turrets":
+			has_turret_marker = true
+
+	cli_trench.queue_free()
+	var markers_after_free: Array[Dictionary] = reg_hud._minimap.get_visible_structure_markers()
+	var freed_trench_skipped: bool = true
+	for m2 in markers_after_free:
+		if str(m2.get("group", "")) == "client_trenches":
+			freed_trench_skipped = false
+			break
+
+	var reg_jeep := VehicleJeep.new()
+	reg_jeep.id = 12591
+	reg_jeep.team = NetworkManager.TEAM_ROYAL
+	reg_arena.add_child(reg_jeep)
+	var base_jeep_hp: int = reg_jeep._base_max_hp
+	var armor_applied_ok: bool = reg_jeep.apply_engineer_armor()
+	reg_jeep.attach_engineer_armor_visuals()
+	var armor_pre_ok: bool = (
+		armor_applied_ok
+		and reg_jeep.is_armored
+		and reg_jeep.max_hp == base_jeep_hp * 2
+		and reg_jeep._armor_plates_root != null
+		and is_instance_valid(reg_jeep._armor_plates_root)
+	)
+	reg_jeep.push_remote_snapshot(10, 1000.0, {
+		"hp": 0,
+		"pos": Vector3.ZERO,
+		"rot": Quaternion.IDENTITY,
+		"vel": Vector3.ZERO,
+		"turret_yaw": 0.0,
+		"marked": false,
+	})
+	var snap_destroyed_ok: bool = reg_jeep.is_destroyed
+	reg_jeep.push_remote_snapshot(11, 1050.0, {
+		"hp": base_jeep_hp,
+		"pos": Vector3.ZERO,
+		"rot": Quaternion.IDENTITY,
+		"vel": Vector3.ZERO,
+		"turret_yaw": 0.0,
+		"marked": false,
+	})
+	var snap_respawn_armor_cleared_ok: bool = (
+		not reg_jeep.is_destroyed
+		and not reg_jeep.is_armored
+		and reg_jeep.max_hp == base_jeep_hp
+		and reg_jeep._armor_plates_root == null
+	)
+
+	_assert(
+		has_cli_trench_marker and has_turret_marker and freed_trench_skipped
+		and armor_pre_ok and snap_destroyed_ok and snap_respawn_armor_cleared_ok,
+		"Phase 12.5e: Minimap client_trenches/deployed_turrets markers (%s,%s,%s) & client VehicleBase armor clear on respawn (%s,%s,%s)" % [
+			str(has_cli_trench_marker), str(has_turret_marker), str(freed_trench_skipped),
+			str(armor_pre_ok), str(snap_destroyed_ok), str(snap_respawn_armor_cleared_ok)
+		]
+	)
+
+	reg_arena.queue_free()
+	await _flush_deferred()
