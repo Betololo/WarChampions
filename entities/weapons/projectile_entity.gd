@@ -401,7 +401,23 @@ func apply_damage_server(amount: int, attacker_id: int, _dir: Vector3, _hit_pos:
 		_detonate()
 
 
-func _is_target_vehicle(collider: Object) -> bool:
+func _is_target_vehicle_node(veh: VehicleBase, shooter_vehicle_id: int = -1) -> bool:
+	if veh == null or veh.is_destroyed:
+		return false
+	if shooter_vehicle_id >= 0 and veh.id == shooter_vehicle_id:
+		return false
+	if veh.team < 0 or veh.team != owner_team:
+		return true
+	var heroes_map: Dictionary = _context.get("heroes_by_id", {})
+	for s in veh.seats:
+		if s.occupant_id >= 0:
+			var occ: HeroCharacter = heroes_map.get(s.occupant_id, null) as HeroCharacter
+			if occ != null and not occ.is_defeated and occ.team != owner_team:
+				return true
+	return false
+
+
+func _is_target_vehicle(collider: Object, shooter_vehicle_id: int = -1) -> bool:
 	if not (collider is Node):
 		return false
 	var n: Node = collider as Node
@@ -413,9 +429,7 @@ func _is_target_vehicle(collider: Object) -> bool:
 	elif n.is_in_group("vehicles"):
 		return true
 	if veh != null:
-		if veh.team >= 0 and veh.team == owner_team:
-			return false
-		return true
+		return _is_target_vehicle_node(veh, shooter_vehicle_id)
 	return false
 
 
@@ -456,13 +470,21 @@ func _physics_process(delta: float) -> void:
 		var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 		var heroes_map: Dictionary = _context.get("heroes_by_id", {})
 		var shooter_excl: Array[RID] = []
+		var shooter_vehicle_id: int = -1
 		var shooter_var: Variant = heroes_map.get(owner_id, null)
 		if shooter_var != null and is_instance_valid(shooter_var) and shooter_var is HeroCharacter:
-			shooter_excl.append((shooter_var as HeroCharacter).get_rid())
+			var shooter_h: HeroCharacter = shooter_var as HeroCharacter
+			shooter_excl.append(shooter_h.get_rid())
+			shooter_vehicle_id = shooter_h.current_vehicle_id
+			if shooter_vehicle_id >= 0:
+				for v_own in get_tree().get_nodes_in_group("vehicles"):
+					if v_own is VehicleBase and (v_own as VehicleBase).id == shooter_vehicle_id:
+						shooter_excl.append((v_own as CollisionObject3D).get_rid())
 
-		# Fire Breath (FIREBALL) capsule sweep against living enemy heroes & enemy vehicles
-		if not is_visual_only and kind == ProjectileKind.FIREBALL:
-			const FIREBALL_PROXIMITY_R: float = 0.62
+		# Direct hero & vehicle contact proximity sweep for FIREBALL, BOUNCE_GRENADE, and CANNON_BALL
+		if not is_visual_only and (kind == ProjectileKind.FIREBALL or kind == ProjectileKind.BOUNCE_GRENADE or kind == ProjectileKind.CANNON_BALL):
+			var hero_prox_r: float = 0.62 if kind == ProjectileKind.FIREBALL else 0.42
+			var hull_aabb := AABB(Vector3(-1.8, -0.8, -3.0), Vector3(3.6, 3.6, 6.0))
 			var best_dist_sq: float = INF
 			var best_contact: Vector3 = Vector3.ZERO
 			var best_veh_rid: RID = RID()
@@ -477,6 +499,8 @@ func _physics_process(delta: float) -> void:
 					continue
 				if h.current_vehicle_id >= 0 and h.current_seat_enclosed:
 					continue
+				if kind == ProjectileKind.FIREBALL and (h.is_in_water or (h.status_effects != null and h.status_effects.fire_immunity_timer > 0.0)):
+					continue
 				var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
 				var closest: PackedVector3Array = Geometry3D.get_closest_points_between_segments(
 					global_position, next_pos,
@@ -484,7 +508,7 @@ func _physics_process(delta: float) -> void:
 				)
 				var seg_pt: Vector3 = closest[0]
 				var cap_pt: Vector3 = closest[1]
-				if seg_pt.distance_to(cap_pt) <= FIREBALL_PROXIMITY_R + h.capsule_radius * 0.4:
+				if seg_pt.distance_to(cap_pt) <= hero_prox_r + h.capsule_radius * 0.4:
 					var d_sq: float = global_position.distance_squared_to(seg_pt)
 					if d_sq < best_dist_sq:
 						best_dist_sq = d_sq
@@ -496,18 +520,43 @@ func _physics_process(delta: float) -> void:
 				if not (v is Node3D):
 					continue
 				if v is VehicleBase:
-					var vb: VehicleBase = v as VehicleBase
-					if vb.is_destroyed or (vb.team >= 0 and vb.team == owner_team):
+					if not _is_target_vehicle_node(v as VehicleBase, shooter_vehicle_id):
 						continue
-				var v_pos: Vector3 = (v as Node3D).global_position + Vector3(0.0, 0.85, 0.0)
-				var seg_v: Vector3 = Geometry3D.get_closest_point_to_segment(v_pos, global_position, next_pos)
-				if seg_v.distance_to(v_pos) <= 1.3:
-					var d_sq_v: float = global_position.distance_squared_to(seg_v)
-					if d_sq_v < best_dist_sq:
-						best_dist_sq = d_sq_v
-						best_contact = seg_v
-						best_veh_rid = (v as CollisionObject3D).get_rid() if v is CollisionObject3D else RID()
-						has_contact = true
+					var vb: VehicleBase = v as VehicleBase
+					var v_xform: Transform3D = vb.global_transform
+					var v_inv: Transform3D = v_xform.affine_inverse()
+					var local_start: Vector3 = v_inv * global_position
+					var local_end: Vector3 = v_inv * next_pos
+					var contact_pt: Vector3 = Vector3.ZERO
+					var hit_v: bool = false
+					if hull_aabb.has_point(local_start):
+						contact_pt = global_position
+						hit_v = true
+					elif hull_aabb.has_point(local_end):
+						contact_pt = next_pos
+						hit_v = true
+					else:
+						var hit_local: Variant = hull_aabb.intersects_segment(local_start, local_end)
+						if hit_local is Vector3:
+							contact_pt = v_xform * (hit_local as Vector3)
+							hit_v = true
+					if hit_v:
+						var d_sq_v: float = global_position.distance_squared_to(contact_pt)
+						if d_sq_v < best_dist_sq:
+							best_dist_sq = d_sq_v
+							best_contact = contact_pt
+							best_veh_rid = vb.get_rid()
+							has_contact = true
+				else:
+					var v_pos: Vector3 = (v as Node3D).global_position + Vector3(0.0, 0.85, 0.0)
+					var seg_v: Vector3 = Geometry3D.get_closest_point_to_segment(v_pos, global_position, next_pos)
+					if seg_v.distance_to(v_pos) <= 1.3:
+						var d_sq_v2: float = global_position.distance_squared_to(seg_v)
+						if d_sq_v2 < best_dist_sq:
+							best_dist_sq = d_sq_v2
+							best_contact = seg_v
+							best_veh_rid = (v as CollisionObject3D).get_rid() if v is CollisionObject3D else RID()
+							has_contact = true
 
 			if has_contact:
 				var wall_blocked: bool = false
@@ -516,6 +565,7 @@ func _physics_process(delta: float) -> void:
 					if best_veh_rid.is_valid():
 						occ_excl.append(best_veh_rid)
 					var occ_q := PhysicsRayQueryParameters3D.create(global_position, best_contact, 1, occ_excl)
+					occ_q.hit_from_inside = true
 					if not space.intersect_ray(occ_q).is_empty():
 						wall_blocked = true
 				if not wall_blocked:
@@ -526,6 +576,7 @@ func _physics_process(delta: float) -> void:
 		if space != null:
 			var mask: int = (1 | 8 | 64) if is_visual_only else (1 | 2 | 8 | 64)
 			var query := PhysicsRayQueryParameters3D.create(global_position, next_pos, mask)
+			query.hit_from_inside = true
 			if not shooter_excl.is_empty():
 				query.exclude = shooter_excl
 			var res: Dictionary = space.intersect_ray(query)
@@ -534,7 +585,7 @@ func _physics_process(delta: float) -> void:
 				var hit_normal: Vector3 = res.get("normal", Vector3.UP)
 				var collider: Object = res.get("collider", null)
 				var hit_enemy_hero: bool = (not is_visual_only) and (collider is HeroCharacter and (collider as HeroCharacter).team != owner_team)
-				var hit_vehicle: bool = _is_target_vehicle(collider)
+				var hit_vehicle: bool = _is_target_vehicle(collider, shooter_vehicle_id)
 				if kind == ProjectileKind.TNT_SATCHEL and not hit_enemy_hero:
 					_stick_to_surface(hit_pos, hit_normal, collider)
 					return
@@ -553,7 +604,7 @@ func _physics_process(delta: float) -> void:
 					if kind == ProjectileKind.BOUNCE_GRENADE:
 						if not _bounce_fuse_started and not (collider is HeroCharacter):
 							_bounce_fuse_started = true
-							lifetime = minf(lifetime, 2.0)
+							lifetime = minf(lifetime, 1.0)
 						global_position = hit_pos + hit_normal * 0.06
 						velocity = velocity.bounce(hit_normal) * bounce_restitution
 						if hit_normal.y >= 0.45:
@@ -722,7 +773,7 @@ func _detonate() -> void:
 			if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("get_vehicle_damage_mult"):
 				veh_mult = float(attacker_h.status_effects.get_vehicle_damage_mult())
 			for v in get_tree().get_nodes_in_group("vehicles"):
-				if v is VehicleBase and (v as VehicleBase).team >= 0 and (v as VehicleBase).team == owner_team:
+				if v is VehicleBase and not _is_target_vehicle_node(v as VehicleBase):
 					continue
 				if v is Node3D and v.has_method("apply_damage_server"):
 					var vdist: float = (v as Node3D).global_position.distance_to(global_position)

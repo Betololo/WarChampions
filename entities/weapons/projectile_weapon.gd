@@ -92,7 +92,8 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var dir: Vector3 = apply_spread(aim["dir"] as Vector3)
 	var origin: Vector3 = aim_origin + dir * 0.55
 	if space_state != null:
-		var spawn_q := PhysicsRayQueryParameters3D.create(aim_origin, aim_origin + dir * 0.75, 1)
+		var spawn_mask: int = (1 | 8) if owner_hero.current_vehicle_id < 0 else 1
+		var spawn_q := PhysicsRayQueryParameters3D.create(aim_origin, aim_origin + dir * 0.75, spawn_mask)
 		spawn_q.exclude = [owner_hero.get_rid()]
 		var spawn_hit: Dictionary = space_state.intersect_ray(spawn_q)
 		if not spawn_hit.is_empty():

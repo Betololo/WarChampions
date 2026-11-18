@@ -77,7 +77,7 @@ func start_stealth_exit_cooldown() -> void:
 		skill_activated.emit(0, skill_cooldowns[0])
 
 
-func step_server(delta: float, cmd: InputCmd, context: Dictionary) -> void:
+func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_skills: bool = true) -> void:
 	var n_skills: int = mini(skill_ranks.size(), SKILL_BUTTON_FLAGS.size())
 	for i in range(n_skills):
 		if skill_cooldowns[i] > 0.0:
@@ -86,19 +86,24 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary) -> void:
 		if widget_cooldowns[j] > 0.0:
 			widget_cooldowns[j] = maxf(0.0, widget_cooldowns[j] - delta)
 
-	if owner_hero == null or owner_hero.is_defeated:
+	if owner_hero == null or owner_hero.is_defeated or cmd == null:
+		_prev_skill_btns = 0
+		_prev_widget_btns = 0
 		return
 
-	var next_skill_btns: int = 0
-	for i in range(n_skills):
-		var flag: int = SKILL_BUTTON_FLAGS[i]
-		var pressed: bool = cmd.has_button(flag)
-		var was_pressed: bool = (_prev_skill_btns & flag) != 0
-		if pressed:
-			next_skill_btns |= flag
-			if not was_pressed:
-				try_activate_skill(i, cmd, context)
-	_prev_skill_btns = next_skill_btns
+	if allow_class_skills:
+		var next_skill_btns: int = 0
+		for i in range(n_skills):
+			var flag: int = SKILL_BUTTON_FLAGS[i]
+			var pressed: bool = cmd.has_button(flag)
+			var was_pressed: bool = (_prev_skill_btns & flag) != 0
+			if pressed:
+				next_skill_btns |= flag
+				if not was_pressed:
+					try_activate_skill(i, cmd, context)
+		_prev_skill_btns = next_skill_btns
+	else:
+		_prev_skill_btns = 0
 
 	var next_widget_btns: int = 0
 	for j in range(4):
@@ -200,12 +205,12 @@ func _repair_nearest_vehicle(context: Dictionary) -> bool:
 	for v in vehicles:
 		if not (v is Node3D) or not v.has_method("repair_server"):
 			continue
+		if owner_hero.current_vehicle_id >= 0 and int(v.get("id")) == owner_hero.current_vehicle_id:
+			best_v = v
+			break
 		var v_team: int = int(v.get("team"))
 		if v_team != -1 and v_team != owner_hero.team:
 			continue
-		if int(v.get("id")) == owner_hero.current_vehicle_id:
-			best_v = v
-			break
 		var d: float = (v as Node3D).global_position.distance_to(owner_hero.global_position)
 		if d <= best_dist:
 			best_dist = d

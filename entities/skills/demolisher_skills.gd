@@ -27,7 +27,7 @@ func blocks_weapon_fire() -> bool:
 	return owner_hero != null and owner_hero.status_effects != null and owner_hero.status_effects.tnt_rope_active
 
 
-func step_server(delta: float, cmd: InputCmd, context: Dictionary) -> void:
+func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_skills: bool = true) -> void:
 	if _suppress_fire_until_release and (cmd == null or not cmd.has_button(InputCmd.BTN_FIRE)):
 		_suppress_fire_until_release = false
 
@@ -38,9 +38,9 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary) -> void:
 		and owner_hero.status_effects.tnt_rope_active
 	)
 
-	super.step_server(delta, cmd, context)
+	super.step_server(delta, cmd, context, allow_class_skills)
 
-	if owner_hero == null or owner_hero.is_defeated or owner_hero.status_effects == null:
+	if not allow_class_skills or owner_hero == null or owner_hero.is_defeated or owner_hero.status_effects == null:
 		_prev_tnt_fire_held = false
 		_suppress_fire_until_release = false
 		return

@@ -51,6 +51,7 @@ func _ready() -> void:
 	await _test_phase11_final_fix_wave()
 	await _test_phase11_polish_task7()
 	await _test_phase11_polish_task8()
+	await _test_phase12_task1_fixes()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6077,9 +6078,9 @@ func _test_phase11_task3_crosshair_and_animations() -> void:
 		and bot_bar != null and bot_bar.visible
 		and left_bar != null and left_bar.visible
 		and right_bar != null and right_bar.visible
-		and bot_fill != null and bot_fill.color.r >= 0.72 and bot_fill.color.r <= 0.85 and absf(bot_fill.color.r - bot_fill.color.b) < 0.08
-		and left_fill != null and left_fill.color.r >= 0.72 and left_fill.color.r <= 0.85
-		and right_fill != null and right_fill.color.r >= 0.72 and right_fill.color.r <= 0.85
+		and bot_fill != null and bot_fill.color.r >= 0.92 and absf(bot_fill.color.r - bot_fill.color.b) < 0.08
+		and left_fill != null and left_fill.color.r >= 0.92
+		and right_fill != null and right_fill.color.r >= 0.92
 	)
 
 	var tick_names: PackedStringArray = PackedStringArray(["HitDiagTL", "HitDiagTR", "HitDiagBL", "HitDiagBR"])
@@ -6133,7 +6134,7 @@ func _test_phase11_task3_crosshair_and_animations() -> void:
 
 	_assert(
 		gray_arms_ok and ticks_ok and norm_ok and crit_ok and kill_ok and kill_ev_ok,
-		"Phase 11.3a: COD-style gray Bottom/Left/Right crosshair, 4 diagonal hitmarker ticks around center gap, and gray/red/white hit/crit/kill colors"
+		"Phase 11.3a: COD-style high-contrast Bottom/Left/Right crosshair, 4 diagonal hitmarker ticks around center gap, and gray/red/white hit/crit/kill colors"
 	)
 
 	# 2. Verify all 3 archetypes of Shotgun/Bazooka/Sniper name animated sub-parts
@@ -6278,9 +6279,9 @@ func _test_phase11_task4_demolisher() -> void:
 	var fw0 := HitscanWeapon.new(); fw0.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 0)
 	var fw1 := HitscanWeapon.new(); fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
 	var fw2 := HitscanWeapon.new(); fw2.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 2)
-	if not (is_equal_approx(fw0.damage_max, 5.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 16.5)):
+	if not (is_equal_approx(fw0.damage_max, 10.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.ammo_per_shot == 1 and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 21.0)):
 		stats_ok = false
-	if not (is_equal_approx(fw1.damage_max, 5.0) and is_equal_approx(fw1.fire_interval, 0.05) and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 21.0)):
+	if not (is_equal_approx(fw1.damage_max, 10.0) and is_equal_approx(fw1.fire_interval, 0.25) and fw1.ammo_per_shot == 5 and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 21.0)):
 		stats_ok = false
 	if not (is_equal_approx(fw2.damage_max, 40.0) and is_equal_approx(fw2.fire_interval, 0.50) and fw2.mag_size == 100 and is_equal_approx(fw2.max_range_m, 32.0) and not fw2.is_automatic and is_equal_approx(fw2.bullet_speed_mps, 45.0)):
 		stats_ok = false
@@ -6598,7 +6599,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		"lag_compensator": lag_comp,
 	}
 
-	# 1. FlameWeapon arch 0 (Flamethrower): 10/s ammo, 5 dmg + 3.0s Afterburn, water/immunity immunity, 3x vehicle, Shield Drain
+	# 1. FlameWeapon arch 0 (Flamethrower): 10/s ammo, 10 dmg + 3.0s Afterburn, water/immunity immunity, 3x vehicle, Shield Drain
 	demo.global_position = Vector3(0.0, 0.0, 0.0)
 	enemy_a.global_position = Vector3(0.0, 0.0, -6.0)
 	enemy_water.global_position = Vector3(1.5, 0.0, -6.0)
@@ -6625,13 +6626,13 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	demo.status_effects.activate_damage_to_shield(3.0)
 	fw0.fire_server(f_cmd, ctx)
 	var flame0_hit_ok: bool = (
-		enemy_a.hp == ea_hp0 - 5
+		enemy_a.hp == ea_hp0 - 10
 		and enemy_a.status_effects.is_burning()
 		and is_equal_approx(enemy_a.status_effects.burn_timer, 3.0)
 		and enemy_water.hp == ew_hp0
 		and not enemy_water.status_effects.is_burning()
 		and ally_h.hp == al_hp0
-		and demo.shield == 5
+		and demo.shield == 10
 	)
 	# Test Layer-1 wall occlusion blocks Flamethrower
 	demo.global_position = Vector3(20.0, 0.0, 0.0)
@@ -6650,7 +6651,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		]
 	)
 
-	# 2. FlameWeapon arch 1 (Fire Starter): 20/s ammo, 5 dmg/0.1s + FirePatchEntity (6.0s, 20 entry + burn) + fire_patch_vfx
+	# 2. FlameWeapon arch 1 (Fire Starter): 20/s ammo (5 ammo / 0.25s), 10 dmg + FirePatchEntity (6.0s, 20 entry + burn) + fire_patch_vfx
 	demo.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
 	enemy_a.respawn_at(Vector3(0.0, 0.0, -10.0), 0.0)
 	enemy_a.is_in_water = false
@@ -6658,11 +6659,11 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
 	demo.add_child(fw1)
 	var fs_consumed: int = 0
-	for _i in range(20):
+	for _i in range(4):
 		if fw1.try_consume_fire(f_cmd):
 			fs_consumed += 1
-		fw1.step_timers(0.05, f_cmd)
-	var fs_ammo_ok: bool = (fs_consumed == 20 and fw1.ammo_in_mag == 80)
+		fw1.step_timers(0.25, f_cmd)
+	var fs_ammo_ok: bool = (fs_consumed == 4 and fw1.ammo_in_mag == 80)
 
 	var fp_vfx_events: Array[Dictionary] = []
 	var on_fp_evt := func(ev_type: String, payload: Dictionary) -> void:
@@ -6682,7 +6683,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		if p is DemolisherSkills.FirePatchEntity:
 			newest_fp = p as DemolisherSkills.FirePatchEntity
 	var fs_patch_ok: bool = (
-		enemy_a.hp == ea_pre_fs - 5
+		enemy_a.hp == ea_pre_fs - 10
 		and enemy_a.status_effects.is_burning()
 		and spawned_patches.size() == pre_fp_nodes + 1
 		and newest_fp != null
@@ -6697,7 +6698,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		newest_fp.queue_free()
 	NetworkManager.game_event_received.disconnect(on_fp_evt)
 	fw1.queue_free()
-	_assert(fs_ammo_ok and fs_patch_ok, "Phase 11.5b: FlameWeapon arch 1 Fire Starter (20/s ammo, 5 dmg + FirePatchEntity 6s / 20 entry dmg + fire_patch_vfx)")
+	_assert(fs_ammo_ok and fs_patch_ok, "Phase 11.5b: FlameWeapon arch 1 Fire Starter (20/s ammo = 5/0.25s, 10 dmg + FirePatchEntity 6s / 20 entry dmg + fire_patch_vfx)")
 
 	# 3. FlameWeapon arch 2 (Fire Breath): FIREBALL 45 m/s, 40 dmg + 3s Afterburn, 0 dmg/0 burn in water/fire-immunity
 	enemy_a.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
@@ -6734,7 +6735,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	fw2.queue_free()
 	enemy_water.is_in_water = false
 
-	# 4. Grenade Launcher arch 0 (BOUNCE_GRENADE): 2.0s post-bounce fuse, immediate detonate on enemy hero/vehicle, distance falloff
+	# 4. Grenade Launcher arch 0 (BOUNCE_GRENADE): 1.0s post-bounce fuse, immediate detonate on enemy hero/vehicle, distance falloff
 	demo.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
 	var gl0: ProjectileWeapon = demo.weapons[1] as ProjectileWeapon
 	var b_proj := ProjectileEntity.spawn_server_projectile(
@@ -6748,11 +6749,11 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		if b_proj._bounce_fuse_started:
 			break
 		b_proj._physics_process(0.02)
-	var bounce_fuse_ok: bool = (b_proj._bounce_fuse_started and b_proj.lifetime <= 2.0 and not b_proj._exploded)
-	b_proj._physics_process(2.05)
+	var bounce_fuse_ok: bool = (b_proj._bounce_fuse_started and b_proj.lifetime <= 1.0 and not b_proj._exploded)
+	b_proj._physics_process(1.05)
 	var bounce_expire_ok: bool = b_proj._exploded
 
-	# Direct hit before 2.0s fuse detonates immediately + distance falloff
+	# Direct hit before 1.0s fuse detonates immediately + distance falloff
 	enemy_a.respawn_at(Vector3(0.0, 0.0, -3.0), 0.0)
 	enemy_water.respawn_at(Vector3(4.2, 0.0, -3.0), 0.0)
 	await get_tree().physics_frame
@@ -6773,7 +6774,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	var ew_bdmg: int = ew_b0 - enemy_water.hp
 	_assert(
 		bounce_fuse_ok and bounce_expire_ok and b_direct._exploded and ea_bdmg == 60 and ew_bdmg > 0 and ew_bdmg < ea_bdmg,
-		"Phase 11.5d: BOUNCE_GRENADE 2.0s post-bounce fuse, immediate direct hero detonate, and smooth distance falloff (%d vs %d)" % [ea_bdmg, ew_bdmg]
+		"Phase 11.5d: BOUNCE_GRENADE 1.0s post-bounce fuse, immediate direct hero detonate, and smooth distance falloff (%d vs %d)" % [ea_bdmg, ew_bdmg]
 	)
 
 	# 5. Grenade Launcher arch 2 (CANNON_BALL): 72 m/s low-drop (0.42g), 100 dmg contact + 3x vehicle damage
@@ -7413,7 +7414,7 @@ func _test_phase11_final_fix_wave() -> void:
 		h_pass.current_vehicle_id = boat_v.id
 		h_pass.current_seat_index = 2
 
-		# Driver attempts BTN_SKILL_1 & cooldown starts at 10.0; Passenger has cooldown 10.0
+		# Driver attempts BTN_SKILL_1 & cooldown starts at 10.0 (decays to 9.5 while combat skill 0 stays blocked!); Passenger has cooldown 10.0
 		h_drv.skill_manager.skill_cooldowns[1] = 10.0
 		var drv_cmd := InputCmd.new()
 		drv_cmd.set_button(InputCmd.BTN_SKILL_1, true)
@@ -7425,7 +7426,7 @@ func _test_phase11_final_fix_wave() -> void:
 		game_v._physics_process(0.5)
 		var drv_blocked_ok: bool = (
 			is_equal_approx(h_drv.skill_manager.skill_cooldowns[0], 0.0)
-			and is_equal_approx(h_drv.skill_manager.skill_cooldowns[1], 10.0)
+			and is_equal_approx(h_drv.skill_manager.skill_cooldowns[1], 9.5)
 		)
 		var pass_single_tick_ok: bool = is_equal_approx(h_pass.skill_manager.skill_cooldowns[1], 9.5)
 		seat_skill_ok = drv_blocked_ok and pass_single_tick_ok
@@ -7544,7 +7545,7 @@ func _test_phase11_polish_task7() -> void:
 	var roar_cd_ok: bool = (first_cd_ms >= 0 and second_cd_ms == first_cd_ms)
 	_assert(roar_clip_ok and roar_cd_ok, "Phase 11.T7a: SoundSynthesizer shoot_flame uses soft-attack roar (>=0.40s) and FLAME_SFX_INTERVAL_MS >= 180 sustain guard")
 
-	# 2. Flamethrower (16.5m) & Fire Starter (21.0m) ranges + Sky-Aim Ground Fire Fix + Non-Spiky FirePatchEntity
+	# 2. Flamethrower (21.0m) & Fire Starter (21.0m) ranges + Sky-Aim Ground Fire Fix + Non-Spiky FirePatchEntity
 	var arena := Node3D.new()
 	add_child(arena)
 	var floor_body := StaticBody3D.new()
@@ -7574,7 +7575,7 @@ func _test_phase11_polish_task7() -> void:
 	fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
 	demo.add_child(fw0)
 	demo.add_child(fw1)
-	var ranges_ok: bool = (fw0.max_range_m >= 16.0 and fw1.max_range_m >= 20.0)
+	var ranges_ok: bool = (fw0.max_range_m >= 20.5 and fw1.max_range_m >= 20.5)
 
 	var ctx: Dictionary = {"heroes_by_id": {11701: demo, 11702: enemy}, "projectiles_root": arena}
 	var pre_sky_patches: int = get_tree().get_nodes_in_group("fire_patches").size()
@@ -7613,7 +7614,7 @@ func _test_phase11_polish_task7() -> void:
 
 	_assert(
 		ranges_ok and sky_patches_ok and ground_spawn_ok and non_spiky_ok,
-		"Phase 11.T7b: Ranges (16.5/21.0m), sky-aim spawns 0 patches (%s), ground-aim spawns 1 (%s), non-spiky FirePatchEntity (%s)" % [
+		"Phase 11.T7b: Ranges (21.0/21.0m), sky-aim spawns 0 patches (%s), ground-aim spawns 1 (%s), non-spiky FirePatchEntity (%s)" % [
 			str(sky_patches_ok), str(ground_spawn_ok), str(non_spiky_ok)
 		]
 	)
@@ -7785,5 +7786,184 @@ func _test_phase11_polish_task8() -> void:
 		]
 	)
 
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase12_task1_fixes() -> void:
+	print("--- Phase 12 Task 1: Vehicle Cooldowns/Widgets, Flame Point-Blank, Grenade Contact+1s Fuse & Crosshair ---")
+	var arena := Node3D.new()
+	add_child(arena)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_shape := BoxShape3D.new()
+	floor_shape.size = Vector3(200.0, 1.0, 200.0)
+	floor_col.shape = floor_shape
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+	await get_tree().physics_frame
+
+	# 1. Driver cooldowns decay 1x/tick & Wrench repairs captured vehicle while combat skill 0 stays blocked
+	var cap_tank := VehicleTank.new()
+	cap_tank.id = 12101
+	cap_tank.team = NetworkManager.TEAM_NATIONAL
+	arena.add_child(cap_tank)
+	cap_tank.global_position = Vector3(0.0, 0.2, 0.0)
+	cap_tank.hp = 200
+
+	var drv := HeroCharacter.new()
+	drv.setup_identity(12102, "P12Drv", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, false, false)
+	arena.add_child(drv)
+	drv.global_position = Vector3(0.0, 0.2, 0.0)
+	var entered_seat: int = cap_tank.try_enter_hero(drv)
+	drv.skill_manager.skill_cooldowns[0] = 5.0
+	drv.skill_manager.widget_cooldowns[0] = 3.0
+	var drv_cmd := InputCmd.new()
+	drv_cmd.set_button(InputCmd.BTN_SKILL_1, true)
+	drv_cmd.set_button(InputCmd.BTN_WIDGET_2, true)
+	drv.latest_server_input = drv_cmd
+	var v_ctx: Dictionary = {"heroes_by_id": {drv.entity_id: drv}, "vehicles": [cap_tank], "projectiles_root": arena}
+	cap_tank.sync_occupants(v_ctx["heroes_by_id"] as Dictionary, 0.5, v_ctx)
+	var drv_fix_ok: bool = (
+		entered_seat == 0
+		and is_equal_approx(drv.skill_manager.skill_cooldowns[0], 4.5)
+		and is_equal_approx(drv.skill_manager.widget_cooldowns[0], 2.5)
+		and cap_tank.hp == 310
+		and drv.skill_manager.widget_cooldowns[1] > 0.0
+	)
+	_assert(
+		drv_fix_ok,
+		"Phase 12.1a: Driver cooldowns decay (skill0=%.1f, widget0=%.1f), Wrench heals captured Tank (hp=%d), combat skill 0 blocked" % [
+			drv.skill_manager.skill_cooldowns[0], drv.skill_manager.widget_cooldowns[0], cap_tank.hp
+		]
+	)
+	cap_tank.exit_hero(drv)
+
+	# 2. Flamethrower & Fire Starter (21.0m, 10 dmg, 5 ammo on Fire Starter) + Point-Blank hero & vehicle corner + Fire Breath 0.6m
+	var enemy := HeroCharacter.new()
+	enemy.setup_identity(12103, "P12Enemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(enemy)
+
+	var fw0 := FlameWeapon.new()
+	fw0.configure(drv, WeaponBase.WeaponKind.FLAMETHROWER, 0)
+	var fw1 := FlameWeapon.new()
+	fw1.configure(drv, WeaponBase.WeaponKind.FLAMETHROWER, 1)
+	var fw2 := FlameWeapon.new()
+	fw2.configure(drv, WeaponBase.WeaponKind.FLAMETHROWER, 2)
+	drv.add_child(fw0)
+	drv.add_child(fw1)
+	drv.add_child(fw2)
+
+	var f_ctx: Dictionary = {"heroes_by_id": {drv.entity_id: drv, enemy.entity_id: enemy}, "vehicles": [cap_tank], "projectiles_root": arena}
+	var aim_fwd := InputCmd.new()
+	aim_fwd.aim_yaw = 0.0
+	aim_fwd.aim_pitch = 0.0
+	aim_fwd.set_button(InputCmd.BTN_FIRE, true)
+
+	# Point-blank 0.8m & 1.5m (offset laterally)
+	drv.global_position = Vector3(0.0, 0.0, 0.0)
+	enemy.respawn_at(Vector3(0.45, 0.0, -0.8), 0.0)
+	await get_tree().physics_frame
+	var hp_08_pre: int = enemy.hp
+	fw0.fire_server(aim_fwd, f_ctx)
+	var pb0_ok: bool = (enemy.hp == hp_08_pre - 10 and enemy.status_effects.is_burning())
+
+	enemy.respawn_at(Vector3(-0.55, 0.0, -1.5), 0.0)
+	await get_tree().physics_frame
+	var hp_15_pre: int = enemy.hp
+	var fs_fire_ok: bool = fw1.try_consume_fire(aim_fwd) and fw1.ammo_in_mag == 95
+	fw1.fire_server(aim_fwd, f_ctx)
+	var pb1_ok: bool = (fs_fire_ok and enemy.hp == hp_15_pre - 10 and enemy.status_effects.is_burning())
+
+	# Vehicle corner hit: tank center at (1.9, 0.2, -3.2), front-left corner within ~0.8m in front of shooter
+	cap_tank.global_position = Vector3(1.9, 0.2, -3.2)
+	cap_tank.hp = 400
+	await get_tree().physics_frame
+	var tank_pre_hp: int = cap_tank.hp
+	fw0.fire_server(aim_fwd, f_ctx)
+	var veh_corner_ok: bool = (cap_tank.hp < tank_pre_hp)
+
+	# Fire Breath 0.6m point-blank enemy
+	enemy.respawn_at(Vector3(0.0, 0.0, -0.6), 0.0)
+	await get_tree().physics_frame
+	var fb_pre_hp: int = enemy.hp
+	fw2.fire_server(aim_fwd, f_ctx)
+	var fb_pb_ok: bool = (enemy.hp == fb_pre_hp - 40 and enemy.status_effects.is_burning())
+
+	_assert(
+		is_equal_approx(fw0.max_range_m, 21.0) and is_equal_approx(fw1.max_range_m, 21.0) and pb0_ok and pb1_ok and veh_corner_ok and fb_pb_ok,
+		"Phase 12.1b: Flame 21m/10dmg/5ammo, point-blank 0.8m(%s)/1.5m(%s), tank corner(%s), Fire Breath 0.6m(%s)" % [
+			str(pb0_ok), str(pb1_ok), str(veh_corner_ok), str(fb_pb_ok)
+		]
+	)
+
+	# 3. BOUNCE_GRENADE direct vehicle explosion (hijacked Royal Jeep & point-blank 0.4m Tank hull) + 1.0s fuse
+	var jeep_hijack := VehicleJeep.new()
+	jeep_hijack.id = 12104
+	jeep_hijack.team = NetworkManager.TEAM_ROYAL # Same team as shooter drv, hijacked by National enemy!
+	arena.add_child(jeep_hijack)
+	jeep_hijack.global_position = Vector3(25.0, 0.2, -5.0)
+	jeep_hijack.hp = 350
+	enemy.respawn_at(Vector3(25.0, 0.2, -5.0), 0.0)
+	jeep_hijack.try_enter_hero(enemy)
+	await get_tree().physics_frame
+
+	var g_ctx: Dictionary = {"heroes_by_id": {drv.entity_id: drv, enemy.entity_id: enemy}, "vehicles": [cap_tank, jeep_hijack], "projectiles_root": arena}
+	var hijack_pre_hp: int = jeep_hijack.hp
+	var bg_hijack := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BOUNCE_GRENADE,
+		drv.entity_id, drv.team,
+		Vector3(25.0, 1.1, -1.5),
+		Vector3(0.0, 0.0, -30.0),
+		g_ctx, 60.0, arena
+	)
+	for _s in range(8):
+		if bg_hijack._exploded:
+			break
+		bg_hijack._physics_process(0.02)
+	var hijack_det_ok: bool = (bg_hijack._exploded and jeep_hijack.hp < hijack_pre_hp)
+
+	# Point-blank 0.4m launch into Tank hull using ProjectileWeapon
+	drv.global_position = Vector3(-20.0, 0.0, 0.0)
+	cap_tank.global_position = Vector3(-20.0, 0.2, -3.3)
+	cap_tank.hp = 400
+	await get_tree().physics_frame
+	var gl0: ProjectileWeapon = drv.weapons[1] as ProjectileWeapon
+	var tank_pb_pre: int = cap_tank.hp
+	gl0.fire_server(aim_fwd, g_ctx)
+	var pb_grenade: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.BOUNCE_GRENADE and not (ch as ProjectileEntity)._exploded:
+			pb_grenade = ch as ProjectileEntity
+	if pb_grenade != null:
+		pb_grenade._physics_process(0.02)
+	var pb_tank_ok: bool = (pb_grenade != null and pb_grenade._exploded and cap_tank.hp < tank_pb_pre)
+
+	_assert(
+		hijack_det_ok and pb_tank_ok,
+		"Phase 12.1c: BOUNCE_GRENADE detonates immediately on hijacked vehicle (%s) & point-blank Tank hull (%s)" % [
+			str(hijack_det_ok), str(pb_tank_ok)
+		]
+	)
+
+	# 4. High-contrast white 2x2 center dot w/ 4x4 dark outline + bright white outlined crosshair arms
+	var hud := HUDController.new()
+	add_child(hud)
+	var dot_fill := hud._crosshair_dot.get_node_or_null("Fill") as ColorRect if hud._crosshair_dot != null else null
+	var bot_fill := hud._crosshair_bottom.get_node_or_null("Fill") as ColorRect if hud._crosshair_bottom != null else null
+	var ch_contrast_ok: bool = (
+		hud._crosshair_dot != null
+		and hud._crosshair_dot.size == Vector2(4, 4)
+		and hud._crosshair_dot.position == Vector2(-2, -2)
+		and hud._crosshair_dot.color.r <= 0.08 and hud._crosshair_dot.color.a >= 0.90
+		and dot_fill != null and dot_fill.size == Vector2(2, 2) and dot_fill.color == Color.WHITE
+		and hud._crosshair_bottom != null and hud._crosshair_bottom.color.r <= 0.08 and hud._crosshair_bottom.color.a >= 0.90
+		and bot_fill != null and bot_fill.color.r >= 0.94 and bot_fill.color.g >= 0.94 and bot_fill.color.b >= 0.94
+	)
+	_assert(ch_contrast_ok, "Phase 12.1d: High-contrast 2x2 white crosshair center dot (4x4 outline) + bright white outlined arms")
+
+	hud.queue_free()
 	arena.queue_free()
 	await _flush_deferred()

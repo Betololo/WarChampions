@@ -391,11 +391,11 @@ func _hide_all_sixth_sense_markers() -> void:
 			marker.visible = false
 
 
-func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vector2, fill_col: Color = Color(0.76, 0.78, 0.80, 0.92)) -> ColorRect:
+func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vector2, fill_col: Color = Color(0.96, 0.97, 0.98, 0.95)) -> ColorRect:
 	var outline := ColorRect.new()
 	outline.name = node_name
 	outline.size = outer_size
-	outline.color = Color(0.04, 0.05, 0.07, 0.86)
+	outline.color = Color(0.03, 0.04, 0.06, 0.92)
 	outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var inner := ColorRect.new()
@@ -885,9 +885,9 @@ func _build_hud() -> void:
 	_crosshair.visible = false
 	add_child(_crosshair)
 
-	_crosshair_dot = _make_crosshair_bar("CenterDot", Vector2(2, 2), Vector2(2, 2), Color(0.80, 0.82, 0.84, 0.55))
-	_crosshair_dot.color = Color(0.04, 0.05, 0.07, 0.35)
-	_crosshair_dot.position = Vector2(-1, -1)
+	_crosshair_dot = _make_crosshair_bar("CenterDot", Vector2(4, 4), Vector2(2, 2), Color.WHITE)
+	_crosshair_dot.color = Color(0.03, 0.04, 0.06, 0.95)
+	_crosshair_dot.position = Vector2(-2, -2)
 	_crosshair.add_child(_crosshair_dot)
 
 	_crosshair_top = _make_crosshair_bar("Top", Vector2(4, 11), Vector2(2, 9))
