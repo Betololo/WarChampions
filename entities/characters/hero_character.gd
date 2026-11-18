@@ -122,6 +122,11 @@ var hero_camera: HeroCamera
 var _walk_phase: float = 0.0
 var _weapon_recoil_anim: float = 0.0
 var _fire_pose_timer: float = 0.0
+var _cycle_anim_timer: float = 0.0
+var _cycle_anim_duration: float = 0.0
+var _weapon_cycle_progress: float = 0.0
+var _weapon_reload_progress: float = 0.0
+var _weapon_parts_by_name: Dictionary = {}
 var _skill_anim_timer: float = 0.0
 var _skill_anim_duration: float = 0.55
 var _skill_anim_style: String = ""
@@ -634,11 +639,25 @@ func _rebuild_held_weapon_mesh() -> void:
 		return
 	_shown_weapon_kind = w.weapon_kind
 	_shown_weapon_arch = w_arch
+	_cycle_anim_timer = 0.0
+	_cycle_anim_duration = 0.0
+	_weapon_cycle_progress = 0.0
+	_weapon_reload_progress = 0.0
+	_weapon_parts_by_name.clear()
 	var w_info: Dictionary = HeroMeshBuilder.populate_weapon_root(_held_weapon_root, w.weapon_kind, w_arch)
 	_weapon_grip_local = w_info.get("grip", Vector3(0.0, -0.04, 0.0))
 	_weapon_foregrip_local = w_info.get("foregrip", Vector3(0.0, -0.015, -0.24))
 	_weapon_muzzle_local = w_info.get("muzzle", Vector3(0.0, 0.035, -0.58))
 	_weapon_two_handed = bool(w_info.get("two_handed", true))
+	var named_parts: Dictionary = w_info.get("parts_by_name", {})
+	for part_name in named_parts.keys():
+		var mi := named_parts[part_name] as MeshInstance3D
+		if mi != null and is_instance_valid(mi):
+			_weapon_parts_by_name[str(part_name)] = {
+				"node": mi,
+				"base_pos": mi.position,
+				"base_rot": mi.rotation,
+			}
 
 
 func apply_character_shader(shader: Shader) -> void:
@@ -677,6 +696,16 @@ func _on_weapon_fired_anim(w_kind: int, _muzzle: Vector3, _hit: Vector3) -> void
 func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) -> void:
 	_weapon_recoil_anim = 1.0
 	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG) else 0.55
+	var active_interval: float = 0.0
+	match w_kind:
+		WeaponBase.WeaponKind.SHOTGUN:
+			active_interval = 0.65
+		WeaponBase.WeaponKind.BAZOOKA:
+			active_interval = 1.05
+		WeaponBase.WeaponKind.SNIPER:
+			active_interval = 0.90
+	_cycle_anim_duration = active_interval
+	_cycle_anim_timer = active_interval
 	if apply_camera_kick and hero_camera != null:
 		hero_camera.add_recoil(0.0)
 
@@ -758,6 +787,7 @@ func _animate_character(delta: float) -> void:
 
 	_weapon_recoil_anim = maxf(0.0, _weapon_recoil_anim - 7.5 * delta)
 	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
+	_cycle_anim_timer = maxf(0.0, _cycle_anim_timer - delta)
 	_skill_anim_timer = maxf(0.0, _skill_anim_timer - delta)
 
 	if not is_defeated:
@@ -799,6 +829,13 @@ func _animate_character(delta: float) -> void:
 	var slot: int = clampi(selected_weapon_slot, 0, maxi(0, weapons.size() - 1))
 	var cur_w: WeaponBase = weapons[slot] as WeaponBase if slot < weapons.size() else null
 	var reloading: bool = cur_w != null and cur_w.is_reloading
+	_weapon_reload_progress = clampf(1.0 - (cur_w.reload_timer / maxf(0.01, cur_w.reload_duration)), 0.0, 1.0) if (reloading and cur_w != null) else 0.0
+	if _cycle_anim_timer > 0.0 and _cycle_anim_duration > 0.001:
+		_weapon_cycle_progress = clampf(1.0 - (_cycle_anim_timer / _cycle_anim_duration), 0.0, 1.0)
+	elif cur_w != null and cur_w.cooldown_timer > 0.0 and cur_w.fire_interval > 0.01 and _cycle_anim_duration <= 0.0:
+		_weapon_cycle_progress = clampf(1.0 - (cur_w.cooldown_timer / cur_w.fire_interval), 0.0, 1.0)
+	else:
+		_weapon_cycle_progress = 0.0
 	var fire_blend: float = clampf(_fire_pose_timer * 3.2, 0.0, 1.0)
 	var kick: float = _weapon_recoil_anim
 
@@ -1091,11 +1128,60 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 	var right_pole: Vector3 = Vector3(0.75, -0.45, 0.55)
 	var left_pole: Vector3 = Vector3(-0.80, -0.45, 0.45)
 
+	for part_name in _weapon_parts_by_name.keys():
+		var entry: Dictionary = _weapon_parts_by_name[part_name]
+		var p_node := entry.get("node", null) as MeshInstance3D
+		if p_node != null and is_instance_valid(p_node):
+			p_node.position = entry.get("base_pos", Vector3.ZERO)
+			p_node.rotation = entry.get("base_rot", Vector3.ZERO)
+			p_node.visible = true
+
+	var cycle_p: float = _weapon_cycle_progress
+	var reload_p: float = _weapon_reload_progress
+
 	if _held_weapon_root != null:
+		var custom_right_target: bool = false
+		var custom_left_target: bool = false
+		var right_target: Vector3 = Vector3.ZERO
+
 		match _shown_weapon_kind:
 			WeaponBase.WeaponKind.BAZOOKA:
-				_held_weapon_root.position = Vector3(0.24, 0.58, -0.02 + kick * 0.09)
-				_held_weapon_root.rotation = Vector3(aim_pitch * 0.65 + kick * 0.15, 0.06, 0.0)
+				var is_feeding: bool = (cycle_p > 0.0) or reloading
+				var feed_p: float = reload_p if reloading else cycle_p
+				var feed_env: float = sin(clampf(feed_p, 0.0, 1.0) * PI) if is_feeding else 0.0
+				var tilt_amt: float = maxf(feed_env, 0.35 if reloading else 0.0)
+				_held_weapon_root.position = Vector3(0.24, 0.58 - tilt_amt * 0.14, -0.02 + kick * 0.09 - tilt_amt * 0.04)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.65 + kick * 0.15 - tilt_amt * 0.38, 0.06 + tilt_amt * 0.18, tilt_amt * 0.26)
+				if is_feeding:
+					var warhead_mi: MeshInstance3D = null
+					if _weapon_parts_by_name.has("Warhead"):
+						var w_entry: Dictionary = _weapon_parts_by_name["Warhead"]
+						warhead_mi = w_entry.get("node", null) as MeshInstance3D
+						if warhead_mi != null and is_instance_valid(warhead_mi):
+							var w_base: Vector3 = w_entry.get("base_pos", Vector3.ZERO)
+							if feed_p < 0.20:
+								warhead_mi.visible = false
+								warhead_mi.position = w_base + Vector3(-0.14, -0.06, 1.20)
+							elif feed_p <= 0.85:
+								var slide_t: float = clampf((feed_p - 0.20) / 0.65, 0.0, 1.0)
+								warhead_mi.visible = true
+								warhead_mi.position = w_base + Vector3(-0.14 * (1.0 - slide_t), -0.06 * (1.0 - slide_t), 1.20 * (1.0 - slide_t))
+							else:
+								warhead_mi.visible = true
+								warhead_mi.position = w_base
+					if _weapon_parts_by_name.has("Bolt"):
+						var b_entry: Dictionary = _weapon_parts_by_name["Bolt"]
+						var b_mi := b_entry.get("node", null) as MeshInstance3D
+						if b_mi != null and is_instance_valid(b_mi):
+							var b_base: Vector3 = b_entry.get("base_pos", Vector3.ZERO)
+							b_mi.position = b_base + Vector3(0.06 * feed_env, 0.0, 0.06 * feed_env)
+					if feed_p >= 0.12 and feed_p <= 0.90:
+						var feed_blend: float = sin(clampf((feed_p - 0.12) / 0.78, 0.0, 1.0) * PI)
+						var rocket_feed_local: Vector3 = (warhead_mi.position + Vector3(0.0, 0.0, 0.14)) if (warhead_mi != null and is_instance_valid(warhead_mi)) else Vector3(-0.08, -0.04, 0.42)
+						left_target = (_held_weapon_root.transform * _weapon_foregrip_local).lerp(_held_weapon_root.transform * rocket_feed_local, feed_blend)
+						right_target = (_held_weapon_root.transform * _weapon_grip_local).lerp(_held_weapon_root.transform * (_weapon_grip_local + Vector3(0.04, 0.06, 0.28)), feed_blend * 0.7)
+						custom_left_target = true
+						custom_right_target = true
 			WeaponBase.WeaponKind.MG:
 				var reload_tilt: float = 0.45 if reloading else 0.0
 				_held_weapon_root.position = Vector3(0.24, 0.23, -0.14 + kick * 0.05)
@@ -1116,19 +1202,62 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 				var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
 				var sway_x: float = -stride * 0.015 * (1.0 - fire_blend)
 				var sway_yaw: float = -stride * 0.035 * (1.0 - fire_blend)
-				_held_weapon_root.position = Vector3(0.21 + sway_x, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
-				_held_weapon_root.rotation = Vector3(aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3, lerpf(base_yaw + sway_yaw, 0.20, fire_blend), -0.08 + r_tilt)
+				var pump_travel: float = 0.0
+				if _shown_weapon_kind == WeaponBase.WeaponKind.SHOTGUN:
+					if cycle_p > 0.0:
+						pump_travel = sin(clampf((cycle_p - 0.18) / 0.65, 0.0, 1.0) * PI)
+					elif reloading:
+						pump_travel = sin(clampf((reload_p - 0.65) / 0.30, 0.0, 1.0) * PI)
+				var pump_shift: float = pump_travel * 0.11
+				var pump_cant: float = pump_travel * 0.22
 
-		var right_target: Vector3 = _held_weapon_root.transform * _weapon_grip_local
+				var bolt_lift: float = 0.0
+				var bolt_pull: float = 0.0
+				if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER and cycle_p > 0.0:
+					bolt_lift = sin(clampf((cycle_p - 0.15) / 0.70, 0.0, 1.0) * PI)
+					bolt_pull = sin(clampf((cycle_p - 0.22) / 0.58, 0.0, 1.0) * PI)
+
+				_held_weapon_root.position = Vector3(0.21 + sway_x, 0.32 + stride * 0.012, -0.14 + kick * 0.06)
+				_held_weapon_root.rotation = Vector3(
+					aim_pitch * 0.55 + 0.16 + kick * 0.12 - r_tilt * 0.3 - pump_cant * 0.35 - bolt_lift * 0.08,
+					lerpf(base_yaw + sway_yaw, 0.20, fire_blend),
+					-0.08 + r_tilt + pump_cant + bolt_lift * 0.12
+				)
+
+				if _shown_weapon_kind == WeaponBase.WeaponKind.SHOTGUN and _weapon_parts_by_name.has("Pump"):
+					var p_entry: Dictionary = _weapon_parts_by_name["Pump"]
+					var p_mi := p_entry.get("node", null) as MeshInstance3D
+					if p_mi != null and is_instance_valid(p_mi):
+						var p_base: Vector3 = p_entry.get("base_pos", Vector3.ZERO)
+						p_mi.position = p_base + Vector3(0.0, 0.0, pump_shift)
+				if _shown_weapon_kind == WeaponBase.WeaponKind.SHOTGUN and pump_travel > 0.01 and not reloading:
+					left_target = _held_weapon_root.transform * (_weapon_foregrip_local + Vector3(0.0, 0.0, pump_shift))
+					custom_left_target = true
+
+				if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER and _weapon_parts_by_name.has("Bolt"):
+					var sb_entry: Dictionary = _weapon_parts_by_name["Bolt"]
+					var sb_mi := sb_entry.get("node", null) as MeshInstance3D
+					if sb_mi != null and is_instance_valid(sb_mi):
+						var sb_base: Vector3 = sb_entry.get("base_pos", Vector3.ZERO)
+						var sb_rot: Vector3 = sb_entry.get("base_rot", Vector3.ZERO)
+						sb_mi.position = sb_base + Vector3(0.0, 0.025 * bolt_lift, 0.06 * bolt_pull)
+						sb_mi.rotation = sb_rot + Vector3(0.0, 0.0, 0.45 * bolt_lift)
+					if bolt_lift > 0.05:
+						right_target = _held_weapon_root.transform * (_weapon_grip_local + Vector3(0.028 * bolt_pull, 0.06 * bolt_lift, 0.04 * bolt_pull))
+						custom_right_target = true
+
+		if not custom_right_target:
+			right_target = _held_weapon_root.transform * _weapon_grip_local
 		_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, right_pole)
 
-		if reloading:
-			var dip: float = absf(sin(Time.get_ticks_msec() * 0.008))
-			left_target = Vector3(-0.04, 0.16 + dip * 0.16, -0.26)
-		elif _weapon_two_handed:
-			left_target = _held_weapon_root.transform * _weapon_foregrip_local
-		else:
-			left_target = Vector3(-0.20, 0.36, -0.26)
+		if not custom_left_target:
+			if reloading:
+				var dip: float = absf(sin(Time.get_ticks_msec() * 0.008))
+				left_target = Vector3(-0.04, 0.16 + dip * 0.16, -0.26)
+			elif _weapon_two_handed:
+				left_target = _held_weapon_root.transform * _weapon_foregrip_local
+			else:
+				left_target = Vector3(-0.20, 0.36, -0.26)
 		_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, left_pole)
 
 

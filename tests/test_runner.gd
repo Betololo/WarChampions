@@ -44,6 +44,7 @@ func _ready() -> void:
 	await _test_phase10_all_8_items()
 	await _test_phase11_task1_fixes()
 	await _test_phase11_task2_vehicles()
+	await _test_phase11_task3_crosshair_and_animations()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6051,3 +6052,162 @@ func _test_phase11_task2_vehicles() -> void:
 
 	arena.queue_free()
 	await _flush_deferred()
+
+
+func _test_phase11_task3_crosshair_and_animations() -> void:
+	# 1. COD-Style Bottom/Left/Right Gray Crosshair + 4 Diagonal Hitmarker Ticks + Hit/Crit/Kill Colors
+	var hud := HUDController.new()
+	add_child(hud)
+
+	var top_bar := hud._crosshair.get_node_or_null("Top") as ColorRect
+	var bot_bar := hud._crosshair.get_node_or_null("Bottom") as ColorRect
+	var left_bar := hud._crosshair.get_node_or_null("Left") as ColorRect
+	var right_bar := hud._crosshair.get_node_or_null("Right") as ColorRect
+	var bot_fill := bot_bar.get_node_or_null("Fill") as ColorRect if bot_bar != null else null
+	var left_fill := left_bar.get_node_or_null("Fill") as ColorRect if left_bar != null else null
+	var right_fill := right_bar.get_node_or_null("Fill") as ColorRect if right_bar != null else null
+	var gray_arms_ok: bool = (
+		top_bar != null and not top_bar.visible
+		and bot_bar != null and bot_bar.visible
+		and left_bar != null and left_bar.visible
+		and right_bar != null and right_bar.visible
+		and bot_fill != null and bot_fill.color.r >= 0.72 and bot_fill.color.r <= 0.85 and absf(bot_fill.color.r - bot_fill.color.b) < 0.08
+		and left_fill != null and left_fill.color.r >= 0.72 and left_fill.color.r <= 0.85
+		and right_fill != null and right_fill.color.r >= 0.72 and right_fill.color.r <= 0.85
+	)
+
+	var tick_names: PackedStringArray = PackedStringArray(["HitDiagTL", "HitDiagTR", "HitDiagBL", "HitDiagBR"])
+	var ticks_ok: bool = (hud._hitmarker_container != null and hud._hitmarker_lbl.text == "")
+	for t_name in tick_names:
+		var t_node := hud._hitmarker_container.get_node_or_null(t_name) as ColorRect if hud._hitmarker_container != null else null
+		if t_node == null:
+			ticks_ok = false
+		else:
+			var center_dist: float = (t_node.position + t_node.pivot_offset).length()
+			if center_dist < 8.0:
+				ticks_ok = false
+
+	hud.show_hitmarker(false, false)
+	var norm_col: Color = hud._hitmarker_container.modulate
+	var norm_ok: bool = (
+		hud._hitmarker_container.visible and hud._hitmarker_lbl.visible
+		and norm_col.r >= 0.70 and norm_col.r <= 0.85
+		and absf(norm_col.r - norm_col.b) < 0.08
+		and hud._hitmarker_lbl.modulate == norm_col
+	)
+
+	hud.show_hitmarker(true, false)
+	var crit_col: Color = hud._hitmarker_container.modulate
+	var crit_ok: bool = (
+		hud._hitmarker_container.visible and crit_col.r > 0.85 and crit_col.g < 0.30
+		and hud._hitmarker_lbl.modulate == crit_col
+	)
+
+	hud.show_hitmarker(false, true)
+	var kill_col: Color = hud._hitmarker_container.modulate
+	var kill_ok: bool = (
+		hud._hitmarker_container.visible and kill_col == Color.WHITE
+		and hud._hitmarker_lbl.modulate == Color.WHITE
+	)
+
+	# Verify kill_event on MainGame flashes white hitmarker for local killer
+	var game := MainGame.new()
+	add_child(game)
+	NetworkManager.local_peer_id = 42
+	game._on_game_event("kill_event", {"killer": "Hero42", "killer_id": 42, "victim": "Target", "tickets_lost": 1})
+	var kill_ev_ok: bool = (
+		game.hud._hitmarker_container.visible
+		and game.hud._hitmarker_container.modulate == Color.WHITE
+		and game.hud._hitmarker_timer > 0.20
+	)
+	game.queue_free()
+	hud.queue_free()
+
+	_assert(
+		gray_arms_ok and ticks_ok and norm_ok and crit_ok and kill_ok and kill_ev_ok,
+		"Phase 11.3a: COD-style gray Bottom/Left/Right crosshair, 4 diagonal hitmarker ticks around center gap, and gray/red/white hit/crit/kill colors"
+	)
+
+	# 2. Verify all 3 archetypes of Shotgun/Bazooka/Sniper name animated sub-parts
+	var arch_parts_ok: bool = true
+	var tmp_w := Node3D.new()
+	for arch in range(3):
+		var s_info: Dictionary = HeroMeshBuilder.populate_weapon_root(tmp_w, WeaponBase.WeaponKind.SHOTGUN, arch)
+		var b_info: Dictionary = HeroMeshBuilder.populate_weapon_root(tmp_w, WeaponBase.WeaponKind.BAZOOKA, arch)
+		var n_info: Dictionary = HeroMeshBuilder.populate_weapon_root(tmp_w, WeaponBase.WeaponKind.SNIPER, arch)
+		if not (s_info.get("parts_by_name", {}) as Dictionary).has("Pump"):
+			arch_parts_ok = false
+		var b_parts: Dictionary = b_info.get("parts_by_name", {}) as Dictionary
+		if not b_parts.has("Warhead") or not b_parts.has("Bolt"):
+			arch_parts_ok = false
+		if not (n_info.get("parts_by_name", {}) as Dictionary).has("Bolt"):
+			arch_parts_ok = false
+	tmp_w.free()
+
+	# 3. Verify Shotgun Pump-Action, Bazooka Warhead Feed/Tilt, and Sniper Bolt-Action animations
+	var hero := HeroCharacter.new()
+	hero.setup_identity(11301, "P11AnimHero", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	add_child(hero)
+
+	# Equip Shotgun (Soldier slot 1)
+	hero.selected_weapon_slot = 1
+	hero._rebuild_held_weapon_mesh()
+	var pump_entry: Dictionary = hero._weapon_parts_by_name.get("Pump", {})
+	var pump_node := pump_entry.get("node", null) as MeshInstance3D
+	var pump_base: Vector3 = pump_entry.get("base_pos", Vector3.ZERO)
+	hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.SHOTGUN, false)
+	for _i in range(20): # ~0.33s mid-cycle out of 0.65s
+		hero._animate_character(1.0 / 60.0)
+	var pump_mid_z: float = pump_node.position.z if pump_node != null else -999.0
+	for _i in range(25): # >0.65s complete cycle
+		hero._animate_character(1.0 / 60.0)
+	var pump_end_dist: float = pump_node.position.distance_to(pump_base) if pump_node != null else 999.0
+	var shotgun_ok: bool = (pump_node != null and pump_mid_z > pump_base.z + 0.05 and pump_end_dist < 0.002)
+
+	# Switch to Bazooka (equip on Soldier slot 2 for testing)
+	var baz_w := ProjectileWeapon.new()
+	baz_w.configure(hero, WeaponBase.WeaponKind.BAZOOKA, 0)
+	hero.weapons.append(baz_w)
+	hero.add_child(baz_w)
+	hero.selected_weapon_slot = hero.weapons.size() - 1
+	hero._rebuild_held_weapon_mesh()
+	hero._animate_character(0.016)
+	var baz_rest_rot: Vector3 = hero._held_weapon_root.rotation
+	var wh_entry: Dictionary = hero._weapon_parts_by_name.get("Warhead", {})
+	var wh_node := wh_entry.get("node", null) as MeshInstance3D
+	var wh_base: Vector3 = wh_entry.get("base_pos", Vector3.ZERO)
+	hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.BAZOOKA, false)
+	for _i in range(26): # ~0.43s out of 1.05s (feed_p ~ 0.41 in 0.2..0.85 window)
+		hero._animate_character(1.0 / 60.0)
+	var wh_mid_dist: float = wh_node.position.distance_to(wh_base) if wh_node != null else 0.0
+	var baz_tilt_diff: float = hero._held_weapon_root.rotation.distance_to(baz_rest_rot)
+	for _i in range(45): # complete 1.05s cycle
+		hero._animate_character(1.0 / 60.0)
+	var wh_end_dist: float = wh_node.position.distance_to(wh_base) if wh_node != null else 999.0
+	var bazooka_ok: bool = (wh_node != null and wh_mid_dist > 0.15 and baz_tilt_diff > 0.10 and wh_end_dist < 0.002)
+
+	# Switch to Sniper (Commando Rifle)
+	var snp_w := HitscanWeapon.new()
+	snp_w.configure(hero, WeaponBase.WeaponKind.SNIPER, 0)
+	hero.weapons.append(snp_w)
+	hero.add_child(snp_w)
+	hero.selected_weapon_slot = hero.weapons.size() - 1
+	hero._rebuild_held_weapon_mesh()
+	var bolt_entry: Dictionary = hero._weapon_parts_by_name.get("Bolt", {})
+	var bolt_node := bolt_entry.get("node", null) as MeshInstance3D
+	var bolt_base: Vector3 = bolt_entry.get("base_pos", Vector3.ZERO)
+	hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.SNIPER, false)
+	for _i in range(28): # ~0.47s mid-cycle out of 0.90s
+		hero._animate_character(1.0 / 60.0)
+	var bolt_mid_ok: bool = (bolt_node != null and bolt_node.position.z > bolt_base.z + 0.02 and bolt_node.position.y > bolt_base.y + 0.01)
+	for _i in range(32): # complete 0.90s cycle
+		hero._animate_character(1.0 / 60.0)
+	var bolt_end_ok: bool = (bolt_node != null and bolt_node.position.distance_to(bolt_base) < 0.002)
+
+	hero.queue_free()
+	await _flush_deferred()
+
+	_assert(
+		arch_parts_ok and shotgun_ok and bazooka_ok and bolt_mid_ok and bolt_end_ok,
+		"Phase 11.3b: Shotgun Pump (+Z rack), Bazooka Warhead feed/tilt, and Sniper Bolt-action cycle animate mid-cycle and reset cleanly"
+	)

@@ -224,8 +224,10 @@ static func make_loft(rings: Array[Dictionary], radial_seg: int = 16, cap_ends: 
 	return st.commit()
 
 
-static func add_part(parent: Node3D, mesh: Mesh, pos: Vector3, rot: Vector3, mat: Material, parts_list: Array[MeshInstance3D]) -> MeshInstance3D:
+static func add_part(parent: Node3D, mesh: Mesh, pos: Vector3, rot: Vector3, mat: Material, parts_list: Array[MeshInstance3D], part_name: String = "") -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
+	if not part_name.is_empty():
+		mi.name = part_name
 	mi.mesh = mesh
 	mi.position = pos
 	mi.rotation = rot
@@ -1081,17 +1083,17 @@ static func build_boot_mesh() -> ArrayMesh:
 	]))
 
 
-static func _add_box_part(parent: Node3D, size: Vector3, pos: Vector3, rot: Vector3, mat: Material, parts: Array[MeshInstance3D]) -> MeshInstance3D:
+static func _add_box_part(parent: Node3D, size: Vector3, pos: Vector3, rot: Vector3, mat: Material, parts: Array[MeshInstance3D], part_name: String = "") -> MeshInstance3D:
 	var key := "box|%.4f,%.4f,%.4f" % [size.x, size.y, size.z]
 	var bm: BoxMesh = _prim_cache.get(key)
 	if bm == null:
 		bm = BoxMesh.new()
 		bm.size = size
 		_prim_cache[key] = bm
-	return add_part(parent, bm, pos, rot, mat, parts)
+	return add_part(parent, bm, pos, rot, mat, parts, part_name)
 
 
-static func _add_cyl_part(parent: Node3D, r_top: float, r_bot: float, h: float, pos: Vector3, rot: Vector3, mat: Material, segs: int, parts: Array[MeshInstance3D]) -> MeshInstance3D:
+static func _add_cyl_part(parent: Node3D, r_top: float, r_bot: float, h: float, pos: Vector3, rot: Vector3, mat: Material, segs: int, parts: Array[MeshInstance3D], part_name: String = "") -> MeshInstance3D:
 	var key := "cyl|%.4f,%.4f,%.4f|%d" % [r_top, r_bot, h, segs]
 	var cm: CylinderMesh = _prim_cache.get(key)
 	if cm == null:
@@ -1101,7 +1103,7 @@ static func _add_cyl_part(parent: Node3D, r_top: float, r_bot: float, h: float, 
 		cm.height = h
 		cm.radial_segments = segs
 		_prim_cache[key] = cm
-	return add_part(parent, cm, pos, rot, mat, parts)
+	return add_part(parent, cm, pos, rot, mat, parts, part_name)
 
 
 static func build_weapon_mesh(w_kind: int, p_archetype: int = 0) -> Node3D:
@@ -1120,16 +1122,23 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 	if _weapon_cache.has(cache_key):
 		var cached: Dictionary = _weapon_cache[cache_key]
 		var parts_tpl: Array = cached["parts"]
+		var parts_by_name: Dictionary = {}
 		for p_dict in parts_tpl:
 			var mi := MeshInstance3D.new()
 			mi.mesh = p_dict["mesh"]
-			mi.position = p_dict["pos"]
+			mi.position = p_dict.get("base_pos", p_dict["pos"])
 			mi.rotation = p_dict["rot"]
 			mi.material_override = p_dict["mat"]
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mi.visibility_range_end = 220.0
+			var p_name: String = str(p_dict.get("name", ""))
+			if not p_name.is_empty():
+				mi.name = p_name
+				parts_by_name[p_name] = mi
 			root.add_child(mi)
-		return (cached["info"] as Dictionary).duplicate()
+		var out_info: Dictionary = (cached["info"] as Dictionary).duplicate()
+		out_info["parts_by_name"] = parts_by_name
+		return out_info
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
@@ -1173,6 +1182,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 				_add_cyl_part(root, 0.021, 0.018, 0.075, Vector3(0.0, 0.038, -0.61), Vector3(PI * 0.5, 0.0, 0.0), copper_mat, 10, dummy)
 				_add_box_part(root, Vector3(0.036, 0.036, 0.14), Vector3(0.0, 0.082, -0.06), Vector3.ZERO, steel_mat, dummy)
 				_add_cyl_part(root, 0.019, 0.019, 0.01, Vector3(0.0, 0.082, -0.13), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 10, dummy)
+				_add_cyl_part(root, 0.006, 0.006, 0.045, Vector3(0.026, 0.036, -0.06), Vector3(0.0, 0.0, PI * 0.4), steel_mat, 8, dummy, "Bolt")
 				info["foregrip"] = Vector3(0.0, -0.015, -0.22)
 				info["muzzle"] = Vector3(0.0, 0.038, -0.64)
 			elif arch == 2:
@@ -1185,6 +1195,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 				_add_cyl_part(root, 0.026, 0.026, 0.012, Vector3(0.0, 0.105, -0.25), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 12, dummy)
 				_add_cyl_part(root, 0.009, 0.009, 0.22, Vector3(-0.08, -0.07, -0.45), Vector3(0.2, 0.0, 0.45), metal_mat, 8, dummy)
 				_add_cyl_part(root, 0.009, 0.009, 0.22, Vector3(0.08, -0.07, -0.45), Vector3(0.2, 0.0, -0.45), metal_mat, 8, dummy)
+				_add_cyl_part(root, 0.008, 0.008, 0.055, Vector3(0.034, 0.042, -0.06), Vector3(0.0, 0.0, PI * 0.4), steel_mat, 8, dummy, "Bolt")
 				info["foregrip"] = Vector3(0.0, -0.015, -0.27)
 				info["muzzle"] = Vector3(0.0, 0.042, -0.95)
 			else:
@@ -1205,7 +1216,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 					{"y": 0.24, "rx": 0.025, "rz": 0.028, "p": 2.2},
 				], 12)
 				add_part(root, rec_s, Vector3(0.0, 0.038, 0.02), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
-				_add_cyl_part(root, 0.006, 0.006, 0.045, Vector3(0.028, 0.042, -0.05), Vector3(0.0, 0.0, PI * 0.4), steel_mat, 8, dummy)
+				_add_cyl_part(root, 0.006, 0.006, 0.045, Vector3(0.028, 0.042, -0.05), Vector3(0.0, 0.0, PI * 0.4), steel_mat, 8, dummy, "Bolt")
 				var barrel := make_loft([
 					{"y": 0.00, "rx": 0.017, "rz": 0.017, "p": 2.0},
 					{"y": 0.52, "rx": 0.013, "rz": 0.013, "p": 2.0},
@@ -1337,7 +1348,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 				_add_box_part(root, Vector3(0.058, 0.054, 0.14), Vector3(0.0, 0.022, -0.04), Vector3.ZERO, brass_mat, dummy)
 				_add_cyl_part(root, 0.019, 0.019, 0.30, Vector3(-0.020, 0.044, -0.25), Vector3(PI * 0.5, 0.0, 0.0), blued_metal_mat, 10, dummy)
 				_add_cyl_part(root, 0.019, 0.019, 0.30, Vector3(0.020, 0.044, -0.25), Vector3(PI * 0.5, 0.0, 0.0), blued_metal_mat, 10, dummy)
-				_add_box_part(root, Vector3(0.062, 0.036, 0.13), Vector3(0.0, 0.016, -0.18), Vector3.ZERO, wood_mat, dummy)
+				_add_box_part(root, Vector3(0.062, 0.036, 0.13), Vector3(0.0, 0.016, -0.18), Vector3.ZERO, wood_mat, dummy, "Pump")
 				info["foregrip"] = Vector3(0.0, 0.0, -0.20)
 				info["muzzle"] = Vector3(0.0, 0.044, -0.42)
 			elif arch == 2:
@@ -1347,7 +1358,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 				_add_cyl_part(root, 0.018, 0.016, 0.52, Vector3(0.0, 0.052, -0.44), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 10, dummy)
 				_add_cyl_part(root, 0.017, 0.015, 0.50, Vector3(0.0, 0.022, -0.43), Vector3(PI * 0.5, 0.0, 0.0), blued_metal_mat, 10, dummy)
 				_add_box_part(root, Vector3(0.014, 0.012, 0.48), Vector3(0.0, 0.070, -0.44), Vector3.ZERO, brass_mat, dummy)
-				_add_box_part(root, Vector3(0.044, 0.040, 0.19), Vector3(0.0, 0.014, -0.29), Vector3.ZERO, wood_mat, dummy)
+				_add_box_part(root, Vector3(0.044, 0.040, 0.19), Vector3(0.0, 0.014, -0.29), Vector3.ZERO, wood_mat, dummy, "Pump")
 				info["foregrip"] = Vector3(0.0, -0.012, -0.32)
 				info["muzzle"] = Vector3(0.0, 0.052, -0.71)
 			else:
@@ -1375,16 +1386,17 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 					{"y": 0.00, "rx": 0.024, "rz": 0.026, "p": 2.2},
 					{"y": 0.16, "rx": 0.024, "rz": 0.026, "p": 2.2},
 				], 12)
-				add_part(root, pump, Vector3(0.0, 0.016, -0.22), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+				add_part(root, pump, Vector3(0.0, 0.016, -0.22), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy, "Pump")
 				info["foregrip"] = Vector3(0.0, -0.015, -0.29)
 				info["muzzle"] = Vector3(0.0, 0.045, -0.58)
 
 		6: # Bazooka (arch 0=Olive WWII, 1=Shielded Rapid Dark, 2=Heavy Optic Brass Siege)
 			if arch == 1:
 				_add_cyl_part(root, 0.062, 0.062, 0.94, Vector3(0.0, 0.0, -0.16), Vector3(PI * 0.5, 0.0, 0.0), blued_metal_mat, 14, dummy)
+				_add_cyl_part(root, 0.068, 0.068, 0.04, Vector3(0.0, 0.0, 0.31), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 12, dummy, "Bolt")
 				_add_box_part(root, Vector3(0.32, 0.28, 0.016), Vector3(0.0, 0.06, -0.34), Vector3.ZERO, metal_mat, dummy)
 				_add_box_part(root, Vector3(0.33, 0.045, 0.020), Vector3(0.0, 0.15, -0.34), Vector3.ZERO, red_dyn_mat, dummy)
-				_add_cyl_part(root, 0.055, 0.012, 0.16, Vector3(0.0, 0.0, -0.69), Vector3(-PI * 0.5, 0.0, 0.0), red_dyn_mat, 12, dummy)
+				_add_cyl_part(root, 0.055, 0.012, 0.16, Vector3(0.0, 0.0, -0.69), Vector3(-PI * 0.5, 0.0, 0.0), red_dyn_mat, 12, dummy, "Warhead")
 				add_part(root, p_grip, Vector3(0.0, -0.09, 0.0), Vector3(-0.18, 0.0, 0.0), metal_mat, dummy)
 				add_part(root, p_grip, Vector3(0.0, -0.085, -0.22), Vector3.ZERO, metal_mat, dummy)
 				info["grip"] = Vector3(0.0, -0.10, 0.0)
@@ -1398,7 +1410,9 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 					{"y": 1.48, "rx": 0.112, "rz": 0.112, "p": 2.0},
 				], 16)
 				add_part(root, tube_2, Vector3(0.0, 0.0, 0.48), Vector3(-PI * 0.5, 0.0, 0.0), copper_mat, dummy)
+				_add_cyl_part(root, 0.106, 0.106, 0.04, Vector3(0.0, 0.0, 0.48), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 14, dummy, "Bolt")
 				_add_cyl_part(root, 0.115, 0.080, 0.14, Vector3(0.0, 0.0, -0.92), Vector3(-PI * 0.5, 0.0, 0.0), brass_mat, 14, dummy)
+				_add_cyl_part(root, 0.060, 0.012, 0.16, Vector3(0.0, 0.0, -0.96), Vector3(-PI * 0.5, 0.0, 0.0), red_dyn_mat, 12, dummy, "Warhead")
 				_add_box_part(root, Vector3(0.052, 0.056, 0.18), Vector3(0.065, 0.088, -0.45), Vector3.ZERO, steel_mat, dummy)
 				_add_cyl_part(root, 0.022, 0.022, 0.012, Vector3(0.065, 0.088, -0.54), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 10, dummy)
 				add_part(root, p_grip, Vector3(0.0, -0.105, 0.0), Vector3(-0.18, 0.0, 0.0), wood_mat, dummy)
@@ -1414,6 +1428,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 					{"y": 1.24, "rx": 0.092, "rz": 0.092, "p": 2.0},
 				], 16)
 				add_part(root, tube, Vector3(0.0, 0.0, 0.42), Vector3(-PI * 0.5, 0.0, 0.0), baz_mat, dummy)
+				_add_cyl_part(root, 0.095, 0.095, 0.04, Vector3(0.0, 0.0, 0.42), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 12, dummy, "Bolt")
 				_add_cyl_part(root, 0.076, 0.076, 0.04, Vector3(0.0, 0.0, 0.08), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 12, dummy)
 				_add_cyl_part(root, 0.076, 0.076, 0.04, Vector3(0.0, 0.0, -0.38), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 12, dummy)
 				_add_box_part(root, Vector3(0.045, 0.045, 0.010), Vector3(0.065, 0.070, -0.72), Vector3.ZERO, steel_mat, dummy)
@@ -1422,7 +1437,7 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 					{"y": 0.08, "rx": 0.052, "rz": 0.052, "p": 2.0},
 					{"y": 0.15, "rx": 0.010, "rz": 0.010, "p": 2.0},
 				], 12)
-				add_part(root, warhead, Vector3(0.0, 0.0, -0.80), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy)
+				add_part(root, warhead, Vector3(0.0, 0.0, -0.80), Vector3(-PI * 0.5, 0.0, 0.0), blued_metal_mat, dummy, "Warhead")
 				add_part(root, p_grip, Vector3(0.0, -0.10, 0.0), Vector3(-0.18, 0.0, 0.0), wood_mat, dummy)
 				add_part(root, p_grip, Vector3(0.0, -0.095, -0.24), Vector3.ZERO, wood_mat, dummy)
 				_add_box_part(root, Vector3(0.014, 0.045, 0.055), Vector3(0.0, -0.065, -0.05), Vector3.ZERO, steel_mat, dummy)
@@ -1548,16 +1563,25 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	var cached_parts: Array[Dictionary] = []
+	var parts_by_name: Dictionary = {}
 	for ch in root.get_children():
 		if ch is MeshInstance3D:
 			var mi := ch as MeshInstance3D
 			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mi.visibility_range_end = 220.0
+			var part_name: String = String(mi.name)
+			if part_name.begins_with("@"):
+				part_name = ""
+			if not part_name.is_empty():
+				parts_by_name[part_name] = mi
 			cached_parts.append({
 				"mesh": mi.mesh,
 				"pos": mi.position,
+				"base_pos": mi.position,
 				"rot": mi.rotation,
 				"mat": mi.material_override,
+				"name": part_name,
 			})
 	_weapon_cache[cache_key] = {"info": info.duplicate(), "parts": cached_parts}
+	info["parts_by_name"] = parts_by_name
 	return info

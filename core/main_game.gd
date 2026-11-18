@@ -731,6 +731,7 @@ func _on_hero_defeated(killer_id: int, _explosive: bool, victim: HeroCharacter) 
 	var k_name: String = killer.hero_name if killer != null else "Environment"
 	NetworkManager.broadcast_game_event("kill_event", {
 		"killer": k_name,
+		"killer_id": killer_id,
 		"victim": victim.hero_name,
 		"tickets_lost": lost,
 	})
@@ -918,6 +919,8 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 		"eat_grenades":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)
 		"kill_event":
+			if int(payload.get("killer_id", -1)) == NetworkManager.local_peer_id and hud != null:
+				hud.show_hitmarker(false, true)
 			if hud != null:
 				hud.add_killfeed("%s defeated %s (-%d Tickets)" % [str(payload.get("killer", "?")), str(payload.get("victim", "?")), int(payload.get("tickets_lost", 0))])
 		"match_over":

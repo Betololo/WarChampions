@@ -159,6 +159,7 @@ var _crosshair_spread_px: float = 6.0
 var _crosshair_bloom: float = 0.0
 var _bound_weapon_signals: Array[WeaponBase] = []
 var _scope_overlay: Control
+var _hitmarker_container: Control
 var _hitmarker_lbl: Label
 var _parachute_lbl: Label
 var _interact_lbl: Label
@@ -301,11 +302,23 @@ func _on_local_weapon_fired(w_kind: int, _muzzle: Vector3, _hit: Vector3) -> voi
 	trigger_crosshair_bloom(bump)
 
 
-func show_hitmarker(is_headshot: bool) -> void:
-	_hitmarker_timer = 0.16
+func show_hitmarker(is_headshot: bool, is_kill: bool = false) -> void:
+	var hm_col: Color
+	if is_kill:
+		hm_col = Color.WHITE
+		_hitmarker_timer = 0.24
+	elif is_headshot:
+		hm_col = Color(1.0, 0.16, 0.14)
+		_hitmarker_timer = 0.20
+	else:
+		hm_col = Color(0.76, 0.78, 0.82)
+		_hitmarker_timer = 0.16
+	if _hitmarker_container != null:
+		_hitmarker_container.visible = true
+		_hitmarker_container.modulate = hm_col
 	if _hitmarker_lbl != null:
 		_hitmarker_lbl.visible = true
-		_hitmarker_lbl.modulate = Color(1.0, 0.2, 0.1) if is_headshot else Color.WHITE
+		_hitmarker_lbl.modulate = hm_col
 
 
 func trigger_damage_flash() -> void:
@@ -377,7 +390,7 @@ func _hide_all_sixth_sense_markers() -> void:
 			marker.visible = false
 
 
-func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vector2) -> ColorRect:
+func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vector2, fill_col: Color = Color(0.76, 0.78, 0.80, 0.92)) -> ColorRect:
 	var outline := ColorRect.new()
 	outline.name = node_name
 	outline.size = outer_size
@@ -388,7 +401,7 @@ func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vec
 	inner.name = "Fill"
 	inner.size = inner_size
 	inner.position = (outer_size - inner_size) * 0.5
-	inner.color = Color(1.0, 1.0, 1.0, 0.96)
+	inner.color = fill_col
 	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	outline.add_child(inner)
 	return outline
@@ -858,11 +871,13 @@ func _build_hud() -> void:
 	_crosshair.visible = false
 	add_child(_crosshair)
 
-	_crosshair_dot = _make_crosshair_bar("CenterDot", Vector2(4, 4), Vector2(2, 2))
-	_crosshair_dot.position = Vector2(-2, -2)
+	_crosshair_dot = _make_crosshair_bar("CenterDot", Vector2(2, 2), Vector2(2, 2), Color(0.80, 0.82, 0.84, 0.55))
+	_crosshair_dot.color = Color(0.04, 0.05, 0.07, 0.35)
+	_crosshair_dot.position = Vector2(-1, -1)
 	_crosshair.add_child(_crosshair_dot)
 
 	_crosshair_top = _make_crosshair_bar("Top", Vector2(4, 11), Vector2(2, 9))
+	_crosshair_top.visible = false
 	_crosshair.add_child(_crosshair_top)
 	_crosshair_bottom = _make_crosshair_bar("Bottom", Vector2(4, 11), Vector2(2, 9))
 	_crosshair.add_child(_crosshair_bottom)
@@ -872,8 +887,33 @@ func _build_hud() -> void:
 	_crosshair.add_child(_crosshair_right)
 	_apply_crosshair_spread(_crosshair_spread_px)
 
+	_hitmarker_container = Control.new()
+	_hitmarker_container.name = "HitmarkerContainer"
+	_hitmarker_container.position = Vector2.ZERO
+	_hitmarker_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hitmarker_container.visible = false
+	_crosshair.add_child(_hitmarker_container)
+
+	var hm_specs: Array[Dictionary] = [
+		{"name": "HitDiagTL", "dir": Vector2(-1.0, -1.0).normalized(), "rot": -PI * 0.25},
+		{"name": "HitDiagTR", "dir": Vector2(1.0, -1.0).normalized(), "rot": PI * 0.25},
+		{"name": "HitDiagBL", "dir": Vector2(-1.0, 1.0).normalized(), "rot": PI * 0.25},
+		{"name": "HitDiagBR", "dir": Vector2(1.0, 1.0).normalized(), "rot": -PI * 0.25},
+	]
+	var hm_radius_mid: float = 11.5
+	for spec in hm_specs:
+		var tick := ColorRect.new()
+		tick.name = str(spec["name"])
+		tick.size = Vector2(2.0, 9.0)
+		tick.pivot_offset = Vector2(1.0, 4.5)
+		tick.position = (spec["dir"] as Vector2) * hm_radius_mid - tick.pivot_offset
+		tick.rotation = float(spec["rot"])
+		tick.color = Color.WHITE
+		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hitmarker_container.add_child(tick)
+
 	_hitmarker_lbl = Label.new()
-	_hitmarker_lbl.text = "X"
+	_hitmarker_lbl.text = ""
 	_hitmarker_lbl.size = Vector2(28, 28)
 	_hitmarker_lbl.position = Vector2(-14, -14)
 	_hitmarker_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1132,8 +1172,13 @@ func _refresh_hotbar_icons() -> void:
 func _process(delta: float) -> void:
 	if _hitmarker_timer > 0.0:
 		_hitmarker_timer -= delta
-		if _hitmarker_timer <= 0.0 and _hitmarker_lbl != null:
-			_hitmarker_lbl.visible = false
+		if _hitmarker_timer <= 0.0:
+			_hitmarker_timer = 0.0
+	var hm_active: bool = (_hitmarker_timer > 0.0)
+	if _hitmarker_lbl != null and _hitmarker_lbl.visible != hm_active:
+		_hitmarker_lbl.visible = hm_active
+	if _hitmarker_container != null and _hitmarker_container.visible != hm_active:
+		_hitmarker_container.visible = hm_active
 
 	if _damage_flash_timer > 0.0:
 		_damage_flash_timer = maxf(0.0, _damage_flash_timer - delta)
