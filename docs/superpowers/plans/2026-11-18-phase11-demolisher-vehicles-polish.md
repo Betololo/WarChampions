@@ -233,3 +233,11 @@
      - **P11.6:** Shotgun `"Pump"` and Bazooka/Cannon `"Warhead"` animate during post-shot cycle/reload.
      - **P11.7:** Gunner `Hero Shield` + `Frenzy Fire` 4th-hit lifesteal heals `hp` strictly with `0` change to `shield`.
    - Confirm map budgets (`MeshInstance3D <= 900`, unique meshes `<= 350`, unique materials `<= 200`) and `0 failed` across the entire suite!
+
+---
+
+### Task 7 (Demolisher Polish A): TF2 Continuous Flamethrower Jet/Audio, Realistic Ground Fire, Sky-Aim Fix & Fire Breath 30m Hero Sweep (Items 1, 4, 5)
+See `.superpowers/sdd/2026-11-18-phase11-demolisher-vehicles-polish/task-7-brief.md`.
+
+### Task 8 (Demolisher Polish B): Cowboy Lasso TNT Rope, Trapper Rooftop/Sticky Precision, & 40mm Pill Grenade + Low Bounce (Items 2, 3, 6)
+See `.superpowers/sdd/2026-11-18-phase11-demolisher-vehicles-polish/task-8-brief.md`.
