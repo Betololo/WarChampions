@@ -5,13 +5,14 @@ extends Node
 const CLASS_NAME: String = "Demolisher"
 const BASE_HP: int = 110
 const BASE_SPEED: float = 5.4
+const FLAME_WEAPON_SCRIPT: GDScript = preload("res://entities/weapons/flame_weapon.gd")
 
 
 static func create_weapons(owner_hero: HeroCharacter, slot_archetypes: Dictionary = {}) -> Array[WeaponBase]:
 	var out: Array[WeaponBase] = []
 	var default_arch: int = owner_hero.archetype if owner_hero != null else 0
 
-	var flame := HitscanWeapon.new()
+	var flame: WeaponBase = FLAME_WEAPON_SCRIPT.new() as WeaponBase
 	flame.configure(owner_hero, WeaponBase.WeaponKind.FLAMETHROWER, int(slot_archetypes.get(0, default_arch)))
 	out.append(flame)
 

@@ -127,6 +127,7 @@ var _cycle_anim_duration: float = 0.0
 var _weapon_cycle_progress: float = 0.0
 var _weapon_reload_progress: float = 0.0
 var _weapon_parts_by_name: Dictionary = {}
+var _caber_head_spent: bool = false
 var _skill_anim_timer: float = 0.0
 var _skill_anim_duration: float = 0.55
 var _skill_anim_style: String = ""
@@ -678,6 +679,33 @@ func _rebuild_held_weapon_mesh() -> void:
 				"base_pos": mi.position,
 				"base_rot": mi.rotation,
 			}
+	_apply_caber_head_visibility()
+
+
+func set_caber_spent_visual(spent: bool) -> void:
+	_caber_head_spent = spent
+	for w_node in weapons:
+		if w_node is WeaponBase and (w_node as WeaponBase).weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE:
+			(w_node as WeaponBase).caber_spent = spent
+	_apply_caber_head_visibility()
+
+
+func _is_caber_head_spent() -> bool:
+	if _caber_head_spent:
+		return true
+	for w_node in weapons:
+		if w_node is WeaponBase and (w_node as WeaponBase).weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE:
+			if (w_node as WeaponBase).caber_spent:
+				return true
+	return false
+
+
+func _apply_caber_head_visibility() -> void:
+	if _shown_weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE and _weapon_parts_by_name.has("CaberHead"):
+		var entry: Dictionary = _weapon_parts_by_name["CaberHead"]
+		var node := entry.get("node", null) as MeshInstance3D
+		if node != null and is_instance_valid(node):
+			node.visible = not _is_caber_head_spent()
 
 
 func apply_character_shader(shader: Shader) -> void:
@@ -1164,6 +1192,7 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 			p_node.position = entry.get("base_pos", Vector3.ZERO)
 			p_node.rotation = entry.get("base_rot", Vector3.ZERO)
 			p_node.visible = true
+	_apply_caber_head_visibility()
 
 	var cycle_p: float = _weapon_cycle_progress
 	var reload_p: float = _weapon_reload_progress
@@ -2037,8 +2066,11 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 		_reset_seat_metadata()
 	if _body_collision != null:
 		_body_collision.disabled = (current_vehicle_id >= 0)
+	var was_def: bool = is_defeated
 	var def: bool = (flags & NetSerializer.SNAP_DEFEATED) != 0 or hp <= 0
 	is_defeated = def
+	if was_def and not def:
+		set_caber_spent_visual(false)
 	collision_layer = 0 if def else 2
 	var rot := Quaternion(Vector3.UP, yaw)
 	snapshot_interpolator.push_snapshot(server_tick, server_time_ms, pos, rot, vel, yaw, pitch, 0.0, flags)
@@ -2122,6 +2154,7 @@ func heal_server(amount: int) -> int:
 
 
 func reset_weapons_full() -> void:
+	_caber_head_spent = false
 	for w_node in weapons:
 		var w: WeaponBase = w_node as WeaponBase
 		if w != null:
@@ -2134,6 +2167,12 @@ func reset_weapons_full() -> void:
 			w._prev_fire_held = false
 			w.reset_caber_for_life()
 			w.ammo_changed.emit(w.ammo_in_mag, w.mag_size, false)
+	_apply_caber_head_visibility()
+	if NetworkManager.is_server_authority() and class_id == NetworkManager.CLASS_DEMOLISHER:
+		NetworkManager.broadcast_game_event("caber_spent", {
+			"hero_id": entity_id,
+			"spent": false,
+		})
 
 
 func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:

@@ -80,16 +80,25 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 					)
 			var p_obj: Variant = p_trace.get("target_object", null)
 			if p_obj != null and p_obj is Node and (p_obj as Node).has_method("apply_damage_server"):
-				var is_p_veh: bool = (p_obj as Node).is_in_group("vehicles")
-				var p_veh_mult: float = 1.0
-				if is_p_veh and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_vehicle_damage_mult"):
-					p_veh_mult = float(owner_hero.status_effects.get_vehicle_damage_mult())
-				var p_obj_dmg: int = compute_falloff_damage(float(p_trace.get("distance", 0.0)), false, dmg_mult * p_veh_mult)
-				(p_obj as Node).apply_damage_server(p_obj_dmg, owner_hero.entity_id, shot_dir, stop_pos, false)
-				if not is_p_veh:
-					NetworkManager.broadcast_game_event("hit_vfx", {"pos": stop_pos, "kind": "spark", "attacker_id": owner_hero.entity_id, "damage": p_obj_dmg, "headshot": false})
+				var p_allied_shield: bool = (p_obj is DemolisherSkills.RiotShieldEntity and (p_obj as DemolisherSkills.RiotShieldEntity).owner_team == owner_hero.team)
+				var p_allied_veh: bool = (p_obj is VehicleBase and (p_obj as VehicleBase).team >= 0 and (p_obj as VehicleBase).team == owner_hero.team)
+				if not p_allied_shield and not p_allied_veh:
+					var is_p_veh: bool = (p_obj as Node).is_in_group("vehicles")
+					var p_veh_mult: float = 1.0
+					if is_p_veh and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_vehicle_damage_mult"):
+						p_veh_mult = float(owner_hero.status_effects.get_vehicle_damage_mult())
+					var p_obj_dmg: int = compute_falloff_damage(float(p_trace.get("distance", 0.0)), false, dmg_mult * p_veh_mult)
+					var p_prev_hp: int = int((p_obj as Node).get("hp")) if (p_obj as Node).get("hp") != null else 0
+					(p_obj as Node).apply_damage_server(p_obj_dmg, owner_hero.entity_id, shot_dir, stop_pos, false)
+					var p_post_hp: int = int((p_obj as Node).get("hp")) if (p_obj as Node).get("hp") != null else 0
+					var p_dealt: int = maxi(0, p_prev_hp - p_post_hp) if p_prev_hp > 0 else p_obj_dmg
+					if p_dealt > 0 and owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
+						owner_hero.status_effects.notify_damage_dealt_server(p_dealt)
+					if not is_p_veh:
+						NetworkManager.broadcast_game_event("hit_vfx", {"pos": stop_pos, "kind": "spark", "attacker_id": owner_hero.entity_id, "damage": p_obj_dmg, "headshot": false})
 			elif bool(p_trace.get("hit_world", false)):
 				NetworkManager.broadcast_game_event("hit_vfx", {"pos": stop_pos, "kind": "dust", "attacker_id": owner_hero.entity_id})
+			_destroy_enemy_stickies_along_ray(origin, shot_dir, float(p_trace.get("distance", max_range_m)))
 			continue
 
 		var trace: Dictionary
@@ -116,6 +125,38 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 				"distance": max_range_m,
 				"arc_points": PackedVector3Array([origin, fallback_end]),
 			}
+			if space_state != null:
+				var fb_q := PhysicsRayQueryParameters3D.create(origin, fallback_end, 1 | 8 | 64)
+				fb_q.hit_from_inside = true
+				var fb_excl: Array[RID] = []
+				if owner_hero.is_inside_tree():
+					fb_excl.append(owner_hero.get_rid())
+				for rid in exclude_rids:
+					if not fb_excl.has(rid):
+						fb_excl.append(rid)
+				fb_q.exclude = fb_excl
+				var fb_hit: Dictionary = space_state.intersect_ray(fb_q)
+				if not fb_hit.is_empty():
+					var fb_pos: Vector3 = fb_hit["position"]
+					var fb_col: Object = fb_hit.get("collider", null)
+					var fb_obj: Node = null
+					if fb_col is Node:
+						var cn: Node = fb_col as Node
+						if cn.is_in_group("vehicles") or cn.is_in_group("destructible"):
+							fb_obj = cn
+						if cn is VehicleBase:
+							fb_obj = cn
+						elif cn.get_parent() is VehicleBase:
+							fb_obj = cn.get_parent()
+					trace = {
+						"hit": true,
+						"target_hero_id": -1,
+						"target_object": fb_obj,
+						"is_headshot": false,
+						"hit_pos": fb_pos,
+						"distance": origin.distance_to(fb_pos),
+						"arc_points": PackedVector3Array([origin, fb_pos]),
+					}
 
 		var hit_pos: Vector3 = trace.get("hit_pos", origin + shot_dir * max_range_m)
 		var target_id: int = int(trace.get("target_hero_id", -1))
@@ -168,6 +209,17 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 				trace["distance"] = best_melee_dist
 				trace["hit"] = true
 
+		var sticky_hit: Dictionary = _find_closest_enemy_sticky(origin, shot_dir, float(trace.get("distance", max_range_m)))
+		if not sticky_hit.is_empty():
+			var hit_sticky: ProjectileEntity = sticky_hit["sticky"] as ProjectileEntity
+			hit_pos = sticky_hit["pos"] as Vector3
+			hit_sticky.destroy_by_enemy()
+			var s_arc := PackedVector3Array([origin, hit_pos])
+			pellet_hits.append(hit_pos)
+			pellet_arcs.append(s_arc)
+			fired.emit(weapon_kind, origin, hit_pos)
+			continue
+
 		var arc_pts := PackedVector3Array([origin, hit_pos])
 		pellet_hits.append(hit_pos)
 		pellet_arcs.append(arc_pts)
@@ -190,25 +242,39 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var obj: Variant = trace.get("target_object", null)
 			var is_veh: bool = (obj != null and obj is Node and (obj as Node).is_in_group("vehicles"))
 			if obj != null and obj is Node and (obj as Node).has_method("apply_damage_server"):
-				var veh_mult: float = 1.0
-				if is_veh and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_vehicle_damage_mult"):
-					veh_mult = float(owner_hero.status_effects.get_vehicle_damage_mult())
-				var obj_dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), false, dmg_mult * veh_mult)
-				var impact_dir: Vector3 = shot_dir
-				if arc_pts.size() >= 2:
-					var seg_d: Vector3 = arc_pts[arc_pts.size() - 1] - arc_pts[arc_pts.size() - 2]
-					if seg_d.length_squared() > 0.0001:
-						impact_dir = seg_d.normalized()
-				(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, impact_dir, hit_pos, false)
-				if weapon_kind == WeaponKind.STICK_GRENADE and not caber_spent:
-					_trigger_caber_explosion(hit_pos, context)
-				if not is_veh:
+				var is_allied_shield: bool = (obj is DemolisherSkills.RiotShieldEntity and (obj as DemolisherSkills.RiotShieldEntity).owner_team == owner_hero.team)
+				var is_allied_vehicle: bool = (obj is VehicleBase and (obj as VehicleBase).team >= 0 and (obj as VehicleBase).team == owner_hero.team)
+				if is_allied_shield or is_allied_vehicle:
 					NetworkManager.broadcast_game_event("hit_vfx", {
 						"pos": hit_pos,
-						"kind": "spark",
+						"kind": "dust",
 						"attacker_id": owner_hero.entity_id,
-						"damage": obj_dmg,
 					})
+				else:
+					var veh_mult: float = 1.0
+					if is_veh and owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_vehicle_damage_mult"):
+						veh_mult = float(owner_hero.status_effects.get_vehicle_damage_mult())
+					var obj_dmg: int = compute_falloff_damage(float(trace.get("distance", 0.0)), false, dmg_mult * veh_mult)
+					var impact_dir: Vector3 = shot_dir
+					if arc_pts.size() >= 2:
+						var seg_d: Vector3 = arc_pts[arc_pts.size() - 1] - arc_pts[arc_pts.size() - 2]
+						if seg_d.length_squared() > 0.0001:
+							impact_dir = seg_d.normalized()
+					var prev_hp: int = int((obj as Node).get("hp")) if (obj as Node).get("hp") != null else 0
+					(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, impact_dir, hit_pos, false)
+					var post_hp: int = int((obj as Node).get("hp")) if (obj as Node).get("hp") != null else 0
+					var obj_dealt: int = maxi(0, prev_hp - post_hp) if prev_hp > 0 else obj_dmg
+					if obj_dealt > 0 and owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
+						owner_hero.status_effects.notify_damage_dealt_server(obj_dealt)
+					if weapon_kind == WeaponKind.STICK_GRENADE and not caber_spent:
+						_trigger_caber_explosion(hit_pos, context)
+					if not is_veh:
+						NetworkManager.broadcast_game_event("hit_vfx", {
+							"pos": hit_pos,
+							"kind": "spark",
+							"attacker_id": owner_hero.entity_id,
+							"damage": obj_dmg,
+						})
 			elif bool(trace.get("hit", false)):
 				NetworkManager.broadcast_game_event("hit_vfx", {
 					"pos": hit_pos,
@@ -234,6 +300,49 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		"hits": pellet_hits,
 		"arcs": pellet_arcs,
 	})
+
+
+func _find_closest_enemy_sticky(origin: Vector3, shot_dir: Vector3, max_dist: float) -> Dictionary:
+	if owner_hero == null or not owner_hero.is_inside_tree():
+		return {}
+	var best_dist: float = max_dist
+	var best_sticky: ProjectileEntity = null
+	for node in owner_hero.get_tree().get_nodes_in_group("destructible_stickies"):
+		if not (node is ProjectileEntity):
+			continue
+		var sticky: ProjectileEntity = node as ProjectileEntity
+		if sticky._exploded or sticky.is_queued_for_deletion():
+			continue
+		if sticky.owner_team == owner_hero.team:
+			continue
+		var t: float = LagCompensator.ray_intersect_sphere(origin, shot_dir, sticky.global_position, sticky.hit_radius)
+		if t >= 0.0 and t < best_dist:
+			best_dist = t
+			best_sticky = sticky
+	if best_sticky != null:
+		return {
+			"sticky": best_sticky,
+			"dist": best_dist,
+			"pos": origin + shot_dir * best_dist,
+		}
+	return {}
+
+
+func _destroy_enemy_stickies_along_ray(origin: Vector3, shot_dir: Vector3, max_dist: float) -> void:
+	if owner_hero == null or not owner_hero.is_inside_tree():
+		return
+	var to_destroy: Array[ProjectileEntity] = []
+	for node in owner_hero.get_tree().get_nodes_in_group("destructible_stickies"):
+		if not (node is ProjectileEntity):
+			continue
+		var sticky: ProjectileEntity = node as ProjectileEntity
+		if sticky._exploded or sticky.is_queued_for_deletion() or sticky.owner_team == owner_hero.team:
+			continue
+		var t: float = LagCompensator.ray_intersect_sphere(origin, shot_dir, sticky.global_position, sticky.hit_radius)
+		if t >= 0.0 and t < max_dist:
+			to_destroy.append(sticky)
+	for s in to_destroy:
+		s.destroy_by_enemy()
 
 
 func _apply_hero_hit(
@@ -303,17 +412,33 @@ func _trigger_caber_explosion(exp_pos: Vector3, context: Dictionary) -> void:
 	if caber_spent or owner_hero == null:
 		return
 	caber_spent = true
+	if owner_hero.has_method("set_caber_spent_visual"):
+		owner_hero.set_caber_spent_visual(true)
+	NetworkManager.broadcast_game_event("caber_spent", {
+		"hero_id": owner_hero.entity_id,
+		"spent": true,
+	})
+
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-	var caber_radius: float = 4.5
+	var caber_radius: float = 5.5
 	for hid_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
 		if h == null or h.is_defeated or h.team == owner_hero.team:
 			continue
 		var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
-		if h_pos.distance_to(exp_pos) <= caber_radius:
-			var aoe_dealt: int = h.apply_damage_server(60, owner_hero.entity_id, true)
+		var dist: float = minf(h_pos.distance_to(exp_pos), (h_pos + Vector3(0.0, 1.05, 0.0)).distance_to(exp_pos))
+		var eff_dist: float = maxf(0.0, dist - h.capsule_radius)
+		if eff_dist <= caber_radius:
+			var falloff: float = clampf(1.0 - (eff_dist / caber_radius) * 0.72, 0.25, 1.0)
+			var aoe_dmg: int = maxi(1, int(roundf(60.0 * falloff)))
+			var aoe_dealt: int = h.apply_damage_server(aoe_dmg, owner_hero.entity_id, true)
+			var horiz_vec := Vector3(h_pos.x - exp_pos.x, 0.0, h_pos.z - exp_pos.z)
+			var horiz_dir: Vector3 = horiz_vec.normalized() if horiz_vec.length_squared() > 0.001 else Vector3.FORWARD
+			var kb_dir: Vector3 = (horiz_dir * 0.78 + Vector3.UP * 0.62).normalized()
+			h.apply_knockback(kb_dir * 18.0 * falloff)
 			if aoe_dealt > 0 and owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
 				owner_hero.status_effects.notify_damage_dealt_server(aoe_dealt)
+
 	var vehs: Array = context.get("vehicles", [])
 	if vehs.is_empty() and owner_hero.is_inside_tree():
 		vehs = owner_hero.get_tree().get_nodes_in_group("vehicles")
@@ -321,12 +446,35 @@ func _trigger_caber_explosion(exp_pos: Vector3, context: Dictionary) -> void:
 	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("get_vehicle_damage_mult"):
 		veh_mult = float(owner_hero.status_effects.get_vehicle_damage_mult())
 	for v in vehs:
+		if v is VehicleBase and (v as VehicleBase).team >= 0 and (v as VehicleBase).team == owner_hero.team:
+			continue
 		if v is Node3D and v.has_method("apply_damage_server"):
 			var v_pos: Vector3 = (v as Node3D).global_position if (v as Node3D).is_inside_tree() else (v as Node3D).position
 			if v_pos.distance_to(exp_pos) <= caber_radius + 1.5:
 				var v_dir: Vector3 = (v_pos - exp_pos).normalized()
-				v.apply_damage_server(int(roundf(60.0 * veh_mult)), owner_hero.entity_id, v_dir, exp_pos, true)
-	owner_hero.apply_damage_server(60, owner_hero.entity_id, true)
+				var v_hp_pre: int = (v as VehicleBase).hp if v is VehicleBase else 0
+				var v_dmg: int = int(roundf(60.0 * veh_mult))
+				v.apply_damage_server(v_dmg, owner_hero.entity_id, v_dir, exp_pos, true)
+				if owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
+					var v_dealt: int = maxi(0, v_hp_pre - (v as VehicleBase).hp) if v is VehicleBase else v_dmg
+					if v_dealt > 0:
+						owner_hero.status_effects.notify_damage_dealt_server(v_dealt)
+
+	if owner_hero.is_inside_tree():
+		for s in owner_hero.get_tree().get_nodes_in_group("destructible_stickies"):
+			if not (s is ProjectileEntity):
+				continue
+			var sticky: ProjectileEntity = s as ProjectileEntity
+			if sticky.owner_team != owner_hero.team and sticky.global_position.distance_to(exp_pos) <= caber_radius:
+				sticky.destroy_by_enemy()
+
+	owner_hero.apply_damage_server(60, owner_hero.entity_id, true, false, false)
+	if not owner_hero.is_defeated:
+		var self_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+		var self_vec := Vector3(self_pos.x - exp_pos.x, 0.0, self_pos.z - exp_pos.z)
+		var self_dir: Vector3 = self_vec.normalized() if self_vec.length_squared() > 0.001 else Vector3.BACK
+		owner_hero.apply_knockback((self_dir * 0.72 + Vector3.UP * 0.69).normalized() * 14.0)
+
 	NetworkManager.broadcast_game_event("explosion_vfx", {
 		"pos": exp_pos,
 		"radius": caber_radius,

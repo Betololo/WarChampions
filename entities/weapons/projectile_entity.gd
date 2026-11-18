@@ -9,6 +9,11 @@ enum ProjectileKind {
 	EXPLOSIVE_KEG,
 	TANK_SHELL,
 	AA_FLAK,
+	FIREBALL,
+	BOUNCE_GRENADE,
+	CANNON_BALL,
+	TRAPPER_STICKY,
+	TNT_ROPE_CLUSTER,
 }
 
 var kind: int = ProjectileKind.BAZOOKA_ROCKET
@@ -25,9 +30,13 @@ var explode_on_impact: bool = true
 var apply_keg_slow: bool = false
 var proximity_air_radius: float = 0.0 # > 0 for AA Flak
 var hp: int = 20 # Shootable mid-air (e.g. Explosive Keg)
+var age_sec: float = 0.0
+var hit_radius: float = 0.65
 
 var _exploded: bool = false
 var _is_stuck: bool = false
+var _stuck: bool = false
+var _bounce_fuse_started: bool = false
 var _stuck_target: Node3D = null
 var _stuck_local_pos: Vector3 = Vector3.ZERO
 var _mesh: Node3D
@@ -77,6 +86,10 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 	position = p_pos
 	velocity = p_vel
 	_context = p_context
+	age_sec = 0.0
+	_is_stuck = false
+	_stuck = false
+	_bounce_fuse_started = false
 
 	match kind:
 		ProjectileKind.BAZOOKA_ROCKET:
@@ -126,11 +139,53 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			lifetime = 3.5
 			explode_on_impact = true
 			proximity_air_radius = 7.5
+		ProjectileKind.FIREBALL:
+			gravity_scale = 0.0
+			splash_radius = 2.6
+			base_damage = 40.0
+			knockback_force = 4.0
+			lifetime = 1.25
+			explode_on_impact = true
+		ProjectileKind.BOUNCE_GRENADE:
+			gravity_scale = 1.0
+			splash_radius = 6.5
+			base_damage = 60.0
+			knockback_force = 15.0
+			lifetime = 6.0
+			bounce_restitution = 0.52
+			explode_on_impact = false
+		ProjectileKind.CANNON_BALL:
+			gravity_scale = 0.42
+			splash_radius = 7.5
+			base_damage = 100.0
+			knockback_force = 24.0
+			lifetime = 5.0
+			explode_on_impact = true
+		ProjectileKind.TRAPPER_STICKY:
+			gravity_scale = 1.0
+			splash_radius = 6.0
+			base_damage = 40.0
+			knockback_force = 14.0
+			lifetime = 45.0
+			explode_on_impact = false
+			hit_radius = 0.65
+			if not bool(get_meta("visual_only", false)):
+				add_to_group("destructible_stickies")
+		ProjectileKind.TNT_ROPE_CLUSTER:
+			gravity_scale = 1.0
+			splash_radius = 8.5
+			base_damage = 105.0
+			knockback_force = 23.0
+			lifetime = 1.8
+			explode_on_impact = true
 
 
 func _ready() -> void:
 	if not bool(get_meta("visual_only", false)):
-		add_to_group("destructible")
+		if kind == ProjectileKind.TRAPPER_STICKY:
+			add_to_group("destructible_stickies")
+		else:
+			add_to_group("destructible")
 	_build_visual()
 	_align_mesh_to_velocity()
 
@@ -222,6 +277,43 @@ func _build_visual() -> void:
 			flak_orb.radius = 0.20
 			flak_orb.height = 0.40
 			_add_visual_part(flak_orb, Vector3.ZERO, Vector3.ZERO, Color(1.0, 0.85, 0.18), true)
+		ProjectileKind.FIREBALL:
+			var fb := SphereMesh.new()
+			fb.radius = 0.24
+			fb.height = 0.48
+			_add_visual_part(fb, Vector3.ZERO, Vector3.ZERO, Color(1.0, 0.48, 0.08), true)
+		ProjectileKind.BOUNCE_GRENADE:
+			var bg := SphereMesh.new()
+			bg.radius = 0.17
+			bg.height = 0.34
+			_add_visual_part(bg, Vector3.ZERO, Vector3.ZERO, Color(0.24, 0.30, 0.20))
+			var band_bg := BoxMesh.new()
+			band_bg.size = Vector3(0.22, 0.08, 0.22)
+			_add_visual_part(band_bg, Vector3.ZERO, Vector3.ZERO, Color(0.92, 0.46, 0.10))
+		ProjectileKind.CANNON_BALL:
+			var cb := SphereMesh.new()
+			cb.radius = 0.24
+			cb.height = 0.48
+			_add_visual_part(cb, Vector3.ZERO, Vector3.ZERO, Color(0.18, 0.19, 0.22))
+		ProjectileKind.TRAPPER_STICKY:
+			var st := SphereMesh.new()
+			st.radius = 0.18
+			st.height = 0.36
+			var st_col: Color = Color(0.20, 0.45, 0.88) if owner_team == NetworkManager.TEAM_ROYAL else Color(0.86, 0.22, 0.18)
+			_add_visual_part(st, Vector3.ZERO, Vector3.ZERO, st_col)
+			var sp1 := BoxMesh.new()
+			sp1.size = Vector3(0.42, 0.07, 0.07)
+			_add_visual_part(sp1, Vector3.ZERO, Vector3.ZERO, Color(0.22, 0.22, 0.24))
+			var sp2 := BoxMesh.new()
+			sp2.size = Vector3(0.07, 0.42, 0.07)
+			_add_visual_part(sp2, Vector3.ZERO, Vector3.ZERO, Color(0.22, 0.22, 0.24))
+		ProjectileKind.TNT_ROPE_CLUSTER:
+			var bundle := BoxMesh.new()
+			bundle.size = Vector3(0.42, 0.24, 0.36)
+			_add_visual_part(bundle, Vector3.ZERO, Vector3.ZERO, Color(0.82, 0.14, 0.12))
+			var strap := BoxMesh.new()
+			strap.size = Vector3(0.44, 0.07, 0.38)
+			_add_visual_part(strap, Vector3.ZERO, Vector3.ZERO, Color(0.18, 0.18, 0.20))
 
 
 func _align_mesh_to_velocity() -> void:
@@ -236,18 +328,63 @@ func _align_mesh_to_velocity() -> void:
 		_mesh.look_at(global_position + vel_dir, Vector3.UP)
 
 
-func apply_damage_server(amount: int, _attacker_id: int, _dir: Vector3, _hit_pos: Vector3, _is_explosive: bool) -> void:
+func can_detonate() -> bool:
+	return age_sec >= 0.5 and not _exploded and not is_queued_for_deletion()
+
+
+func destroy_by_enemy() -> void:
+	if _exploded:
+		return
+	_exploded = true
+	remove_from_group("destructible_stickies")
+	if is_inside_tree() and not bool(get_meta("visual_only", false)) and NetworkManager.is_server_authority():
+		NetworkManager.broadcast_game_event("hit_vfx", {
+			"pos": global_position,
+			"kind": "spark",
+		})
+	queue_free()
+
+
+func apply_damage_server(amount: int, attacker_id: int, _dir: Vector3, _hit_pos: Vector3, _is_explosive: bool) -> void:
 	if _exploded or bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority():
+		return
+	if kind == ProjectileKind.TRAPPER_STICKY:
+		var heroes_by_id: Dictionary = _context.get("heroes_by_id", {})
+		var attacker_h: HeroCharacter = heroes_by_id.get(attacker_id, null) as HeroCharacter
+		if attacker_h != null and attacker_h.team == owner_team:
+			return
+		hp -= amount
+		if hp <= 0:
+			destroy_by_enemy()
 		return
 	hp -= amount
 	if hp <= 0:
 		_detonate()
 
 
+func _is_target_vehicle(collider: Object) -> bool:
+	if not (collider is Node):
+		return false
+	var n: Node = collider as Node
+	var veh: VehicleBase = null
+	if n is VehicleBase:
+		veh = n as VehicleBase
+	elif n.get_parent() is VehicleBase:
+		veh = n.get_parent() as VehicleBase
+	elif n.is_in_group("vehicles"):
+		return true
+	if veh != null:
+		if veh.team >= 0 and veh.team == owner_team:
+			return false
+		return true
+	return false
+
+
 func _physics_process(delta: float) -> void:
 	if _exploded:
 		return
 
+	age_sec += delta
 	var is_visual_only: bool = bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority()
 
 	lifetime -= delta
@@ -281,14 +418,21 @@ func _physics_process(delta: float) -> void:
 		if space != null:
 			var mask: int = (1 | 8 | 64) if is_visual_only else (1 | 2 | 8 | 64)
 			var query := PhysicsRayQueryParameters3D.create(global_position, next_pos, mask)
+			var heroes_map: Dictionary = _context.get("heroes_by_id", {})
+			var shooter_node: HeroCharacter = heroes_map.get(owner_id, null) as HeroCharacter
+			if shooter_node != null and is_instance_valid(shooter_node):
+				query.exclude = [shooter_node.get_rid()]
 			var res: Dictionary = space.intersect_ray(query)
 			if not res.is_empty():
 				var hit_pos: Vector3 = res["position"]
 				var hit_normal: Vector3 = res.get("normal", Vector3.UP)
 				var collider: Object = res.get("collider", null)
 				var hit_enemy_hero: bool = (not is_visual_only) and (collider is HeroCharacter and (collider as HeroCharacter).team != owner_team)
-				var hit_vehicle: bool = (collider is Node and (collider as Node).is_in_group("vehicles"))
+				var hit_vehicle: bool = _is_target_vehicle(collider)
 				if kind == ProjectileKind.TNT_SATCHEL and not hit_enemy_hero:
+					_stick_to_surface(hit_pos, hit_normal, collider)
+					return
+				if kind == ProjectileKind.TRAPPER_STICKY:
 					_stick_to_surface(hit_pos, hit_normal, collider)
 					return
 				if explode_on_impact or hit_enemy_hero or hit_vehicle:
@@ -300,6 +444,9 @@ func _physics_process(delta: float) -> void:
 					return
 				else:
 					# Bounce / roll (Grenades, Keg)
+					if kind == ProjectileKind.BOUNCE_GRENADE and not _bounce_fuse_started:
+						_bounce_fuse_started = true
+						lifetime = minf(lifetime, 2.0)
 					global_position = hit_pos + hit_normal * 0.15
 					velocity = velocity.bounce(hit_normal) * bounce_restitution
 					return
@@ -310,15 +457,17 @@ func _physics_process(delta: float) -> void:
 	else:
 		_align_mesh_to_velocity()
 
-	if (kind == ProjectileKind.BAZOOKA_ROCKET or kind == ProjectileKind.TANK_SHELL) and not DisplayServer.get_name().contains("headless"):
+	if (kind == ProjectileKind.BAZOOKA_ROCKET or kind == ProjectileKind.TANK_SHELL or kind == ProjectileKind.FIREBALL) and not DisplayServer.get_name().contains("headless"):
 		_trail_timer -= delta
 		if _trail_timer <= 0.0:
 			_trail_timer = 0.055
-			StatusEffectsVFX.spawn_cartoon_burst(get_parent(), global_position, "smoke", 0.32)
+			var trail_kind: String = "fire" if kind == ProjectileKind.FIREBALL else "smoke"
+			StatusEffectsVFX.spawn_cartoon_burst(get_parent(), global_position, trail_kind, 0.32)
 
 
 func _stick_to_surface(hit_pos: Vector3, hit_normal: Vector3, collider: Object) -> void:
 	_is_stuck = true
+	_stuck = true
 	velocity = Vector3.ZERO
 	gravity_scale = 0.0
 	var stuck_world_pos: Vector3 = hit_pos + hit_normal * 0.08
@@ -327,8 +476,11 @@ func _stick_to_surface(hit_pos: Vector3, hit_normal: Vector3, collider: Object) 
 		var c_node: Node3D = collider as Node3D
 		if c_node.get_parent() is VehicleBase:
 			c_node = c_node.get_parent() as Node3D
-		_stuck_target = c_node
-		_stuck_local_pos = c_node.to_local(stuck_world_pos)
+		if c_node is HeroCharacter:
+			_stuck_target = null
+		else:
+			_stuck_target = c_node
+			_stuck_local_pos = c_node.to_local(stuck_world_pos)
 	else:
 		_stuck_target = null
 
@@ -337,28 +489,37 @@ func _detonate() -> void:
 	if _exploded or bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority():
 		return
 	_exploded = true
+	remove_from_group("destructible_stickies")
 
 	var heroes_by_id: Dictionary = _context.get("heroes_by_id", {})
 	var eaten_by_gunner: bool = false
+	var is_demolisher_grenade: bool = (
+		kind == ProjectileKind.BOUNCE_GRENADE
+		or kind == ProjectileKind.CANNON_BALL
+		or kind == ProjectileKind.TRAPPER_STICKY
+		or kind == ProjectileKind.TNT_ROPE_CLUSTER
+	)
 
-	# Check Gunner's "I Eat Grenades" absorption BEFORE dealing splash damage
-	for id_key in heroes_by_id.keys():
-		var h: HeroCharacter = heroes_by_id[id_key]
-		if h == null or h.is_defeated:
-			continue
-		if h.global_position.distance_to(global_position) <= splash_radius + 1.5:
-			if h.status_effects != null and h.status_effects.has_method("can_eat_grenades") and h.status_effects.can_eat_grenades():
-				var heal_amt: int = int(roundf(base_damage * 0.55))
-				h.heal_server(heal_amt)
-				eaten_by_gunner = true
-				NetworkManager.broadcast_game_event("eat_grenades", {
-					"hero_id": h.entity_id,
-					"pos": global_position,
-					"heal": heal_amt,
-				})
-				break
+	# Check Gunner's "I Eat Grenades" absorption BEFORE dealing splash damage (skip for Fireball)
+	if kind != ProjectileKind.FIREBALL:
+		for id_key in heroes_by_id.keys():
+			var h: HeroCharacter = heroes_by_id[id_key]
+			if h == null or h.is_defeated:
+				continue
+			if h.global_position.distance_to(global_position) <= splash_radius + 1.5:
+				if h.status_effects != null and h.status_effects.has_method("can_eat_grenades") and h.status_effects.can_eat_grenades():
+					var heal_amt: int = int(roundf(base_damage * 0.55))
+					h.heal_server(heal_amt)
+					eaten_by_gunner = true
+					NetworkManager.broadcast_game_event("eat_grenades", {
+						"hero_id": h.entity_id,
+						"pos": global_position,
+						"heal": heal_amt,
+					})
+					break
 
 	if not eaten_by_gunner:
+		var attacker_h: HeroCharacter = heroes_by_id.get(owner_id, null) as HeroCharacter
 		for id_key in heroes_by_id.keys():
 			var h: HeroCharacter = heroes_by_id[id_key]
 			if h == null or h.is_defeated:
@@ -367,6 +528,9 @@ func _detonate() -> void:
 			if h.team == owner_team and h.entity_id != owner_id:
 				continue
 			var dist: float = h.global_position.distance_to(global_position)
+			if is_demolisher_grenade or kind == ProjectileKind.FIREBALL:
+				var chest_dist: float = (h.global_position + Vector3(0.0, 1.05, 0.0)).distance_to(global_position)
+				dist = minf(dist, chest_dist)
 			var eff_dist: float = maxf(0.0, dist - h.capsule_radius)
 			if eff_dist <= splash_radius:
 				# Solid Layer-1 vertical wall occlusion blocks splash damage & knockback
@@ -383,59 +547,83 @@ func _detonate() -> void:
 							if not is_curb_or_ground:
 								continue
 				var falloff: float = clampf(1.0 - (eff_dist / splash_radius) * 0.55, 0.45, 1.0)
+				if is_demolisher_grenade:
+					falloff = clampf(1.0 - (eff_dist / splash_radius) * 0.72, 0.25, 1.0)
+				elif kind == ProjectileKind.FIREBALL:
+					falloff = 1.0
 				var horiz_vec := Vector3(h.global_position.x - global_position.x, 0.0, h.global_position.z - global_position.z)
 				var horiz_dir: Vector3 = horiz_vec.normalized() if horiz_vec.length_squared() > 0.001 else Vector3.FORWARD
 				var kb_dir: Vector3 = (horiz_dir * 0.78 + Vector3.UP * 0.62).normalized()
 
 				if h.entity_id == owner_id:
-					# ZERO self-damage, full radial self-knockback for rocket jumping
-					h.apply_knockback(kb_dir * knockback_force * falloff)
+					# ZERO self-damage, full radial self-knockback for rocket jumping (skip for Fireball)
+					if kind != ProjectileKind.FIREBALL:
+						h.apply_knockback(kb_dir * knockback_force * falloff)
 				else:
-					# Enemies: deal damage AND always apply strong radial knockback
+					if kind == ProjectileKind.FIREBALL:
+						var is_fire_immune: bool = h.is_in_water or (h.status_effects != null and h.status_effects.fire_immunity_timer > 0.0)
+						if is_fire_immune:
+							continue
+					# Enemies: deal damage AND apply radial knockback
 					var dmg: int = maxi(1, int(roundf(base_damage * falloff)))
-					var dealt: int = h.apply_damage_server(dmg, owner_id, true)
-					var enemy_kb: float = maxf(21.0, knockback_force)
-					h.apply_knockback(kb_dir * enemy_kb * falloff)
+					var dealt: int = h.apply_damage_server(dmg, owner_id, kind != ProjectileKind.FIREBALL)
+					var enemy_kb: float = knockback_force if (is_demolisher_grenade or kind == ProjectileKind.FIREBALL) else maxf(21.0, knockback_force)
+					if kind != ProjectileKind.FIREBALL:
+						h.apply_knockback(kb_dir * enemy_kb * falloff)
+
+					if kind == ProjectileKind.FIREBALL and h.status_effects != null and h.status_effects.has_method("apply_burn"):
+						h.status_effects.apply_burn(owner_id, 10.0, 3.0)
 
 					if apply_keg_slow and h.status_effects != null and h.status_effects.has_method("apply_concussion_slow"):
 						h.status_effects.apply_concussion_slow(0.60, 5.0)
 
 					if dealt > 0:
-						var attacker_h: HeroCharacter = heroes_by_id.get(owner_id, null) as HeroCharacter
 						if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("notify_damage_dealt_server"):
 							attacker_h.status_effects.notify_damage_dealt_server(dealt)
 						var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
-						if xp_cb.is_valid():
-							if attacker_h != null:
-								xp_cb.call(attacker_h, h, dealt)
+						if xp_cb.is_valid() and attacker_h != null:
+							xp_cb.call(attacker_h, h, dealt)
 						NetworkManager.broadcast_game_event("hit_vfx", {
 							"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
-							"kind": "spark",
+							"kind": "fire" if kind == ProjectileKind.FIREBALL else "spark",
 							"attacker_id": owner_id,
 							"victim_id": h.entity_id,
 							"damage": dmg,
-							"headshot": true,
+							"headshot": kind != ProjectileKind.FIREBALL,
 						})
 
-		# Splash damage against vehicles & destructible props
+		# Splash damage against vehicles, enemy stickies & destructible props
 		if is_inside_tree():
-			var attacker_v: HeroCharacter = heroes_by_id.get(owner_id, null) as HeroCharacter
 			var veh_mult: float = 1.0
-			if attacker_v != null and attacker_v.status_effects != null and attacker_v.status_effects.has_method("get_vehicle_damage_mult"):
-				veh_mult = float(attacker_v.status_effects.get_vehicle_damage_mult())
+			if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("get_vehicle_damage_mult"):
+				veh_mult = float(attacker_h.status_effects.get_vehicle_damage_mult())
 			for v in get_tree().get_nodes_in_group("vehicles"):
+				if v is VehicleBase and (v as VehicleBase).team >= 0 and (v as VehicleBase).team == owner_team:
+					continue
 				if v is Node3D and v.has_method("apply_damage_server"):
 					var vdist: float = (v as Node3D).global_position.distance_to(global_position)
 					if vdist <= splash_radius + 3.0:
 						var hit_dir: Vector3 = ((v as Node3D).global_position - global_position).normalized()
 						if velocity.length_squared() > 1.0:
 							hit_dir = velocity.normalized()
+						var v_hp_pre: int = (v as VehicleBase).hp if v is VehicleBase else 0
 						if kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("apply_bazooka_damage_server") and is_equal_approx(veh_mult, 1.0):
 							v.apply_bazooka_damage_server(owner_id, hit_dir, global_position)
 						else:
 							var base_v: float = float(v.compute_bazooka_directional_damage(hit_dir, global_position)) if (kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("compute_bazooka_directional_damage")) else (base_damage * 1.15 * clampf(1.0 - vdist / (splash_radius + 3.5), 0.25, 1.0))
 							var vdmg: int = maxi(5, int(roundf(base_v * veh_mult)))
 							v.apply_damage_server(vdmg, owner_id, hit_dir, global_position, true)
+						if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("notify_damage_dealt_server"):
+							var v_dealt: int = maxi(0, v_hp_pre - ((v as VehicleBase).hp if v is VehicleBase else 0)) if v is VehicleBase else 0
+							if v_dealt > 0:
+								attacker_h.status_effects.notify_damage_dealt_server(v_dealt)
+
+			for s in get_tree().get_nodes_in_group("destructible_stickies"):
+				if s == self or not (s is ProjectileEntity):
+					continue
+				var sticky: ProjectileEntity = s as ProjectileEntity
+				if sticky.owner_team != owner_team and sticky.global_position.distance_to(global_position) <= splash_radius:
+					sticky.destroy_by_enemy()
 
 			for d in get_tree().get_nodes_in_group("destructible"):
 				if d == self or not (d is Node3D):

@@ -46,6 +46,7 @@ func _ready() -> void:
 	await _test_phase11_task2_vehicles()
 	await _test_phase11_task3_crosshair_and_animations()
 	await _test_phase11_task4_demolisher()
+	await _test_phase11_task5_demolisher_weapons()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6529,5 +6530,413 @@ func _test_phase11_task4_demolisher() -> void:
 
 	demo.queue_free()
 	demo_nat.queue_free()
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_task5_demolisher_weapons() -> void:
+	print("--- Phase 11 Task 5: Demolisher Weapons Gameplay Tests ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	# Solid floor & test wall in arena for raycasts, bounces, and LOS occlusion
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_shape := BoxShape3D.new()
+	floor_shape.size = Vector3(200.0, 1.0, 200.0)
+	floor_col.shape = floor_shape
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var occ_wall := StaticBody3D.new()
+	occ_wall.collision_layer = 1
+	var wall_col := CollisionShape3D.new()
+	var wall_shape := BoxShape3D.new()
+	wall_shape.size = Vector3(6.0, 4.0, 0.5)
+	wall_col.shape = wall_shape
+	occ_wall.position = Vector3(20.0, 2.0, -5.0)
+	occ_wall.add_child(wall_col)
+	arena.add_child(occ_wall)
+	await get_tree().physics_frame
+
+	var demo := HeroCharacter.new()
+	demo.setup_identity(11501, "DemoT5", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, true, false)
+	arena.add_child(demo)
+
+	var enemy_a := HeroCharacter.new()
+	enemy_a.setup_identity(11502, "EnemyA", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(enemy_a)
+
+	var enemy_water := HeroCharacter.new()
+	enemy_water.setup_identity(11503, "EnemyWater", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(enemy_water)
+
+	var ally_h := HeroCharacter.new()
+	ally_h.setup_identity(11504, "AllyH", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(ally_h)
+
+	var lag_comp := LagCompensator.new()
+	arena.add_child(lag_comp)
+
+	var heroes_map: Dictionary = {
+		11501: demo,
+		11502: enemy_a,
+		11503: enemy_water,
+		11504: ally_h,
+	}
+	var ctx: Dictionary = {
+		"heroes_by_id": heroes_map,
+		"projectiles_root": arena,
+		"lag_compensator": lag_comp,
+	}
+
+	# 1. FlameWeapon arch 0 (Flamethrower): 10/s ammo, 5 dmg + 3.0s Afterburn, water/immunity immunity, 3x vehicle, Shield Drain
+	demo.global_position = Vector3(0.0, 0.0, 0.0)
+	enemy_a.global_position = Vector3(0.0, 0.0, -6.0)
+	enemy_water.global_position = Vector3(1.5, 0.0, -6.0)
+	enemy_water.is_in_water = true
+	ally_h.global_position = Vector3(-1.5, 0.0, -6.0)
+	await get_tree().physics_frame
+
+	var f_cmd := InputCmd.new()
+	f_cmd.aim_yaw = 0.0
+	f_cmd.aim_pitch = 0.0
+	f_cmd.set_button(InputCmd.BTN_FIRE, true)
+
+	var fw0: FlameWeapon = demo.weapons[0] as FlameWeapon
+	var consumed_ticks: int = 0
+	for _i in range(10):
+		if fw0.try_consume_fire(f_cmd):
+			consumed_ticks += 1
+		fw0.step_timers(0.10, f_cmd)
+	var ammo_10s_ok: bool = (fw0 is FlameWeapon and consumed_ticks == 10 and fw0.ammo_in_mag == 90)
+
+	var ea_hp0: int = enemy_a.hp
+	var ew_hp0: int = enemy_water.hp
+	var al_hp0: int = ally_h.hp
+	demo.status_effects.activate_damage_to_shield(3.0)
+	fw0.fire_server(f_cmd, ctx)
+	var flame0_hit_ok: bool = (
+		enemy_a.hp == ea_hp0 - 5
+		and enemy_a.status_effects.is_burning()
+		and is_equal_approx(enemy_a.status_effects.burn_timer, 3.0)
+		and enemy_water.hp == ew_hp0
+		and not enemy_water.status_effects.is_burning()
+		and ally_h.hp == al_hp0
+		and demo.shield == 5
+	)
+	# Test Layer-1 wall occlusion blocks Flamethrower
+	demo.global_position = Vector3(20.0, 0.0, 0.0)
+	enemy_a.respawn_at(Vector3(20.0, 0.0, -8.0), 0.0)
+	enemy_a.status_effects.clear_all()
+	await get_tree().physics_frame
+	var occ_hp0: int = enemy_a.hp
+	fw0.fire_server(f_cmd, ctx)
+	var flame0_occ_ok: bool = (enemy_a.hp == occ_hp0 and not enemy_a.status_effects.is_burning())
+	_assert(
+		ammo_10s_ok and flame0_hit_ok and flame0_occ_ok,
+		"Phase 11.5a: FlameWeapon arch 0 (ammo=%s[%d/%d], hit=%s[ea=%d->%d,sh=%d], occ=%s)" % [
+			str(ammo_10s_ok), consumed_ticks, fw0.ammo_in_mag,
+			str(flame0_hit_ok), ea_hp0, enemy_a.hp, demo.shield,
+			str(flame0_occ_ok),
+		]
+	)
+
+	# 2. FlameWeapon arch 1 (Fire Starter): 20/s ammo, 5 dmg/0.1s + FirePatchEntity (6.0s, 20 entry + burn) + fire_patch_vfx
+	demo.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -10.0), 0.0)
+	enemy_a.is_in_water = false
+	var fw1 := FlameWeapon.new()
+	fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
+	demo.add_child(fw1)
+	var fs_consumed: int = 0
+	for _i in range(20):
+		if fw1.try_consume_fire(f_cmd):
+			fs_consumed += 1
+		fw1.step_timers(0.05, f_cmd)
+	var fs_ammo_ok: bool = (fs_consumed == 20 and fw1.ammo_in_mag == 80)
+
+	var fp_vfx_events: Array[Dictionary] = []
+	var on_fp_evt := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "fire_patch_vfx":
+			fp_vfx_events.append(payload)
+	NetworkManager.game_event_received.connect(on_fp_evt)
+	var fs_cmd := InputCmd.new()
+	fs_cmd.aim_yaw = 0.0
+	fs_cmd.aim_pitch = -0.15 # Aim down toward ground near enemy_a
+	var pre_fp_nodes: int = get_tree().get_nodes_in_group("fire_patches").size()
+	var ea_pre_fs: int = enemy_a.hp
+	fw1.reset_weapon()
+	fw1.fire_server(fs_cmd, ctx)
+	var spawned_patches: Array[Node] = get_tree().get_nodes_in_group("fire_patches")
+	var newest_fp: DemolisherSkills.FirePatchEntity = null
+	for p in spawned_patches:
+		if p is DemolisherSkills.FirePatchEntity:
+			newest_fp = p as DemolisherSkills.FirePatchEntity
+	var fs_patch_ok: bool = (
+		enemy_a.hp == ea_pre_fs - 5
+		and enemy_a.status_effects.is_burning()
+		and spawned_patches.size() == pre_fp_nodes + 1
+		and newest_fp != null
+		and is_equal_approx(newest_fp.max_lifetime, 6.0)
+		and not fp_vfx_events.is_empty()
+	)
+	if newest_fp != null:
+		newest_fp.position = enemy_a.global_position
+		var pre_entry_hp: int = enemy_a.hp
+		newest_fp.step_hazard(0.05, ctx)
+		fs_patch_ok = fs_patch_ok and (enemy_a.hp == pre_entry_hp - 20)
+		newest_fp.queue_free()
+	NetworkManager.game_event_received.disconnect(on_fp_evt)
+	fw1.queue_free()
+	_assert(fs_ammo_ok and fs_patch_ok, "Phase 11.5b: FlameWeapon arch 1 Fire Starter (20/s ammo, 5 dmg + FirePatchEntity 6s / 20 entry dmg + fire_patch_vfx)")
+
+	# 3. FlameWeapon arch 2 (Fire Breath): FIREBALL 48 m/s, 40 dmg + 3s Afterburn, 0 dmg/0 burn in water/fire-immunity
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
+	enemy_water.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
+	enemy_water.is_in_water = true
+	var fw2 := FlameWeapon.new()
+	fw2.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 2)
+	demo.add_child(fw2)
+	fw2.fire_server(f_cmd, ctx)
+	var fb_proj: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.FIREBALL:
+			fb_proj = ch as ProjectileEntity
+	var fb_spawn_ok: bool = (fb_proj != null and absf(fb_proj.velocity.length() - 48.0) <= 0.5 and is_equal_approx(fb_proj.gravity_scale, 0.0))
+	if fb_proj != null:
+		fb_proj.global_position = enemy_a.global_position + Vector3(0.0, 1.0, 0.0)
+		var ea_fb0: int = enemy_a.hp
+		var ew_fb0: int = enemy_water.hp
+		demo.status_effects.activate_damage_to_shield(3.0)
+		demo.shield = 0
+		demo.status_effects.damage_to_shield_temp = 0
+		fb_proj._detonate()
+		var fb_hit_ok: bool = (
+			enemy_a.hp == ea_fb0 - 40
+			and enemy_a.status_effects.is_burning()
+			and is_equal_approx(enemy_a.status_effects.burn_timer, 3.0)
+			and enemy_water.hp == ew_fb0
+			and not enemy_water.status_effects.is_burning()
+			and demo.shield == 40
+		)
+		_assert(fb_spawn_ok and fb_hit_ok, "Phase 11.5c: FlameWeapon arch 2 Fire Breath launches 48 m/s FIREBALL dealing 40 dmg + 3s burn, 0 in water, feeds Shield Drain")
+	else:
+		_assert(false, "Phase 11.5c: FlameWeapon arch 2 Fire Breath spawns FIREBALL")
+	fw2.queue_free()
+	enemy_water.is_in_water = false
+
+	# 4. Grenade Launcher arch 0 (BOUNCE_GRENADE): 2.0s post-bounce fuse, immediate detonate on enemy hero/vehicle, distance falloff
+	demo.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	var gl0: ProjectileWeapon = demo.weapons[1] as ProjectileWeapon
+	var b_proj := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BOUNCE_GRENADE,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 0.6, 0.0),
+		Vector3(0.0, -10.0, -8.0),
+		ctx, 60.0, arena
+	)
+	for _t in range(10):
+		if b_proj._bounce_fuse_started:
+			break
+		b_proj._physics_process(0.02)
+	var bounce_fuse_ok: bool = (b_proj._bounce_fuse_started and b_proj.lifetime <= 2.0 and not b_proj._exploded)
+	b_proj._physics_process(2.05)
+	var bounce_expire_ok: bool = b_proj._exploded
+
+	# Direct hit before 2.0s fuse detonates immediately + distance falloff
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -3.0), 0.0)
+	enemy_water.respawn_at(Vector3(4.2, 0.0, -3.0), 0.0)
+	await get_tree().physics_frame
+	var b_direct := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BOUNCE_GRENADE,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 1.0, -1.5),
+		Vector3(0.0, 0.0, -30.0),
+		ctx, 60.0, arena
+	)
+	var ea_b0: int = enemy_a.hp
+	var ew_b0: int = enemy_water.hp
+	for _t in range(10):
+		if b_direct._exploded:
+			break
+		b_direct._physics_process(0.02)
+	var ea_bdmg: int = ea_b0 - enemy_a.hp
+	var ew_bdmg: int = ew_b0 - enemy_water.hp
+	_assert(
+		bounce_fuse_ok and bounce_expire_ok and b_direct._exploded and ea_bdmg == 60 and ew_bdmg > 0 and ew_bdmg < ea_bdmg,
+		"Phase 11.5d: BOUNCE_GRENADE 2.0s post-bounce fuse, immediate direct hero detonate, and smooth distance falloff (%d vs %d)" % [ea_bdmg, ew_bdmg]
+	)
+
+	# 5. Grenade Launcher arch 2 (CANNON_BALL): 72 m/s low-drop (0.42g), 100 dmg contact + 3x vehicle damage
+	var gl2 := ProjectileWeapon.new()
+	gl2.configure(demo, WeaponBase.WeaponKind.GRENADE_LAUNCHER, 2)
+	demo.add_child(gl2)
+	gl2.fire_server(f_cmd, ctx)
+	var cb_proj: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.CANNON_BALL:
+			cb_proj = ch as ProjectileEntity
+	var cb_stats_ok: bool = (cb_proj != null and absf(cb_proj.velocity.length() - 72.0) <= 0.5 and is_equal_approx(cb_proj.gravity_scale, 0.42) and cb_proj.explode_on_impact)
+	if cb_proj != null:
+		enemy_a.respawn_at(Vector3(0.0, 0.0, -12.0), 0.0)
+		await get_tree().physics_frame
+		cb_proj.global_position = Vector3(0.0, 1.0, -10.5)
+		cb_proj.velocity = Vector3(0.0, 0.0, -72.0)
+		var ea_cb0: int = enemy_a.hp
+		cb_proj._physics_process(0.02)
+		var cb_dmg_ok: bool = (cb_proj._exploded and (ea_cb0 - enemy_a.hp) == 100)
+		_assert(cb_stats_ok and cb_dmg_ok, "Phase 11.5e: CANNON_BALL fires at 72 m/s (0.42g) and deals 100 dmg on impact (exp=%s, dmg=%d)" % [str(cb_proj._exploded), ea_cb0 - enemy_a.hp])
+	else:
+		_assert(false, "Phase 11.5e: CANNON_BALL spawned")
+	gl2.queue_free()
+
+	# 6. Grenade Launcher arch 1 (TRAPPER_STICKY): max 6 stickies, 0.5s arming delay, BTN_AIM detonate, enemy hitscan & explosion silent destruction
+	var gl1 := ProjectileWeapon.new()
+	gl1.configure(demo, WeaponBase.WeaponKind.GRENADE_LAUNCHER, 1)
+	demo.add_child(gl1)
+	for _s in range(7):
+		gl1.fire_server(f_cmd, ctx)
+	var active_stickies_7: Array[ProjectileEntity] = []
+	for gnode in get_tree().get_nodes_in_group("destructible_stickies"):
+		if gnode is ProjectileEntity and not (gnode as ProjectileEntity).is_queued_for_deletion():
+			active_stickies_7.append(gnode as ProjectileEntity)
+	var max6_ok: bool = (active_stickies_7.size() == 6)
+
+	var test_sticky: ProjectileEntity = active_stickies_7[0]
+	for s_idx in range(1, active_stickies_7.size()):
+		active_stickies_7[s_idx]._stick_to_surface(Vector3(-60.0, 0.0, -60.0), Vector3.UP, floor_body)
+	test_sticky.global_position = Vector3(0.0, 0.2, -5.0)
+	test_sticky._stick_to_surface(Vector3(0.0, 0.0, -5.0), Vector3.UP, floor_body)
+	var stuck_ok: bool = (test_sticky._stuck and test_sticky.velocity == Vector3.ZERO and not test_sticky.can_detonate())
+	var aim_det_cmd := InputCmd.new()
+	aim_det_cmd.set_button(InputCmd.BTN_AIM, true)
+	var early_det: bool = gl1.try_detonate_stickies(aim_det_cmd) # age < 0.5s -> false!
+	# Release BTN_AIM, advance age >= 0.5s, press BTN_AIM again -> detonates!
+	gl1.try_detonate_stickies(InputCmd.new())
+	for st in active_stickies_7:
+		st._physics_process(0.55)
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -5.0), 0.0)
+	await get_tree().physics_frame
+	var ea_st0: int = enemy_a.hp
+	var armed_det: bool = gl1.try_detonate_stickies(aim_det_cmd)
+	var sticky_det_ok: bool = (not early_det and armed_det and test_sticky._exploded and enemy_a.hp == ea_st0 - 40)
+
+	# Enemy hitscan & enemy explosion destroy TRAPPER_STICKY silently without exploding
+	var st_shoot := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.TRAPPER_STICKY,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 1.45, -14.5), Vector3.ZERO, ctx, 40.0, arena
+	)
+	var st_exp := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.TRAPPER_STICKY,
+		demo.entity_id, demo.team,
+		Vector3(6.0, 0.5, -16.0), Vector3.ZERO, ctx, 40.0, arena
+	)
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -16.0), 0.0)
+	enemy_water.respawn_at(Vector3(0.0, 0.0, -10.0), 0.0)
+	await get_tree().physics_frame
+	var ea_pre_shoot: int = enemy_a.hp
+	var pistol_e := enemy_water.weapons[2] as HitscanWeapon
+	var shoot_cmd := InputCmd.new()
+	shoot_cmd.aim_yaw = 0.0
+	shoot_cmd.aim_pitch = 0.0
+	pistol_e.fire_server(shoot_cmd, ctx)
+
+	var enemy_grenade := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BOUNCE_GRENADE,
+		enemy_water.entity_id, enemy_water.team,
+		Vector3(6.0, 0.5, -15.0), Vector3.ZERO, ctx, 60.0, arena
+	)
+	enemy_grenade._detonate()
+	var sticky_destroy_ok: bool = (
+		st_shoot.is_queued_for_deletion()
+		and st_exp.is_queued_for_deletion()
+		and enemy_a.hp == ea_pre_shoot # Destroyed silently with 0 explosion damage!
+	)
+	_assert(
+		max6_ok and stuck_ok and sticky_det_ok and sticky_destroy_ok,
+		"Phase 11.5f: TRAPPER_STICKY max6=%s(%d) stuck=%s det=%s destroy=%s(sh=%s,ex=%s,hp=%d/%d)" % [
+			str(max6_ok), active_stickies_7.size(), str(stuck_ok), str(sticky_det_ok),
+			str(sticky_destroy_ok), str(st_shoot.is_queued_for_deletion()), str(st_exp.is_queued_for_deletion()),
+			enemy_a.hp, ea_pre_shoot
+		]
+	)
+	gl1.queue_free()
+
+	# 7. TNT_ROPE_CLUSTER skill throw + CaberHead visibility & allied shield/vehicle safety
+	demo.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	demo.selected_weapon_slot = 2
+	demo._rebuild_held_weapon_mesh()
+	demo._animate_character(0.016)
+	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
+	var rope_act_ok: bool = dsm.try_activate_skill(2, f_cmd, ctx)
+	var rope_threw: bool = dsm.throw_tnt_rope(f_cmd, ctx)
+	var rope_proj: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.TNT_ROPE_CLUSTER:
+			rope_proj = ch as ProjectileEntity
+	var rope_ok: bool = (rope_act_ok and rope_threw and rope_proj != null and is_equal_approx(rope_proj.base_damage, 105.0) and is_equal_approx(rope_proj.splash_radius, 8.5))
+	if rope_proj != null:
+		rope_proj.queue_free()
+
+	# Allied RiotShieldEntity must NOT trigger Caber explosion
+	var ally_shield := DemolisherSkills.RiotShieldEntity.new()
+	ally_shield.owner_id = ally_h.entity_id
+	ally_shield.owner_team = demo.team
+	ally_shield.position = Vector3(0.0, 0.0, -1.8)
+	ally_shield._context = ctx
+	arena.add_child(ally_shield)
+	await get_tree().physics_frame
+
+	var caber: HitscanWeapon = demo.weapons[2] as HitscanWeapon
+	var caber_head_node: MeshInstance3D = (demo._weapon_parts_by_name.get("CaberHead", {}) as Dictionary).get("node", null) as MeshInstance3D
+	var vis_before_hit: bool = (caber_head_node != null and caber_head_node.visible)
+	var demo_hp_pre_sh: int = demo.hp
+	caber.fire_server(f_cmd, ctx)
+	demo._animate_character(0.016)
+	var allied_shield_safe_ok: bool = (
+		not caber.caber_spent
+		and demo.hp == demo_hp_pre_sh
+		and ally_shield.hp == 150
+		and caber_head_node != null and caber_head_node.visible
+	)
+	ally_shield.queue_free()
+	await get_tree().physics_frame
+
+	# Enemy hit spends Caber and hides CaberHead; respawn restores CaberHead
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -1.8), 0.0)
+	caber.fire_server(f_cmd, ctx)
+	demo._animate_character(0.016)
+	var caber_hidden_ok: bool = (caber.caber_spent and caber_head_node != null and not caber_head_node.visible)
+	demo.respawn_at(Vector3.ZERO, 0.0)
+	demo._animate_character(0.016)
+	var caber_restored_ok: bool = (not caber.caber_spent and caber_head_node != null and caber_head_node.visible)
+	_assert(
+		rope_ok and vis_before_hit and allied_shield_safe_ok and caber_hidden_ok and caber_restored_ok,
+		"Phase 11.5g: TNT_ROPE_CLUSTER throw (105 dmg/8.5m), allied RiotShield safety, and CaberHead visibility hide/restore"
+	)
+
+	# 8. Enemy RiotShieldEntity blocks HitscanWeapon penetration behind intact shield
+	var enemy_shield := DemolisherSkills.RiotShieldEntity.new()
+	enemy_shield.owner_id = enemy_a.entity_id
+	enemy_shield.owner_team = enemy_a.team
+	enemy_shield.position = Vector3(0.0, 0.0, -3.0)
+	enemy_shield._context = ctx
+	arena.add_child(enemy_shield)
+	enemy_a.respawn_at(Vector3(0.0, 0.0, -6.0), 0.0)
+	await get_tree().physics_frame
+	var es_hp0: int = enemy_shield.hp
+	var ea_behind0: int = enemy_a.hp
+	var p_royal := ally_h.weapons[2] as HitscanWeapon
+	ally_h.global_position = Vector3.ZERO
+	p_royal.fire_server(f_cmd, ctx)
+	_assert(
+		enemy_shield.hp < es_hp0 and enemy_a.hp == ea_behind0,
+		"Phase 11.5h: Enemy RiotShieldEntity absorbs HitscanWeapon damage and blocks penetration behind shield"
+	)
+
 	arena.queue_free()
 	await _flush_deferred()

@@ -84,13 +84,13 @@ func throw_tnt_rope(cmd: InputCmd, context: Dictionary) -> bool:
 
 	var launch_vel: Vector3 = dir * 18.0 + Vector3(0.0, 5.0, 0.0)
 	ProjectileEntity.spawn_server_projectile(
-		ProjectileEntity.ProjectileKind.TNT_SATCHEL,
+		ProjectileEntity.ProjectileKind.TNT_ROPE_CLUSTER,
 		owner_hero.entity_id,
 		owner_hero.team,
 		origin,
 		launch_vel,
 		context,
-		110.0,
+		105.0,
 		owner_hero.get_parent()
 	)
 

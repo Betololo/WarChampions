@@ -585,7 +585,7 @@ static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, 
 static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector3, weapon_kind: int) -> void:
 	if parent == null or DisplayServer.get_name().contains("headless"):
 		return
-	if weapon_kind == 5 or weapon_kind == 7:
+	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 10:
 		return
 	var flash_root := Node3D.new()
 	flash_root.position = world_pos
@@ -625,9 +625,37 @@ static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector
 static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, weapon_kind: int) -> void:
 	if parent == null or DisplayServer.get_name().contains("headless"):
 		return
-	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 6:
+	if weapon_kind == 5 or weapon_kind == 6 or weapon_kind == 7 or weapon_kind == 9 or weapon_kind == 10:
 		return
 	if arc_points.size() < 2:
+		return
+	if weapon_kind == 8:
+		var start_p: Vector3 = arc_points[0]
+		var end_p: Vector3 = arc_points[arc_points.size() - 1]
+		var jet_vec: Vector3 = end_p - start_p
+		var jet_len: float = jet_vec.length()
+		if jet_len < 0.4:
+			return
+		var jet_dir: Vector3 = jet_vec / jet_len
+		var puff_count: int = 3
+		var f_mat: StandardMaterial3D = _get_shared_mat(Color(1.0, 0.48, 0.10, 0.85), true)
+		var f_mesh: SphereMesh = _get_shared_sphere()
+		for i in range(puff_count):
+			var frac: float = float(i + 1) / float(puff_count)
+			var puff := MeshInstance3D.new()
+			puff.mesh = f_mesh
+			puff.material_override = f_mat
+			puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			puff.position = start_p + jet_dir * (minf(jet_len, 8.5) * frac * 0.28)
+			puff.scale = Vector3.ONE * (0.28 + 0.18 * frac)
+			parent.add_child(puff)
+			if puff.is_inside_tree():
+				var tw_f: Tween = puff.create_tween()
+				tw_f.set_parallel(true)
+				tw_f.tween_property(puff, "position", start_p + jet_dir * (minf(jet_len, 10.5) * frac), 0.16)
+				tw_f.tween_property(puff, "scale", Vector3.ONE * (0.65 + 0.45 * frac), 0.16)
+				tw_f.tween_property(puff, "transparency", 1.0, 0.16)
+				tw_f.chain().tween_callback(puff.queue_free)
 		return
 
 	var cum_dist := PackedFloat32Array()

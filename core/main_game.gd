@@ -549,7 +549,13 @@ func _physics_process(delta: float) -> void:
 					w.step_timers(delta, hero.latest_server_input)
 					if not was_reloading and w.is_reloading and hero.entity_id == NetworkManager.local_peer_id and not hero.is_bot:
 						SoundSynthesizer.play_sfx("reload", 0.0, true)
-					var fire_blocked_by_skill: bool = hero.skill_manager != null and hero.skill_manager.has_method("blocks_weapon_fire") and bool(hero.skill_manager.blocks_weapon_fire())
+					var tnt_rope_held: bool = hero.status_effects != null and hero.status_effects.has_method("is_tnt_rope_active") and bool(hero.status_effects.is_tnt_rope_active())
+					if tnt_rope_held and hero.skill_manager != null and hero.skill_manager.has_method("throw_tnt_rope"):
+						if hero.latest_server_input.has_button(InputCmd.BTN_FIRE) and not w._prev_fire_held:
+							hero.skill_manager.throw_tnt_rope(hero.latest_server_input, combat_ctx)
+					var fire_blocked_by_skill: bool = tnt_rope_held or (hero.skill_manager != null and hero.skill_manager.has_method("blocks_weapon_fire") and bool(hero.skill_manager.blocks_weapon_fire()))
+					if w is ProjectileWeapon:
+						(w as ProjectileWeapon).try_detonate_stickies(hero.latest_server_input)
 					if not fire_blocked_by_skill and w.try_consume_fire(hero.latest_server_input):
 						w.fire_server(hero.latest_server_input, combat_ctx)
 
@@ -953,6 +959,13 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 					float(payload.get("radius", 6.0)),
 					projectiles_root
 				)
+		"fire_patch_vfx":
+			if projectiles_root != null:
+				StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "fire", 1.1)
+		"caber_spent":
+			var c_hero: HeroCharacter = heroes_by_id.get(int(payload.get("hero_id", -1)), null)
+			if c_hero != null and is_instance_valid(c_hero) and c_hero.has_method("set_caber_spent_visual"):
+				c_hero.set_caber_spent_visual(bool(payload.get("spent", true)))
 		"kill_event":
 			if int(payload.get("killer_id", -1)) == NetworkManager.local_peer_id and hud != null:
 				hud.show_hitmarker(false, true)

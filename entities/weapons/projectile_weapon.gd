@@ -1,8 +1,10 @@
 class_name ProjectileWeapon
 extends WeaponBase
 
-## Projectile launchers and thrown explosives (Bazooka, TNT).
+## Projectile launchers and thrown explosives (Bazooka, TNT, Grenade Launcher).
 var projectile_speed: float = 46.0
+var _active_stickies: Array[ProjectileEntity] = []
+var _prev_aim_det_held: bool = false
 
 
 func _load_weapon_stats() -> void:
@@ -12,7 +14,64 @@ func _load_weapon_stats() -> void:
 	elif weapon_kind == WeaponKind.TNT:
 		projectile_speed = 15.0
 	elif weapon_kind == WeaponKind.GRENADE_LAUNCHER:
-		projectile_speed = 38.0 if archetype == 2 else 28.0
+		match clampi(archetype, 0, 2):
+			1:
+				projectile_speed = 28.0
+			2:
+				projectile_speed = 72.0
+			_:
+				projectile_speed = 30.0
+
+
+func reset_weapon() -> void:
+	super.reset_weapon()
+	_prev_aim_det_held = false
+	_prune_stickies()
+
+
+func _prune_stickies() -> void:
+	var kept: Array[ProjectileEntity] = []
+	for s in _active_stickies:
+		if is_instance_valid(s) and not s.is_queued_for_deletion() and not s._exploded:
+			kept.append(s)
+	_active_stickies = kept
+
+
+func try_detonate_stickies(cmd: InputCmd) -> bool:
+	var aim_held: bool = cmd != null and cmd.has_button(InputCmd.BTN_AIM)
+	var rising: bool = aim_held and not _prev_aim_det_held
+	_prev_aim_det_held = aim_held
+	if not rising:
+		return false
+	if owner_hero == null or owner_hero.is_defeated:
+		return false
+	if weapon_kind != WeaponKind.GRENADE_LAUNCHER or clampi(archetype, 0, 2) != 1:
+		return false
+	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("is_tnt_rope_active") and owner_hero.status_effects.is_tnt_rope_active():
+		return false
+
+	_prune_stickies()
+	var candidates: Array[ProjectileEntity] = []
+	for s in _active_stickies:
+		candidates.append(s)
+	if owner_hero.is_inside_tree():
+		for grp_node in owner_hero.get_tree().get_nodes_in_group("destructible_stickies"):
+			if grp_node is ProjectileEntity and not candidates.has(grp_node):
+				candidates.append(grp_node as ProjectileEntity)
+
+	var detonated_any: bool = false
+	for sticky in candidates:
+		if not is_instance_valid(sticky) or sticky.is_queued_for_deletion():
+			continue
+		if sticky.kind != ProjectileEntity.ProjectileKind.TRAPPER_STICKY:
+			continue
+		if sticky.owner_id != owner_hero.entity_id:
+			continue
+		if sticky.can_detonate():
+			sticky._detonate()
+			detonated_any = true
+	_prune_stickies()
+	return detonated_any
 
 
 func fire_server(cmd: InputCmd, context: Dictionary) -> void:
@@ -27,20 +86,36 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var lag_comp: LagCompensator = context.get("lag_compensator", null)
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state, lag_comp, heroes_by_id)
-	var origin: Vector3 = aim["origin"] + (aim["dir"] as Vector3) * 0.9
-	var dir: Vector3 = apply_spread(aim["dir"])
+	var dir: Vector3 = apply_spread(aim["dir"] as Vector3)
+	var origin: Vector3 = (aim["origin"] as Vector3) + dir * 0.9
 	var pkind: int = ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET
 	var dmg_override: float = -1.0
+	var launch_vel: Vector3 = dir * projectile_speed
+
 	if weapon_kind == WeaponKind.TNT:
 		pkind = ProjectileEntity.ProjectileKind.TNT_SATCHEL
+		launch_vel += Vector3(0.0, 4.5, 0.0)
 	elif weapon_kind == WeaponKind.GRENADE_LAUNCHER:
-		pkind = ProjectileEntity.ProjectileKind.TNT_SATCHEL if archetype == 1 else ProjectileEntity.ProjectileKind.FRAG_GRENADE
+		var g_arch: int = clampi(archetype, 0, 2)
 		dmg_override = damage_max
+		match g_arch:
+			1:
+				pkind = ProjectileEntity.ProjectileKind.TRAPPER_STICKY
+				launch_vel += Vector3(0.0, 2.8, 0.0)
+			2:
+				pkind = ProjectileEntity.ProjectileKind.CANNON_BALL
+			_:
+				pkind = ProjectileEntity.ProjectileKind.BOUNCE_GRENADE
+				launch_vel += Vector3(0.0, 3.2, 0.0)
 
-	var launch_vel: Vector3 = dir * projectile_speed
-	if pkind == ProjectileEntity.ProjectileKind.TNT_SATCHEL or pkind == ProjectileEntity.ProjectileKind.FRAG_GRENADE:
-		launch_vel += Vector3(0.0, 3.5 if weapon_kind == WeaponKind.GRENADE_LAUNCHER else 4.5, 0.0)
-	ProjectileEntity.spawn_server_projectile(pkind, owner_hero.entity_id, owner_hero.team, origin, launch_vel, context, dmg_override, owner_hero.get_parent())
+	var spawned: ProjectileEntity = ProjectileEntity.spawn_server_projectile(pkind, owner_hero.entity_id, owner_hero.team, origin, launch_vel, context, dmg_override, owner_hero.get_parent())
+	if pkind == ProjectileEntity.ProjectileKind.TRAPPER_STICKY and spawned != null:
+		_prune_stickies()
+		_active_stickies.append(spawned)
+		while _active_stickies.size() > 6:
+			var oldest: ProjectileEntity = _active_stickies.pop_front()
+			if is_instance_valid(oldest) and not oldest.is_queued_for_deletion():
+				oldest.destroy_by_enemy()
 
 	var end_pos: Vector3 = origin + dir * 20.0
 	fired.emit(weapon_kind, origin, end_pos)
