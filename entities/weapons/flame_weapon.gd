@@ -2,9 +2,9 @@ class_name FlameWeapon
 extends WeaponBase
 
 ## Demolisher Slot 0 primary weapons:
-## 0: Flamethrower (11m cone, 10 ammo/s, 5 dmg/tick + 3.0s Afterburn)
-## 1: Fire Starter (15.5m cone + FirePatchEntity ground hazards, 20 ammo/s, 5 dmg/0.1s + 3.0s Afterburn)
-## 2: Fire Breath (0.50s semi/auto, 10 ammo/shot, 48 m/s FIREBALL projectile)
+## 0: Flamethrower (16.5m cone, 10 ammo/s, 5 dmg/tick + 3.0s Afterburn)
+## 1: Fire Starter (21.0m cone + FirePatchEntity ground hazards, 20 ammo/s, 5 dmg/0.1s + 3.0s Afterburn)
+## 2: Fire Breath (0.50s semi/auto, 10 ammo/shot, 45 m/s FIREBALL projectile, ~30.6m max reach)
 
 const AFTERBURN_DPS: float = 10.0
 const AFTERBURN_DURATION: float = 3.0
@@ -48,7 +48,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			owner_hero.entity_id,
 			owner_hero.team,
 			spawn_pos,
-			shot_dir * 48.0,
+			shot_dir * 45.0,
 			context,
 			40.0,
 			owner_hero.get_parent()
@@ -61,7 +61,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			"archetype": arch,
 			"origin": spawn_pos,
 			"dir": shot_dir,
-			"hits": [end_pos],
+			"hits": [],
 		})
 		return
 
@@ -182,10 +182,12 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var d_pos: Vector3 = d_node.global_position + Vector3(0.0, 0.9, 0.0)
 			var to_d: Vector3 = d_pos - cone_origin
 			var d_dist: float = to_d.length()
-			if d_dist <= max_range_m + 0.8 and (d_dist <= 1.0 or (to_d / d_dist).dot(dir) >= FLAME_CONE_MIN_DOT):
-				d.apply_damage_server(dmg_amt, owner_hero.entity_id, owner_hero.team, d_pos, false)
+			var d_dir: Vector3 = to_d / maxf(d_dist, 0.001)
+			if d_dist <= max_range_m + 0.8 and (d_dist <= 1.0 or d_dir.dot(dir) >= FLAME_CONE_MIN_DOT):
+				var arg3: Variant = owner_hero.team if d is DemolisherSkills.RiotShieldEntity else d_dir
+				d.apply_damage_server(dmg_amt, owner_hero.entity_id, arg3, d_pos, false)
 
-	# 4. Fire Starter (arch == 1): raycast aim ray up to 15.5m to spawn/refresh FirePatchEntity
+	# 4. Fire Starter (arch == 1): raycast aim ray up to max_range_m (21.0m) to spawn/refresh FirePatchEntity
 	var stream_end: Vector3 = origin + dir * max_range_m
 	if space_state != null:
 		var wall_q := PhysicsRayQueryParameters3D.create(origin, stream_end, 1, excludes_base)
@@ -220,24 +222,24 @@ func _try_spawn_or_refresh_fire_patch(
 
 	var aim_q := PhysicsRayQueryParameters3D.create(origin, aim_end, 1, excludes)
 	var aim_hit: Dictionary = space_state.intersect_ray(aim_q)
-	if not aim_hit.is_empty():
-		var hit_n: Vector3 = aim_hit.get("normal", Vector3.UP)
-		var hit_p: Vector3 = aim_hit["position"] as Vector3
-		if hit_n.y >= 0.45:
-			patch_pos = hit_p
-			found_surface = true
-		else:
-			var drop_from: Vector3 = hit_p - dir * 0.25 + Vector3(0.0, 0.2, 0.0)
-			var drop_hit: Dictionary = space_state.intersect_ray(PhysicsRayQueryParameters3D.create(drop_from, drop_from - Vector3(0.0, 5.0, 0.0), 1, excludes))
-			if not drop_hit.is_empty():
+	if aim_hit.is_empty():
+		return
+
+	var hit_n: Vector3 = aim_hit.get("normal", Vector3.UP)
+	var hit_p: Vector3 = aim_hit["position"] as Vector3
+	if hit_n.y >= 0.45:
+		patch_pos = hit_p
+		found_surface = true
+	elif dir.y <= 0.15:
+		var drop_from: Vector3 = hit_p - dir * 0.25 + Vector3(0.0, 0.2, 0.0)
+		var drop_hit: Dictionary = space_state.intersect_ray(
+			PhysicsRayQueryParameters3D.create(drop_from, drop_from - Vector3(0.0, 2.4, 0.0), 1, excludes)
+		)
+		if not drop_hit.is_empty():
+			var drop_n: Vector3 = drop_hit.get("normal", Vector3.UP)
+			if drop_n.y >= 0.45:
 				patch_pos = drop_hit["position"] as Vector3
 				found_surface = true
-	else:
-		var probe_pt: Vector3 = origin + dir * minf(max_range_m, 10.0)
-		var down_hit: Dictionary = space_state.intersect_ray(PhysicsRayQueryParameters3D.create(probe_pt, probe_pt - Vector3(0.0, 5.5, 0.0), 1, excludes))
-		if not down_hit.is_empty():
-			patch_pos = down_hit["position"] as Vector3
-			found_surface = true
 
 	if not found_surface:
 		return

@@ -118,59 +118,110 @@ class FirePatchEntity extends Node3D:
 	var _contact_cooldowns: Dictionary = {}
 	var _context: Dictionary = {}
 	var _is_visual_only: bool = false
+	var _ember_pool: MeshInstance3D = null
+	var _flame_ribbons: Array[MeshInstance3D] = []
 
 	static var _shared_disc_mesh: CylinderMesh = null
-	static var _shared_flame_mesh: CylinderMesh = null
+	static var _shared_flame_sheet_mesh: QuadMesh = null
+	static var _shared_scorch_mat: StandardMaterial3D = null
 	static var _shared_disc_mat: StandardMaterial3D = null
 	static var _shared_flame_mat: StandardMaterial3D = null
+	static var _shared_radial_tex: ImageTexture = null
+	static var _shared_flame_tex: ImageTexture = null
 
 	func _ready() -> void:
 		add_to_group("fire_patches")
 		_is_visual_only = bool(get_meta("visual_only", false))
 		_build_visuals()
 
+	static func _ensure_shared_textures() -> void:
+		if _shared_radial_tex == null:
+			var r_img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+			for y in range(32):
+				for x in range(32):
+					var uv := Vector2((float(x) + 0.5) / 32.0 * 2.0 - 1.0, (float(y) + 0.5) / 32.0 * 2.0 - 1.0)
+					var d: float = uv.length()
+					var a: float = clampf(1.0 - d * d, 0.0, 1.0)
+					a = a * a
+					r_img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
+			_shared_radial_tex = ImageTexture.create_from_image(r_img)
+		if _shared_flame_tex == null:
+			var f_img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+			for y in range(32):
+				var v: float = (float(y) + 0.5) / 32.0 # 0=top, 1=bottom
+				var vert_env: float = sin(v * PI) * clampf(0.35 + v * 0.85, 0.0, 1.0)
+				var half_w: float = lerpf(0.24, 0.82, pow(v, 0.6))
+				for x in range(32):
+					var u: float = (float(x) + 0.5) / 32.0 * 2.0 - 1.0
+					var wave_u: float = u + sin(v * TAU * 1.4) * 0.14
+					var horiz_env: float = clampf(1.0 - absf(wave_u) / maxf(0.08, half_w), 0.0, 1.0)
+					var alpha: float = clampf(vert_env * horiz_env * horiz_env, 0.0, 1.0)
+					f_img.set_pixel(x, y, Color(1.0, 1.0, 1.0, alpha))
+			_shared_flame_tex = ImageTexture.create_from_image(f_img)
+
 	func _build_visuals() -> void:
+		_ensure_shared_textures()
 		if _shared_disc_mesh == null:
 			_shared_disc_mesh = CylinderMesh.new()
 			_shared_disc_mesh.top_radius = 1.0
 			_shared_disc_mesh.bottom_radius = 1.0
-			_shared_disc_mesh.height = 0.06
-			_shared_disc_mesh.radial_segments = 14
-		if _shared_flame_mesh == null:
-			_shared_flame_mesh = CylinderMesh.new()
-			_shared_flame_mesh.top_radius = 0.02
-			_shared_flame_mesh.bottom_radius = 0.28
-			_shared_flame_mesh.height = 0.65
-			_shared_flame_mesh.radial_segments = 8
+			_shared_disc_mesh.height = 0.04
+			_shared_disc_mesh.radial_segments = 16
+		if _shared_flame_sheet_mesh == null:
+			_shared_flame_sheet_mesh = QuadMesh.new()
+			_shared_flame_sheet_mesh.size = Vector2(1.05, 0.52)
+		if _shared_scorch_mat == null:
+			_shared_scorch_mat = StandardMaterial3D.new()
+			_shared_scorch_mat.albedo_color = Color(0.16, 0.08, 0.04, 0.62)
+			_shared_scorch_mat.albedo_texture = _shared_radial_tex
+			_shared_scorch_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			_shared_scorch_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		if _shared_disc_mat == null:
 			_shared_disc_mat = StandardMaterial3D.new()
-			_shared_disc_mat.albedo_color = Color(0.95, 0.36, 0.06, 0.55)
+			_shared_disc_mat.albedo_color = Color(1.0, 0.44, 0.06, 0.68)
+			_shared_disc_mat.albedo_texture = _shared_radial_tex
 			_shared_disc_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 			_shared_disc_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			_shared_disc_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 		if _shared_flame_mat == null:
 			_shared_flame_mat = StandardMaterial3D.new()
-			_shared_flame_mat.albedo_color = Color(1.0, 0.72, 0.14, 0.85)
+			_shared_flame_mat.albedo_color = Color(1.0, 0.64, 0.14, 0.58)
+			_shared_flame_mat.albedo_texture = _shared_flame_tex
 			_shared_flame_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 			_shared_flame_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 			_shared_flame_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+			_shared_flame_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-		var disc := MeshInstance3D.new()
-		disc.mesh = _shared_disc_mesh
-		disc.material_override = _shared_disc_mat
-		disc.scale = Vector3(radius, 1.0, radius)
-		disc.position = Vector3(0.0, 0.04, 0.0)
-		disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(disc)
+		var scorch_pad := MeshInstance3D.new()
+		scorch_pad.mesh = _shared_disc_mesh
+		scorch_pad.material_override = _shared_scorch_mat
+		scorch_pad.scale = Vector3(radius * 1.08, 1.0, radius * 1.08)
+		scorch_pad.position = Vector3(0.0, 0.025, 0.0)
+		scorch_pad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(scorch_pad)
 
-		for i in range(5):
-			var ang: float = float(i) * (TAU / 5.0)
-			var r_off: float = radius * 0.48 if i > 0 else 0.0
-			var tongue := MeshInstance3D.new()
-			tongue.mesh = _shared_flame_mesh
-			tongue.material_override = _shared_flame_mat
-			tongue.position = Vector3(cos(ang) * r_off, 0.32, sin(ang) * r_off)
-			tongue.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			add_child(tongue)
+		_ember_pool = MeshInstance3D.new()
+		_ember_pool.mesh = _shared_disc_mesh
+		_ember_pool.material_override = _shared_disc_mat
+		_ember_pool.scale = Vector3(radius * 0.78, 1.0, radius * 0.78)
+		_ember_pool.position = Vector3(0.0, 0.04, 0.0)
+		_ember_pool.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_ember_pool)
+
+		_flame_ribbons.clear()
+		for i in range(4):
+			var ang: float = float(i) * (TAU / 3.0) + 0.35
+			var r_off: float = radius * 0.44 if i > 0 else 0.0
+			var cluster_pos := Vector3(cos(ang) * r_off, 0.26, sin(ang) * r_off)
+			for cross_idx in range(2):
+				var ribbon := MeshInstance3D.new()
+				ribbon.mesh = _shared_flame_sheet_mesh
+				ribbon.material_override = _shared_flame_mat
+				ribbon.position = cluster_pos
+				ribbon.rotation = Vector3(0.0, ang + float(cross_idx) * (PI * 0.5) + 0.2 * float(i), 0.0)
+				ribbon.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				add_child(ribbon)
+				_flame_ribbons.append(ribbon)
 
 	func _physics_process(delta: float) -> void:
 		step_hazard(delta, _context)
@@ -180,6 +231,19 @@ class FirePatchEntity extends Node3D:
 		if _lifetime_elapsed >= max_lifetime:
 			queue_free()
 			return
+		if not DisplayServer.get_name().contains("headless"):
+			var fade_out: float = clampf((max_lifetime - _lifetime_elapsed) / 0.8, 0.0, 1.0)
+			if _ember_pool != null and is_instance_valid(_ember_pool):
+				var ember_r: float = (0.76 + 0.07 * sin(_lifetime_elapsed * 7.5)) * radius * fade_out
+				_ember_pool.scale = Vector3(maxf(0.1, ember_r), 1.0, maxf(0.1, ember_r))
+			for idx in range(_flame_ribbons.size()):
+				var rib: MeshInstance3D = _flame_ribbons[idx]
+				if rib == null or not is_instance_valid(rib):
+					continue
+				var phase: float = _lifetime_elapsed * 8.5 + float(idx) * 1.15
+				var h_scale: float = (0.86 + 0.22 * sin(phase)) * fade_out
+				var w_scale: float = 0.92 + 0.12 * cos(phase * 0.7)
+				rib.scale = Vector3(w_scale, maxf(0.05, h_scale), 1.0)
 		if _is_visual_only or not NetworkManager.is_server_authority():
 			return
 

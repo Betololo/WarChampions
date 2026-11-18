@@ -49,6 +49,7 @@ func _ready() -> void:
 	await _test_phase11_task5_demolisher_weapons()
 	await _test_phase11_task6_ui_bots_and_full_matrix()
 	await _test_phase11_final_fix_wave()
+	await _test_phase11_polish_task7()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6276,11 +6277,11 @@ func _test_phase11_task4_demolisher() -> void:
 	var fw0 := HitscanWeapon.new(); fw0.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 0)
 	var fw1 := HitscanWeapon.new(); fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
 	var fw2 := HitscanWeapon.new(); fw2.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 2)
-	if not (is_equal_approx(fw0.damage_max, 5.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 11.0)):
+	if not (is_equal_approx(fw0.damage_max, 5.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 16.5)):
 		stats_ok = false
-	if not (is_equal_approx(fw1.damage_max, 5.0) and is_equal_approx(fw1.fire_interval, 0.05) and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 15.5)):
+	if not (is_equal_approx(fw1.damage_max, 5.0) and is_equal_approx(fw1.fire_interval, 0.05) and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 21.0)):
 		stats_ok = false
-	if not (is_equal_approx(fw2.damage_max, 40.0) and is_equal_approx(fw2.fire_interval, 0.50) and fw2.mag_size == 100 and is_equal_approx(fw2.max_range_m, 52.0) and not fw2.is_automatic and is_equal_approx(fw2.bullet_speed_mps, 48.0)):
+	if not (is_equal_approx(fw2.damage_max, 40.0) and is_equal_approx(fw2.fire_interval, 0.50) and fw2.mag_size == 100 and is_equal_approx(fw2.max_range_m, 32.0) and not fw2.is_automatic and is_equal_approx(fw2.bullet_speed_mps, 45.0)):
 		stats_ok = false
 	var fire_cmd := InputCmd.new()
 	fire_cmd.set_button(InputCmd.BTN_FIRE, true)
@@ -6697,7 +6698,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	fw1.queue_free()
 	_assert(fs_ammo_ok and fs_patch_ok, "Phase 11.5b: FlameWeapon arch 1 Fire Starter (20/s ammo, 5 dmg + FirePatchEntity 6s / 20 entry dmg + fire_patch_vfx)")
 
-	# 3. FlameWeapon arch 2 (Fire Breath): FIREBALL 48 m/s, 40 dmg + 3s Afterburn, 0 dmg/0 burn in water/fire-immunity
+	# 3. FlameWeapon arch 2 (Fire Breath): FIREBALL 45 m/s, 40 dmg + 3s Afterburn, 0 dmg/0 burn in water/fire-immunity
 	enemy_a.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
 	enemy_water.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
 	enemy_water.is_in_water = true
@@ -6709,7 +6710,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	for ch in arena.get_children():
 		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.FIREBALL:
 			fb_proj = ch as ProjectileEntity
-	var fb_spawn_ok: bool = (fb_proj != null and absf(fb_proj.velocity.length() - 48.0) <= 0.5 and is_equal_approx(fb_proj.gravity_scale, 0.0))
+	var fb_spawn_ok: bool = (fb_proj != null and absf(fb_proj.velocity.length() - 45.0) <= 0.5 and is_equal_approx(fb_proj.gravity_scale, 0.0))
 	if fb_proj != null:
 		fb_proj.global_position = enemy_a.global_position + Vector3(0.0, 1.0, 0.0)
 		var ea_fb0: int = enemy_a.hp
@@ -7510,4 +7511,155 @@ func _test_phase11_final_fix_wave() -> void:
 	NetworkManager.shutdown_network()
 	NetworkManager.local_peer_id = prev_peer_id
 	game_v.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_polish_task7() -> void:
+	print("--- Phase 11 Polish Task 7: Flamethrower Jet/Roar, Ground Fire, Sky-Aim Fix & Fire Breath Sweep ---")
+
+	# 1. SoundSynthesizer flame roar clip & sustain cooldown guard
+	var flame_wav: AudioStreamWAV = SoundSynthesizer._clips.get("shoot_flame", null) as AudioStreamWAV
+	var roar_clip_ok: bool = (flame_wav != null and SoundSynthesizer.FLAME_SFX_INTERVAL_MS >= 180)
+	if flame_wav != null:
+		var pcm: PackedByteArray = flame_wav.data
+		var sample_count: int = pcm.size() / 2
+		var dur_ok: bool = sample_count >= int(0.40 * float(SoundSynthesizer.SAMPLE_RATE))
+		var head_samples: int = mini(sample_count, int(0.010 * float(SoundSynthesizer.SAMPLE_RATE)))
+		var head_peak: float = 0.0
+		for si in range(head_samples):
+			head_peak = maxf(head_peak, absf(float(pcm.decode_s16(si * 2)) / 32767.0))
+		var mid_start: int = sample_count / 3
+		var mid_end: int = (sample_count * 2) / 3
+		var mid_peak: float = 0.0
+		for si in range(mid_start, mid_end):
+			mid_peak = maxf(mid_peak, absf(float(pcm.decode_s16(si * 2)) / 32767.0))
+		roar_clip_ok = roar_clip_ok and dur_ok and (head_peak < mid_peak * 0.35) and (mid_peak >= 0.45)
+
+	SoundSynthesizer._local_sfx_cooldowns.erase("shoot_flame")
+	SoundSynthesizer.play_sfx("shoot_flame", 0.0, true)
+	var first_cd_ms: int = int(SoundSynthesizer._local_sfx_cooldowns.get("shoot_flame", -1))
+	SoundSynthesizer.play_sfx("shoot_flame", 0.0, true)
+	var second_cd_ms: int = int(SoundSynthesizer._local_sfx_cooldowns.get("shoot_flame", -1))
+	var roar_cd_ok: bool = (first_cd_ms >= 0 and second_cd_ms == first_cd_ms)
+	_assert(roar_clip_ok and roar_cd_ok, "Phase 11.T7a: SoundSynthesizer shoot_flame uses soft-attack roar (>=0.40s) and FLAME_SFX_INTERVAL_MS >= 180 sustain guard")
+
+	# 2. Flamethrower (16.5m) & Fire Starter (21.0m) ranges + Sky-Aim Ground Fire Fix + Non-Spiky FirePatchEntity
+	var arena := Node3D.new()
+	add_child(arena)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_shape := BoxShape3D.new()
+	floor_shape.size = Vector3(200.0, 1.0, 200.0)
+	floor_col.shape = floor_shape
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+	await get_tree().physics_frame
+
+	var demo := HeroCharacter.new()
+	demo.setup_identity(11701, "T7Demo", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 1, true, false)
+	arena.add_child(demo)
+	var enemy := HeroCharacter.new()
+	enemy.setup_identity(11702, "T7Enemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(enemy)
+	demo.global_position = Vector3.ZERO
+	enemy.global_position = Vector3(0.45, 0.0, -14.0)
+	await get_tree().physics_frame
+
+	var fw0 := FlameWeapon.new()
+	fw0.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 0)
+	var fw1 := FlameWeapon.new()
+	fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
+	demo.add_child(fw0)
+	demo.add_child(fw1)
+	var ranges_ok: bool = (fw0.max_range_m >= 16.0 and fw1.max_range_m >= 20.0)
+
+	var ctx: Dictionary = {"heroes_by_id": {11701: demo, 11702: enemy}, "projectiles_root": arena}
+	var pre_sky_patches: int = get_tree().get_nodes_in_group("fire_patches").size()
+	var sky_dir: Vector3 = Vector3(0.0, 0.55, -0.83).normalized()
+	var space_state: PhysicsDirectSpaceState3D = demo.get_world_3d().direct_space_state
+	var excl: Array[RID] = [demo.get_rid()]
+	fw1._try_spawn_or_refresh_fire_patch(Vector3(0.0, 1.5, 0.0), sky_dir, space_state, excl, ctx)
+	var sky_cmd := InputCmd.new()
+	sky_cmd.aim_yaw = 0.0
+	sky_cmd.aim_pitch = 0.62
+	fw1.fire_server(sky_cmd, ctx)
+	var sky_patches_ok: bool = (get_tree().get_nodes_in_group("fire_patches").size() == pre_sky_patches)
+
+	var down_cmd := InputCmd.new()
+	down_cmd.aim_yaw = 0.0
+	down_cmd.aim_pitch = -0.25
+	fw1.fire_server(down_cmd, ctx)
+	var all_patches: Array[Node] = get_tree().get_nodes_in_group("fire_patches")
+	var ground_spawn_ok: bool = (all_patches.size() == pre_sky_patches + 1)
+
+	var non_spiky_ok: bool = false
+	for p in all_patches:
+		if p is DemolisherSkills.FirePatchEntity:
+			var fp := p as DemolisherSkills.FirePatchEntity
+			var spike_found: bool = false
+			var sheet_count: int = 0
+			for ch in fp.get_children():
+				if ch is MeshInstance3D:
+					var mi := ch as MeshInstance3D
+					if mi.mesh is CylinderMesh and (mi.mesh as CylinderMesh).top_radius < 0.12:
+						spike_found = true
+					elif mi.mesh is QuadMesh or mi.mesh is BoxMesh:
+						sheet_count += 1
+			non_spiky_ok = (not spike_found and sheet_count >= 4)
+			fp.queue_free()
+
+	_assert(
+		ranges_ok and sky_patches_ok and ground_spawn_ok and non_spiky_ok,
+		"Phase 11.T7b: Ranges (16.5/21.0m), sky-aim spawns 0 patches (%s), ground-aim spawns 1 (%s), non-spiky FirePatchEntity (%s)" % [
+			str(sky_patches_ok), str(ground_spawn_ok), str(non_spiky_ok)
+		]
+	)
+
+	# 3. Fire Breath <=35m / <=0.72s expiry AND reliable capsule sweep within 0.45m lateral offset
+	var fb_expire := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.FIREBALL,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 2.5, 0.0),
+		Vector3(0.0, 0.0, 45.0),
+		ctx, 40.0, arena
+	)
+	var start_fb: Vector3 = fb_expire.global_position
+	var elapsed_fb: float = 0.0
+	while not fb_expire._exploded and elapsed_fb < 0.76:
+		fb_expire._physics_process(0.04)
+		elapsed_fb += 0.04
+	var fb_travel: float = start_fb.distance_to(fb_expire.global_position)
+	var fb_expire_ok: bool = (fb_expire._exploded and elapsed_fb <= 0.72 and fb_travel <= 35.0)
+
+	enemy.respawn_at(Vector3(0.45, 0.0, -14.0), 0.0)
+	enemy.is_in_water = false
+	enemy.status_effects.clear_all()
+	await get_tree().physics_frame
+	var enemy_hp0: int = enemy.hp
+	var fb_sweep := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.FIREBALL,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 1.2, 0.0),
+		Vector3(0.0, 0.0, -45.0),
+		ctx, 40.0, arena
+	)
+	for _step in range(30):
+		if fb_sweep._exploded:
+			break
+		fb_sweep._physics_process(0.02)
+	var fb_sweep_ok: bool = (
+		fb_sweep._exploded
+		and enemy.hp == enemy_hp0 - 40
+		and enemy.status_effects.is_burning()
+	)
+	_assert(
+		fb_expire_ok and fb_sweep_ok,
+		"Phase 11.T7c: Fire Breath expires <=0.72s (%.2fs, %.1fm<=35m) and capsule sweep hits 0.45m lateral enemy (%d->%d, burning=%s)" % [
+			elapsed_fb, fb_travel, enemy_hp0, enemy.hp, str(enemy.status_effects.is_burning())
+		]
+	)
+
+	arena.queue_free()
 	await _flush_deferred()

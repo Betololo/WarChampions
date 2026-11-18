@@ -46,6 +46,7 @@ static func warm_shared_meshes() -> void:
 	_get_shared_sphere()
 	_get_shared_cylinder()
 	_get_shared_cone()
+	_get_shared_flame_jet()
 	_get_shared_torus()
 
 
@@ -91,6 +92,18 @@ static func _get_shared_cone() -> CylinderMesh:
 	m.height = 1.0
 	m.radial_segments = 12
 	_shared_meshes["cone"] = m
+	return m
+
+
+static func _get_shared_flame_jet() -> CylinderMesh:
+	if _shared_meshes.has("flame_jet"):
+		return _shared_meshes["flame_jet"] as CylinderMesh
+	var m := CylinderMesh.new()
+	m.top_radius = 0.46
+	m.bottom_radius = 0.14
+	m.height = 1.0
+	m.radial_segments = 10
+	_shared_meshes["flame_jet"] = m
 	return m
 
 
@@ -634,28 +647,54 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 		var end_p: Vector3 = arc_points[arc_points.size() - 1]
 		var jet_vec: Vector3 = end_p - start_p
 		var jet_len: float = jet_vec.length()
-		if jet_len < 0.4:
+		if jet_len < 0.15:
 			return
 		var jet_dir: Vector3 = jet_vec / jet_len
-		var puff_count: int = 3
-		var f_mat: StandardMaterial3D = _get_shared_mat(Color(1.0, 0.48, 0.10, 0.85), true)
-		var f_mesh: SphereMesh = _get_shared_sphere()
-		for i in range(puff_count):
-			var frac: float = float(i + 1) / float(puff_count)
-			var puff := MeshInstance3D.new()
-			puff.mesh = f_mesh
-			puff.material_override = f_mat
-			puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			puff.position = start_p + jet_dir * (minf(jet_len, 8.5) * frac * 0.28)
-			puff.scale = Vector3.ONE * (0.28 + 0.18 * frac)
-			parent.add_child(puff)
-			if puff.is_inside_tree():
-				var tw_f: Tween = puff.create_tween()
+		var up_ref: Vector3 = Vector3.UP if absf(jet_dir.dot(Vector3.UP)) < 0.96 else Vector3.RIGHT
+		var right_v: Vector3 = jet_dir.cross(up_ref).normalized()
+		var up_v: Vector3 = right_v.cross(jet_dir).normalized()
+		var jet_basis := Basis(right_v, jet_dir, up_v)
+
+		const FLAME_STAGES: int = 8
+		var col_core := Color(1.0, 0.94, 0.62, 0.55)
+		var col_mid := Color(1.0, 0.56, 0.10, 0.48)
+		var col_tip := Color(0.95, 0.24, 0.04, 0.35)
+		var jet_mesh: CylinderMesh = _get_shared_flame_jet()
+		var seg_h: float = clampf((jet_len / float(FLAME_STAGES)) * 1.95, 0.9, 4.6)
+
+		for i in range(FLAME_STAGES):
+			var t: float = float(i) / float(FLAME_STAGES - 1)
+			var stage_col: Color = col_core.lerp(col_mid, t * 2.0) if t < 0.5 else col_mid.lerp(col_tip, (t - 0.5) * 2.0)
+			var f_mat: StandardMaterial3D = _get_shared_mat(stage_col, true)
+
+			var stage := MeshInstance3D.new()
+			stage.mesh = jet_mesh
+			stage.material_override = f_mat
+			stage.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+			var swirl_ang: float = randf_range(0.0, TAU)
+			var swirl_vec: Vector3 = right_v * cos(swirl_ang) + up_v * sin(swirl_ang)
+			var min_d: float = minf(jet_len * 0.5, seg_h * 0.48)
+			var max_d: float = maxf(min_d, jet_len - seg_h * 0.35)
+			var start_d: float = clampf(jet_len * (float(i) / float(FLAME_STAGES)) * 0.78, min_d, max_d)
+			var end_d: float = clampf(jet_len * ((float(i) + 0.72) / float(FLAME_STAGES)), start_d, maxf(start_d, jet_len - seg_h * 0.25))
+			var p0: Vector3 = start_p + jet_dir * start_d + swirl_vec * (0.03 + 0.12 * t)
+			var p1: Vector3 = start_p + jet_dir * end_d + swirl_vec * (0.08 + 0.34 * t) + Vector3(0.0, 0.45 * (0.30 + 0.70 * t), 0.0)
+
+			var r0: float = lerpf(0.18, 0.62, t)
+			var r1: float = lerpf(0.30, 1.05, t)
+			var stage_rot_y: float = randf_range(0.0, TAU)
+			stage.basis = jet_basis.rotated(jet_dir, stage_rot_y)
+			stage.position = p0
+			stage.scale = Vector3(r0, seg_h, r0)
+			parent.add_child(stage)
+			if stage.is_inside_tree():
+				var tw_f: Tween = stage.create_tween()
 				tw_f.set_parallel(true)
-				tw_f.tween_property(puff, "position", start_p + jet_dir * (minf(jet_len, 10.5) * frac), 0.16)
-				tw_f.tween_property(puff, "scale", Vector3.ONE * (0.65 + 0.45 * frac), 0.16)
-				tw_f.tween_property(puff, "transparency", 1.0, 0.16)
-				tw_f.chain().tween_callback(puff.queue_free)
+				tw_f.tween_property(stage, "position", p1, 0.18)
+				tw_f.tween_property(stage, "scale", Vector3(r1, seg_h * 1.18, r1), 0.18)
+				tw_f.tween_property(stage, "transparency", 1.0, 0.18)
+				tw_f.chain().tween_callback(stage.queue_free)
 		return
 
 	var cum_dist := PackedFloat32Array()

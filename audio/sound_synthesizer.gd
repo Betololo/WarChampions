@@ -11,6 +11,7 @@ const BASE_SFX_DB: float = -4.5
 const BASE_MUSIC_DB: float = -25.0
 const WORLD_MAX_DISTANCE_M: float = 75.0
 const WORLD_SFX_COOLDOWN_MS: int = 45
+const FLAME_SFX_INTERVAL_MS: int = 220
 
 var _clips: Dictionary = {}
 var _music_player: AudioStreamPlayer
@@ -18,6 +19,7 @@ var _local_sfx_pool: Array[AudioStreamPlayer] = []
 var _world_sfx_pool: Array[AudioStreamPlayer] = []
 var _local_pool_idx: int = 0
 var _world_pool_idx: int = 0
+var _local_sfx_cooldowns: Dictionary = {} # clip_name -> last_ticks_msec
 var _world_sfx_cooldowns: Dictionary = {} # clip_name -> last_ticks_msec
 var _listener_pos: Vector3 = Vector3.ZERO
 var _has_listener_pos: bool = false
@@ -135,21 +137,28 @@ func play_sfx(
 	var vol_offset_db: float = clampf(gain_db_offset, -30.0, 12.0)
 	var dist_attenuation: float = 0.0
 
+	var now_ms: int = Time.get_ticks_msec()
 	if not is_local_priority:
 		if _world_sfx_pool.is_empty():
 			return
 		var dist_m: float = _listener_pos.distance_to(world_pos) if _has_listener_pos else 0.0
 		if dist_m > WORLD_MAX_DISTANCE_M:
 			return
-		var now_ms: int = Time.get_ticks_msec()
-		var last_ms: int = int(_world_sfx_cooldowns.get(sfx_name, -1000))
-		if now_ms - last_ms < WORLD_SFX_COOLDOWN_MS:
+		var min_cd_ms: int = FLAME_SFX_INTERVAL_MS if sfx_name == "shoot_flame" else WORLD_SFX_COOLDOWN_MS
+		var last_ms: int = int(_world_sfx_cooldowns.get(sfx_name, -10000))
+		if now_ms - last_ms < min_cd_ms:
 			return
 		_world_sfx_cooldowns[sfx_name] = now_ms
 		var t_dist: float = clampf((dist_m - 3.0) / (WORLD_MAX_DISTANCE_M - 3.0), 0.0, 1.0)
 		dist_attenuation = lerpf(0.0, 24.0, pow(t_dist, 0.85))
-	elif _local_sfx_pool.is_empty():
-		return
+	else:
+		if _local_sfx_pool.is_empty():
+			return
+		if sfx_name == "shoot_flame":
+			var last_local_ms: int = int(_local_sfx_cooldowns.get(sfx_name, -10000))
+			if now_ms - last_local_ms < FLAME_SFX_INTERVAL_MS:
+				return
+			_local_sfx_cooldowns[sfx_name] = now_ms
 
 	var player: AudioStreamPlayer = _acquire_channel(
 		_local_sfx_pool if is_local_priority else _world_sfx_pool,
@@ -224,7 +233,7 @@ func _build_clips() -> void:
 	_clips["shoot_bazooka"] = _synth_gunshot(0.320, 165.0, 42.0, 0.62, 0.90, 1.4, 0.28, 0.70)
 	_clips["shot_tnt"] = _synth_tone_burst_norm(0.11, 240.0, 110.0, 0.80)
 	_clips["knife"] = _synth_gunshot(0.095, 680.0, 210.0, 0.42, 0.80, 2.2, 0.48, 0.32)
-	_clips["shoot_flame"] = _synth_gunshot(0.140, 260.0, 120.0, 0.88, 0.80, 1.3, 0.22, 0.15)
+	_clips["shoot_flame"] = _synth_flame_roar(0.42, 0.72)
 	_clips["shoot_launcher"] = _synth_gunshot(0.240, 185.0, 48.0, 0.58, 0.90, 1.5, 0.28, 0.65)
 	_clips["stick_grenade"] = _synth_gunshot(0.180, 320.0, 72.0, 0.55, 0.88, 1.8, 0.36, 0.68)
 
@@ -320,6 +329,57 @@ func _synth_whistle_theme() -> AudioStreamWAV:
 			cursor += 1
 	_lowpass_smooth(buf, 0.25)
 	return _make_wav(buf, true)
+
+
+func _synth_flame_roar(dur_s: float = 0.42, peak: float = 0.72) -> AudioStreamWAV:
+	var n: int = maxi(1, int(dur_s * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var phase: float = 0.0
+	var b0: float = 0.0
+	var b1: float = 0.0
+	var b2: float = 0.0
+	var lp: float = 0.0
+	var hp_prev: float = 0.0
+	var atk_s: float = 0.09
+	var rel_s: float = 0.14
+	for i in range(n):
+		var t_sec: float = float(i) / float(SAMPLE_RATE)
+		var rem_s: float = maxf(0.0, dur_s - t_sec)
+		var atk: float = sin(clampf(t_sec / atk_s, 0.0, 1.0) * PI * 0.5)
+		var rel: float = sin(clampf(rem_s / rel_s, 0.0, 1.0) * PI * 0.5)
+		var env: float = atk * rel
+
+		# Pink-weighted band-filtered noise for smooth pressurized gas roar
+		var white: float = randf_range(-1.0, 1.0)
+		b0 = 0.997 * b0 + white * 0.029
+		b1 = 0.985 * b1 + white * 0.032
+		b2 = 0.950 * b2 + white * 0.048
+		var pink: float = (b0 + b1 + b2 + white * 0.18) * 1.4
+		lp += 0.24 * (pink - lp)
+		hp_prev += 0.015 * (lp - hp_prev)
+		var band_noise: float = lp - hp_prev
+
+		# Warm low flame rumble (~90..150 Hz subtle LFO roar)
+		var lfo: float = 0.5 + 0.5 * sin(TAU * 11.5 * t_sec)
+		var rumble_freq: float = lerpf(95.0, 145.0, lfo)
+		phase += TAU * rumble_freq / float(SAMPLE_RATE)
+		var rumble: float = sin(phase) * 0.24 + sin(phase * 0.5) * 0.14
+		var turb: float = 0.85 + 0.15 * sin(TAU * 7.5 * t_sec)
+
+		buf[i] = tanh((band_noise * 0.82 + rumble) * turb * 1.25) * env
+
+	_lowpass_smooth(buf, 0.28)
+	var max_abs: float = 0.0
+	for i in range(n):
+		var a: float = absf(buf[i])
+		if a > max_abs:
+			max_abs = a
+	if max_abs > 0.00001:
+		var scale_f: float = clampf(peak, 0.25, 0.92) / max_abs
+		for i in range(n):
+			buf[i] = clampf(buf[i] * scale_f, -0.98, 0.98)
+	return _make_wav(buf, false)
 
 
 func _synth_gunshot(

@@ -169,7 +169,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			splash_radius = 2.6
 			base_damage = 40.0
 			knockback_force = 4.0
-			lifetime = 1.25
+			lifetime = 0.68
 			explode_on_impact = true
 		ProjectileKind.BOUNCE_GRENADE:
 			gravity_scale = 1.0
@@ -445,13 +445,80 @@ func _physics_process(delta: float) -> void:
 						return
 
 		var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
+		var heroes_map: Dictionary = _context.get("heroes_by_id", {})
+		var shooter_excl: Array[RID] = []
+		var shooter_var: Variant = heroes_map.get(owner_id, null)
+		if shooter_var != null and is_instance_valid(shooter_var) and shooter_var is HeroCharacter:
+			shooter_excl.append((shooter_var as HeroCharacter).get_rid())
+
+		# Fire Breath (FIREBALL) capsule sweep against living enemy heroes & enemy vehicles
+		if not is_visual_only and kind == ProjectileKind.FIREBALL:
+			const FIREBALL_PROXIMITY_R: float = 0.62
+			var best_dist_sq: float = INF
+			var best_contact: Vector3 = Vector3.ZERO
+			var best_veh_rid: RID = RID()
+			var has_contact: bool = false
+
+			for id_key in heroes_map.keys():
+				var h_var: Variant = heroes_map[id_key]
+				if not is_instance_valid(h_var) or not (h_var is HeroCharacter):
+					continue
+				var h: HeroCharacter = h_var as HeroCharacter
+				if h.is_defeated or h.entity_id == owner_id or h.team == owner_team:
+					continue
+				if h.current_vehicle_id >= 0 and h.current_seat_enclosed:
+					continue
+				var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
+				var closest: PackedVector3Array = Geometry3D.get_closest_points_between_segments(
+					global_position, next_pos,
+					h_pos + Vector3(0.0, 0.3, 0.0), h_pos + Vector3(0.0, 1.7, 0.0)
+				)
+				var seg_pt: Vector3 = closest[0]
+				var cap_pt: Vector3 = closest[1]
+				if seg_pt.distance_to(cap_pt) <= FIREBALL_PROXIMITY_R + h.capsule_radius * 0.4:
+					var d_sq: float = global_position.distance_squared_to(seg_pt)
+					if d_sq < best_dist_sq:
+						best_dist_sq = d_sq
+						best_contact = seg_pt
+						best_veh_rid = RID()
+						has_contact = true
+
+			for v in get_tree().get_nodes_in_group("vehicles"):
+				if not (v is Node3D):
+					continue
+				if v is VehicleBase:
+					var vb: VehicleBase = v as VehicleBase
+					if vb.is_destroyed or (vb.team >= 0 and vb.team == owner_team):
+						continue
+				var v_pos: Vector3 = (v as Node3D).global_position + Vector3(0.0, 0.85, 0.0)
+				var seg_v: Vector3 = Geometry3D.get_closest_point_to_segment(v_pos, global_position, next_pos)
+				if seg_v.distance_to(v_pos) <= 1.3:
+					var d_sq_v: float = global_position.distance_squared_to(seg_v)
+					if d_sq_v < best_dist_sq:
+						best_dist_sq = d_sq_v
+						best_contact = seg_v
+						best_veh_rid = (v as CollisionObject3D).get_rid() if v is CollisionObject3D else RID()
+						has_contact = true
+
+			if has_contact:
+				var wall_blocked: bool = false
+				if space != null and best_dist_sq > 0.01:
+					var occ_excl: Array[RID] = shooter_excl.duplicate()
+					if best_veh_rid.is_valid():
+						occ_excl.append(best_veh_rid)
+					var occ_q := PhysicsRayQueryParameters3D.create(global_position, best_contact, 1, occ_excl)
+					if not space.intersect_ray(occ_q).is_empty():
+						wall_blocked = true
+				if not wall_blocked:
+					global_position = best_contact
+					_detonate()
+					return
+
 		if space != null:
 			var mask: int = (1 | 8 | 64) if is_visual_only else (1 | 2 | 8 | 64)
 			var query := PhysicsRayQueryParameters3D.create(global_position, next_pos, mask)
-			var heroes_map: Dictionary = _context.get("heroes_by_id", {})
-			var shooter_var: Variant = heroes_map.get(owner_id, null)
-			if shooter_var != null and is_instance_valid(shooter_var) and shooter_var is HeroCharacter:
-				query.exclude = [(shooter_var as HeroCharacter).get_rid()]
+			if not shooter_excl.is_empty():
+				query.exclude = shooter_excl
 			var res: Dictionary = space.intersect_ray(query)
 			if not res.is_empty():
 				var hit_pos: Vector3 = res["position"]
