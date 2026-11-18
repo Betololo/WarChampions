@@ -22,11 +22,17 @@ const BTN_EMOTE: int = 1 << 14
 
 const DEFAULT_SKILL_HOTKEYS: Array[int] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 const DEFAULT_WIDGET_HOTKEYS: Array[int] = [KEY_Z, KEY_X, KEY_V, KEY_B]
+const DEFAULT_WEAPON_SLOT_ORDER: Array[int] = [0, 1, 2, 3]
+const DEFAULT_SKILL_SLOT_ORDER: Array[int] = [0, 1, 2, 3, 4, 5]
+const DEFAULT_WIDGET_SLOT_ORDER: Array[int] = [0, 1, 2, 3]
 const DEFAULT_HOTKEYS_PATH: String = "user://hotkeys.cfg"
 const MOUSE_BIND_OFFSET: int = 0x20000000
 
 static var skill_hotkeys: Array[int] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 static var widget_hotkeys: Array[int] = [KEY_Z, KEY_X, KEY_V, KEY_B]
+static var weapon_slot_order: Array[int] = [0, 1, 2, 3]
+static var skill_slot_order: Array[int] = [0, 1, 2, 3, 4, 5]
+static var widget_slot_order: Array[int] = [0, 1, 2, 3]
 
 
 static func get_skill_key(slot_idx: int) -> int:
@@ -82,9 +88,88 @@ static func assign_unique_key(kind: String, slot_idx: int, keycode: int) -> void
 		widget_hotkeys[slot_idx] = keycode
 
 
+static func reset_default_slot_orders() -> void:
+	weapon_slot_order = DEFAULT_WEAPON_SLOT_ORDER.duplicate()
+	skill_slot_order = DEFAULT_SKILL_SLOT_ORDER.duplicate()
+	widget_slot_order = DEFAULT_WIDGET_SLOT_ORDER.duplicate()
+
+
+static func get_active_slot_order(order: Array[int], count: int) -> Array[int]:
+	var result: Array[int] = []
+	for idx in order:
+		if idx >= 0 and idx < count and not result.has(idx):
+			result.append(idx)
+	for i in range(count):
+		if not result.has(i):
+			result.append(i)
+	return result
+
+
+static func get_active_weapon_order(weapon_count: int) -> Array[int]:
+	return get_active_slot_order(weapon_slot_order, clampi(weapon_count, 0, 4))
+
+
+static func get_active_skill_order(skill_count: int) -> Array[int]:
+	return get_active_slot_order(skill_slot_order, clampi(skill_count, 0, 6))
+
+
+static func get_active_widget_order(widget_count: int = 4) -> Array[int]:
+	return get_active_slot_order(widget_slot_order, clampi(widget_count, 0, 4))
+
+
+static func _get_order_array(category: String) -> Array[int]:
+	match category:
+		"weapon":
+			return weapon_slot_order
+		"skill":
+			return skill_slot_order
+		"widget":
+			return widget_slot_order
+		_:
+			return []
+
+
+static func swap_slot_order(category: String, vis_a: int, vis_b: int) -> bool:
+	if vis_a == vis_b:
+		return false
+	var arr: Array[int] = _get_order_array(category)
+	if vis_a < 0 or vis_b < 0 or vis_a >= arr.size() or vis_b >= arr.size():
+		return false
+	var tmp: int = arr[vis_a]
+	arr[vis_a] = arr[vis_b]
+	arr[vis_b] = tmp
+	return true
+
+
+static func swap_logical_slots_in_order(category: String, logical_a: int, logical_b: int) -> bool:
+	if logical_a == logical_b:
+		return false
+	var arr: Array[int] = _get_order_array(category)
+	var idx_a: int = arr.find(logical_a)
+	var idx_b: int = arr.find(logical_b)
+	if idx_a < 0 or idx_b < 0 or idx_a == idx_b:
+		return false
+	var tmp: int = arr[idx_a]
+	arr[idx_a] = arr[idx_b]
+	arr[idx_b] = tmp
+	return true
+
+
+static func _read_slot_order_from_cfg(cfg: ConfigFile, prefix: String, count: int, fallback: Array[int]) -> Array[int]:
+	var candidate: Array[int] = []
+	for i in range(count):
+		var raw: Variant = cfg.get_value("slot_order", "%s_%d" % [prefix, i], fallback[i])
+		var v: int = int(raw)
+		if v < 0 or v >= count or candidate.has(v):
+			return fallback.duplicate()
+		candidate.append(v)
+	return candidate
+
+
 static func reset_default_hotkeys() -> void:
 	skill_hotkeys = DEFAULT_SKILL_HOTKEYS.duplicate()
 	widget_hotkeys = DEFAULT_WIDGET_HOTKEYS.duplicate()
+	reset_default_slot_orders()
 
 
 static func save_hotkeys_to_config(path: String = DEFAULT_HOTKEYS_PATH) -> int:
@@ -95,6 +180,12 @@ static func save_hotkeys_to_config(path: String = DEFAULT_HOTKEYS_PATH) -> int:
 		cfg.set_value("hotkeys", "skill_%d" % i, skill_hotkeys[i])
 	for i in range(widget_hotkeys.size()):
 		cfg.set_value("hotkeys", "widget_%d" % i, widget_hotkeys[i])
+	for i in range(weapon_slot_order.size()):
+		cfg.set_value("slot_order", "weapon_%d" % i, weapon_slot_order[i])
+	for i in range(skill_slot_order.size()):
+		cfg.set_value("slot_order", "skill_%d" % i, skill_slot_order[i])
+	for i in range(widget_slot_order.size()):
+		cfg.set_value("slot_order", "widget_%d" % i, widget_slot_order[i])
 	return cfg.save(path)
 
 
@@ -114,6 +205,9 @@ static func load_hotkeys_from_config(path: String = DEFAULT_HOTKEYS_PATH) -> boo
 		var k: int = int(raw)
 		if k > 0 and k != KEY_ESCAPE:
 			widget_hotkeys[i] = k
+	weapon_slot_order = _read_slot_order_from_cfg(cfg, "weapon", 4, DEFAULT_WEAPON_SLOT_ORDER)
+	skill_slot_order = _read_slot_order_from_cfg(cfg, "skill", 6, DEFAULT_SKILL_SLOT_ORDER)
+	widget_slot_order = _read_slot_order_from_cfg(cfg, "widget", 4, DEFAULT_WIDGET_SLOT_ORDER)
 	return true
 
 
@@ -164,6 +258,8 @@ static func key_short_label(keycode: int) -> String:
 				return "M5"
 			_:
 				return "MB%d" % mb
+	if keycode == KEY_SHIFT:
+		return "SHF"
 	var s: String = OS.get_keycode_string(keycode)
 	if s.begins_with("Kp "):
 		s = s.substr(3)

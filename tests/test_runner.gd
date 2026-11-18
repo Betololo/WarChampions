@@ -53,6 +53,7 @@ func _ready() -> void:
 	await _test_phase11_polish_task8()
 	await _test_phase12_task1_fixes()
 	await _test_phase12_task2_demolisher_rework()
+	await _test_phase12_task3_hotkeys_drag_minimap()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -8175,5 +8176,307 @@ func _test_phase12_task2_demolisher_rework() -> void:
 		]
 	)
 
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _send_test_key(keycode: Key, pressed: bool) -> void:
+	var ev := InputEventKey.new()
+	ev.keycode = keycode
+	ev.physical_keycode = keycode
+	ev.pressed = pressed
+	ev.echo = false
+	Input.parse_input_event(ev)
+	Input.flush_buffered_events()
+
+
+func _test_phase12_task3_hotkeys_drag_minimap() -> void:
+	print("--- Phase 12 Task 3: Shift Hotkey, Alt Drag-Drop Hotbar & Live Tactical Minimap ---")
+	var test_cfg_path: String = "user://phase12_task3_hotkeys_test.cfg"
+	InputCmd.reset_default_hotkeys()
+
+	# 1. KEY_SHIFT accepted in ClassSelectMenu, displays SHF, persists in InputCmd
+	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = test_cfg_path
+	add_child(menu)
+	await _flush_deferred()
+	menu.show_screen("settings")
+	menu._begin_hotkey_listen("skill", 0)
+	var ev_shift := InputEventKey.new()
+	ev_shift.keycode = KEY_SHIFT
+	ev_shift.pressed = true
+	ev_shift.echo = false
+	menu._input(ev_shift)
+	var shift_bound_ok: bool = (
+		InputCmd.get_skill_key(0) == KEY_SHIFT
+		and InputCmd.key_short_label(KEY_SHIFT) == "SHF"
+		and menu._skill_hotkey_buttons[0].text.ends_with("SHF")
+		and not menu.is_listening_hotkey()
+	)
+	InputCmd.reset_default_hotkeys()
+	var shift_reloaded_ok: bool = InputCmd.load_hotkeys_from_config(test_cfg_path) and InputCmd.get_skill_key(0) == KEY_SHIFT
+	menu.queue_free()
+	await _flush_deferred()
+
+	_assert(
+		shift_bound_ok and shift_reloaded_ok,
+		"Phase 12.3a: KEY_SHIFT binds cleanly in ClassSelectMenu, labels 'SHF', and persists in ConfigFile"
+	)
+
+	# 2. Alt cursor mode blocks BTN_FIRE, BTN_AIM, Sniper scoping & camera look
+	InputCmd.reset_default_hotkeys()
+	var arena := Node3D.new()
+	add_child(arena)
+	var cmd_hero := HeroCharacter.new()
+	cmd_hero.setup_identity(13101, "AltCmd", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	arena.add_child(cmd_hero)
+	var hud := HUDController.new()
+	hud.hotkeys_config_path = test_cfg_path
+	arena.add_child(hud)
+	hud.set_local_hero(cmd_hero)
+	await get_tree().physics_frame
+
+	var shift_hud_label_ok: bool = false
+	InputCmd.set_skill_key(0, KEY_SHIFT)
+	hud.refresh_hotkey_labels()
+	shift_hud_label_ok = (hud._skill_slot_keys[0].text == "SHF")
+	InputCmd.reset_default_hotkeys()
+	hud.refresh_hotkey_labels()
+
+	var yaw_before: float = cmd_hero.hero_camera.yaw
+	var pitch_before: float = cmd_hero.hero_camera.pitch
+	cmd_hero._alt_cursor_mode = true
+	var ev_motion := InputEventMouseMotion.new()
+	ev_motion.relative = Vector2(85.0, -40.0)
+	cmd_hero._input(ev_motion)
+	var look_blocked_ok: bool = (
+		is_equal_approx(cmd_hero.hero_camera.yaw, yaw_before)
+		and is_equal_approx(cmd_hero.hero_camera.pitch, pitch_before)
+	)
+	var ev_rmb := InputEventMouseButton.new()
+	ev_rmb.button_index = MOUSE_BUTTON_RIGHT
+	ev_rmb.pressed = true
+	Input.parse_input_event(ev_rmb)
+	var ev_lmb := InputEventMouseButton.new()
+	ev_lmb.button_index = MOUSE_BUTTON_LEFT
+	ev_lmb.pressed = true
+	Input.parse_input_event(ev_lmb)
+	Input.flush_buffered_events()
+	cmd_hero._process(0.016)
+	var alt_cmd: InputCmd = cmd_hero._sample_local_input()
+	var fire_aim_scope_blocked_ok: bool = (
+		not alt_cmd.has_button(InputCmd.BTN_FIRE)
+		and not alt_cmd.has_button(InputCmd.BTN_AIM)
+		and not cmd_hero.hero_camera.is_scoped
+		and not cmd_hero.is_scoping
+	)
+	var ev_rmb_up := InputEventMouseButton.new()
+	ev_rmb_up.button_index = MOUSE_BUTTON_RIGHT
+	ev_rmb_up.pressed = false
+	Input.parse_input_event(ev_rmb_up)
+	var ev_lmb_up := InputEventMouseButton.new()
+	ev_lmb_up.button_index = MOUSE_BUTTON_LEFT
+	ev_lmb_up.pressed = false
+	Input.parse_input_event(ev_lmb_up)
+	Input.flush_buffered_events()
+	cmd_hero._alt_cursor_mode = false
+
+	_assert(
+		shift_hud_label_ok and look_blocked_ok and fire_aim_scope_blocked_ok,
+		"Phase 12.3b: HUD displays 'SHF', Alt cursor mode blocks look/BTN_FIRE/BTN_AIM/Sniper scope"
+	)
+
+	# 3. Hotbar swap (weapon 0<->2, skill 0<->4, widget 0<->3), persistence, icons & key routing
+	var sol := HeroCharacter.new()
+	sol.setup_identity(13102, "HotbarSol", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(sol)
+	var enemy := HeroCharacter.new()
+	enemy.setup_identity(13103, "TargetEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, true)
+	arena.add_child(enemy)
+	await get_tree().physics_frame
+	hud.set_local_hero(sol)
+
+	var w0_tex: Texture2D = hud._weapon_slot_icons[0].texture
+	var w2_tex: Texture2D = hud._weapon_slot_icons[2].texture
+	var s0_tex: Texture2D = hud._skill_slot_icons[0].texture
+	var s4_tex: Texture2D = hud._skill_slot_icons[4].texture
+	var wd0_tex: Texture2D = hud._widget_slot_icons[0].texture
+	var wd3_tex: Texture2D = hud._widget_slot_icons[3].texture
+
+	var swap_w_ok: bool = hud.swap_hotbar_slots("weapon", 0, 2)
+	var swap_s_ok: bool = hud.swap_hotbar_slots("skill", 0, 4)
+	var swap_wd_ok: bool = hud.swap_hotbar_slots("widget", 0, 3)
+
+	var icons_swapped_ok: bool = (
+		hud._weapon_slot_icons[0].texture == w2_tex and hud._weapon_slot_icons[2].texture == w0_tex
+		and hud._skill_slot_icons[0].texture == s4_tex and hud._skill_slot_icons[4].texture == s0_tex
+		and hud._widget_slot_icons[0].texture == wd3_tex and hud._widget_slot_icons[3].texture == wd0_tex
+	)
+
+	var expected_w_order: Array[int] = [2, 1, 0, 3]
+	var expected_s_order: Array[int] = [4, 1, 2, 3, 0, 5]
+	var expected_wd_order: Array[int] = [3, 1, 2, 0]
+	InputCmd.reset_default_hotkeys()
+	var order_persisted_ok: bool = (
+		InputCmd.load_hotkeys_from_config(test_cfg_path)
+		and InputCmd.weapon_slot_order == expected_w_order
+		and InputCmd.skill_slot_order == expected_s_order
+		and InputCmd.widget_slot_order == expected_wd_order
+	)
+
+	# Pressing KEY_1 must now select logical weapon slot 2!
+	sol.selected_weapon_slot = 0
+	_send_test_key(KEY_1, true)
+	var cmd_w_key: InputCmd = sol._sample_local_input()
+	_send_test_key(KEY_1, false)
+	var key1_selects_w2_ok: bool = (cmd_w_key.selected_weapon_slot == 2)
+
+	# Pressing KEY_5 (visual skill 0) must now trigger logical skill 4 (BTN_SKILL_5 = Burning Bullets)!
+	_send_test_key(KEY_5, true)
+	var cmd_s_key: InputCmd = sol._sample_local_input()
+	_send_test_key(KEY_5, false)
+	var key5_triggers_s4_ok: bool = (cmd_s_key.has_button(InputCmd.BTN_SKILL_5) and not cmd_s_key.has_button(InputCmd.BTN_SKILL_1))
+
+	# Pressing KEY_Z (visual widget 0) must now trigger logical widget 3 (BTN_WIDGET_4 = Antidote)!
+	_send_test_key(KEY_Z, true)
+	var cmd_wd_key: InputCmd = sol._sample_local_input()
+	_send_test_key(KEY_Z, false)
+	var keyz_triggers_wd3_ok: bool = (cmd_wd_key.has_button(InputCmd.BTN_WIDGET_4) and not cmd_wd_key.has_button(InputCmd.BTN_WIDGET_1))
+
+	var step_ctx: Dictionary = {
+		"heroes_by_id": {13102: sol, 13103: enemy},
+		"projectiles_root": arena,
+		"vehicles": [],
+	}
+	sol.status_effects.apply_poison(13103, 10.0, 4.0)
+	sol.skill_manager.step_server(0.02, cmd_s_key, step_ctx, true)
+	sol.skill_manager.step_server(0.02, cmd_wd_key, step_ctx, true)
+	var server_exec_swapped_ok: bool = (
+		sol.skill_manager.skill_cooldowns[4] > 0.0
+		and is_equal_approx(sol.skill_manager.skill_cooldowns[0], 0.0)
+		and sol.skill_manager.widget_cooldowns[3] > 0.0
+		and is_equal_approx(sol.skill_manager.widget_cooldowns[0], 0.0)
+		and not sol.status_effects.is_poisoned()
+	)
+
+	# Real Alt + GUI drag-and-drop event flow swaps widget slots 1 <-> 2
+	await get_tree().process_frame
+	hud._alt_cursor_mode = true
+	var wd1_center: Vector2 = hud._widget_slot_bgs[1].get_global_rect().get_center()
+	var wd2_center: Vector2 = hud._widget_slot_bgs[2].get_global_rect().get_center()
+	var drag_down := InputEventMouseButton.new()
+	drag_down.button_index = MOUSE_BUTTON_LEFT
+	drag_down.pressed = true
+	drag_down.position = Vector2(10.0, 10.0)
+	drag_down.global_position = wd1_center
+	hud._on_slot_gui_input(drag_down, "widget", 1)
+	var drag_move := InputEventMouseMotion.new()
+	drag_move.position = wd2_center
+	drag_move.global_position = wd2_center
+	hud._input(drag_move)
+	var drag_up := InputEventMouseButton.new()
+	drag_up.button_index = MOUSE_BUTTON_LEFT
+	drag_up.pressed = false
+	drag_up.position = wd2_center
+	drag_up.global_position = wd2_center
+	hud._input(drag_up)
+	hud._alt_cursor_mode = false
+	var gui_drag_ok: bool = (InputCmd.widget_slot_order == [3, 2, 1, 0])
+
+	_assert(
+		swap_w_ok and swap_s_ok and swap_wd_ok and icons_swapped_ok and order_persisted_ok
+		and key1_selects_w2_ok and key5_triggers_s4_ok and keyz_triggers_wd3_ok
+		and server_exec_swapped_ok and gui_drag_ok,
+		"Phase 12.3c: Hotbar swaps (w=%s,s=%s,wd=%s,icons=%s,pers=%s,k1=%s,k5=%s,kz=%s,srv=%s,drag=%s)" % [
+			str(swap_w_ok), str(swap_s_ok), str(swap_wd_ok), str(icons_swapped_ok), str(order_persisted_ok),
+			str(key1_selects_w2_ok), str(key5_triggers_s4_ok), str(keyz_triggers_wd3_ok),
+			str(server_exec_swapped_ok), str(gui_drag_ok)
+		]
+	)
+
+	# 4. Live Tactical Minimap: layout clear of killfeed, exact roundtrip, 6 flags, Sixth-Sense vs hidden stealth, Mortar click-target
+	var conquest := ConquestManager.new()
+	arena.add_child(conquest)
+	var flag_positions: Array[Vector3] = [
+		Vector3(-335.0, 2.15, 290.0),
+		Vector3(-388.0, 4.0, -262.0),
+		Vector3(-210.0, 12.15, -220.0),
+		Vector3(-15.0, 2.30, 40.0),
+		Vector3(338.0, 4.0, 240.0),
+		Vector3(280.0, 7.65, -230.0),
+	]
+	for fi in range(flag_positions.size()):
+		var cp := CapturePoint.new()
+		cp.setup(fi, "Flag_%d" % fi, flag_positions[fi], NetworkManager.TEAM_ROYAL if fi == 0 else (NetworkManager.TEAM_NATIONAL if fi == 5 else -1))
+		arena.add_child(cp)
+		conquest.register_capture_point(cp)
+
+	var hidden_stealth := HeroCharacter.new()
+	hidden_stealth.setup_identity(13104, "HiddenStealth", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, true)
+	arena.add_child(hidden_stealth)
+	await get_tree().physics_frame
+
+	sol.global_position = Vector3(-120.0, 2.15, 40.0)
+	sol.status_effects.activate_sixth_sense(55.0, 10.0)
+	enemy.global_position = Vector3(-102.0, 2.15, 40.0) # 18m away -> revealed by Sixth Sense
+	enemy.is_stealthed = true
+	hidden_stealth.global_position = Vector3(520.0, 2.15, -310.0) # Far away -> must NOT be revealed
+	hidden_stealth.is_stealthed = true
+
+	var heroes_dict: Dictionary = {13102: sol, 13103: enemy, 13104: hidden_stealth}
+	var v_empty: Array[VehicleBase] = []
+	hud.bind_context(conquest, v_empty, heroes_dict)
+	await get_tree().process_frame
+
+	var minimap_layout_ok: bool = (
+		hud._minimap != null
+		and hud._minimap.custom_minimum_size == Vector2(182.0, 182.0)
+		and hud._killfeed_lbl.offset_top > hud._minimap.offset_bottom
+		and conquest.capture_points.size() == 6
+	)
+
+	var roundtrip_ok: bool = true
+	for sample_w in [Vector3.ZERO, Vector3(-780.0, 0.0, -540.0), Vector3(780.0, 0.0, 540.0), Vector3(-335.0, 0.0, 290.0), Vector3(280.0, 0.0, -230.0)]:
+		var px: Vector2 = hud._minimap.world_to_minimap(sample_w)
+		var inv: Vector3 = hud._minimap.minimap_to_world(px)
+		if Vector2(inv.x - sample_w.x, inv.z - sample_w.z).length() >= 1.0:
+			roundtrip_ok = false
+
+	var sense_filter_ok: bool = (
+		StatusEffectContainer.is_enemy_sensed_by_team(enemy, sol.team, heroes_dict, sol)
+		and not StatusEffectContainer.is_enemy_sensed_by_team(hidden_stealth, sol.team, heroes_dict, sol)
+	)
+
+	# Mortar interactive click-target mode
+	var mortar_results: Array[Vector3] = []
+	hud.set_mortar_targeting_mode(true, func(target_pos: Vector3) -> void:
+		mortar_results.append(target_pos)
+	)
+	var mortar_open_ok: bool = (
+		hud.is_mortar_targeting_active()
+		and hud._minimap.size == Vector2(420.0, 420.0)
+	)
+	var target_world := Vector3(240.0, 0.0, -135.0)
+	var click_local: Vector2 = hud._minimap.world_to_minimap(target_world)
+	var click_ev := InputEventMouseButton.new()
+	click_ev.button_index = MOUSE_BUTTON_LEFT
+	click_ev.pressed = true
+	click_ev.position = click_local
+	hud._minimap._gui_input(click_ev)
+	var mortar_cb_ok: bool = (
+		mortar_results.size() == 1
+		and Vector2(mortar_results[0].x - target_world.x, mortar_results[0].z - target_world.z).length() < 1.0
+		and not hud.is_mortar_targeting_active()
+		and hud._minimap.size == Vector2(182.0, 182.0)
+	)
+
+	_assert(
+		minimap_layout_ok and roundtrip_ok and sense_filter_ok and mortar_open_ok and mortar_cb_ok,
+		"Phase 12.3d: Live Tactical Minimap (182x182 clear of killfeed, <1m roundtrip, 6 flags, Sixth-Sense filter, Mortar click-target)"
+	)
+
+	if FileAccess.file_exists(test_cfg_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(test_cfg_path))
+	InputCmd.reset_default_hotkeys()
 	arena.queue_free()
 	await _flush_deferred()

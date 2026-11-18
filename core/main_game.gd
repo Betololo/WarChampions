@@ -303,11 +303,18 @@ func _run_with_loading_screen(deploy_text: String, on_ready_call: Callable) -> v
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		if not _loading_in_progress and class_menu != null and not class_menu.visible and heroes_by_id.has(NetworkManager.local_peer_id):
-			if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not DisplayServer.get_name().contains("headless"):
-				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+			var alt_held: bool = Input.is_key_pressed(KEY_ALT)
+			var mortar_active: bool = hud != null and hud.is_mortar_targeting_active()
+			if not alt_held and not mortar_active:
+				if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not DisplayServer.get_name().contains("headless"):
+					Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if (k.keycode == KEY_ESCAPE or k.keycode == KEY_P) and class_menu != null:
+			if k.keycode == KEY_ESCAPE and hud != null and hud.is_mortar_targeting_active():
+				hud.set_mortar_targeting_mode(false)
+				get_viewport().set_input_as_handled()
+				return
 			if class_menu.is_listening_hotkey():
 				return
 			var in_active_match: bool = heroes_by_id.has(NetworkManager.local_peer_id)

@@ -56,6 +56,8 @@ var aim_yaw: float = 0.0
 var aim_pitch: float = 0.0
 var selected_weapon_slot: int = 0
 var _last_weapon_slot: int = 1
+var _alt_cursor_mode: bool = false
+var _prev_alt_key_held: bool = false
 var forced_weapon_seq: int = 0
 var _last_forced_weapon_seq: int = 0
 var _pending_forced_slot: int = -1
@@ -819,24 +821,84 @@ func get_muzzle_world_position() -> Vector3:
 	return _held_weapon_root.to_global(_weapon_muzzle_local)
 
 
+func _is_ui_cursor_locked_open() -> bool:
+	if not is_inside_tree():
+		return false
+	for m in get_tree().get_nodes_in_group("class_select_menus"):
+		if m is CanvasLayer and (m as CanvasLayer).visible:
+			return true
+	for h in get_tree().get_nodes_in_group("hud_controllers"):
+		if h != null and h.has_method("is_mortar_targeting_active") and h.is_mortar_targeting_active():
+			return true
+	return false
+
+
+func is_cursor_free_mode() -> bool:
+	if _alt_cursor_mode or Input.is_key_pressed(KEY_ALT):
+		return true
+	if _is_ui_cursor_locked_open():
+		return true
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return true
+	return false
+
+
+func _sync_alt_cursor_mode() -> void:
+	if not is_local_player or is_bot:
+		return
+	var alt_key_now: bool = Input.is_key_pressed(KEY_ALT)
+	if alt_key_now != _prev_alt_key_held:
+		_prev_alt_key_held = alt_key_now
+		_alt_cursor_mode = alt_key_now
+		if alt_key_now:
+			if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
+				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		else:
+			if not _is_ui_cursor_locked_open() and not DisplayServer.get_name().contains("headless"):
+				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	elif _alt_cursor_mode and Input.mouse_mode != Input.MOUSE_MODE_VISIBLE:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _cycle_weapon_slot_visual(step: int) -> void:
+	if weapons.is_empty():
+		return
+	var order: Array[int] = InputCmd.get_active_weapon_order(weapons.size())
+	if order.is_empty():
+		return
+	var cur_vis: int = order.find(selected_weapon_slot)
+	if cur_vis < 0:
+		cur_vis = 0
+	var next_vis: int = posmod(cur_vis + step, order.size())
+	switch_weapon_slot(order[next_vis])
+
+
 func _input(event: InputEvent) -> void:
 	if not is_local_player or is_bot:
 		return
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventKey:
+		var kev := event as InputEventKey
+		if kev.keycode == KEY_ALT:
+			_sync_alt_cursor_mode()
+	if is_cursor_free_mode():
+		return
+	if event is InputEventMouseMotion:
 		if hero_camera != null:
 			hero_camera.apply_look_delta((event as InputEventMouseMotion).relative)
-	elif event is InputEventMouseButton and event.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	elif event is InputEventMouseButton and event.pressed:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			selected_weapon_slot = posmod(selected_weapon_slot - 1, maxi(1, weapons.size()))
+			_cycle_weapon_slot_visual(-1)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			selected_weapon_slot = posmod(selected_weapon_slot + 1, maxi(1, weapons.size()))
+			_cycle_weapon_slot_visual(1)
 
 
 func _process(delta: float) -> void:
+	if is_local_player and not is_bot:
+		_sync_alt_cursor_mode()
 	if is_local_player and not is_bot and hero_camera != null:
 		var sniper_scoped: bool = false
-		if not is_defeated and current_vehicle_id < 0 and not weapons.is_empty():
+		if not is_defeated and current_vehicle_id < 0 and not weapons.is_empty() and not is_cursor_free_mode():
 			var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
 			var w: WeaponBase = weapons[slot] as WeaponBase
 			if w != null and w.is_sniper and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
@@ -1557,16 +1619,14 @@ func _sample_local_input() -> InputCmd:
 		cmd.aim_yaw = hero_camera.yaw
 		cmd.aim_pitch = hero_camera.pitch
 
-	# Weapon slots 1..4 + Q last-weapon quick-switch (across ALL equipped slots)
+	# Weapon slots 1..4 (mapped via weapon_slot_order) + Q last-weapon quick-switch (across ALL equipped slots)
+	var weapon_order: Array[int] = InputCmd.get_active_weapon_order(weapons.size())
 	var next_slot: int = selected_weapon_slot
-	if Input.is_key_pressed(KEY_1):
-		next_slot = 0
-	elif Input.is_key_pressed(KEY_2) and weapons.size() > 1:
-		next_slot = 1
-	elif Input.is_key_pressed(KEY_3) and weapons.size() > 2:
-		next_slot = 2
-	elif Input.is_key_pressed(KEY_4) and weapons.size() > 3:
-		next_slot = 3
+	var weapon_keys: Array[int] = [KEY_1, KEY_2, KEY_3, KEY_4]
+	for vis_w in range(mini(weapon_order.size(), weapon_keys.size())):
+		if Input.is_key_pressed(weapon_keys[vis_w] as Key):
+			next_slot = weapon_order[vis_w]
+			break
 	if next_slot != selected_weapon_slot:
 		switch_weapon_slot(next_slot)
 
@@ -1588,25 +1648,37 @@ func _sample_local_input() -> InputCmd:
 	else:
 		_prev_seat_keys = 0
 
+	var cursor_free: bool = is_cursor_free_mode()
 	cmd.set_button(InputCmd.BTN_JUMP, Input.is_key_pressed(KEY_SPACE))
 	cmd.set_button(InputCmd.BTN_CROUCH, Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_C))
-	cmd.set_button(InputCmd.BTN_FIRE, Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
-	cmd.set_button(InputCmd.BTN_AIM, Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))
+	cmd.set_button(InputCmd.BTN_FIRE, (not cursor_free) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
+	cmd.set_button(InputCmd.BTN_AIM, (not cursor_free) and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))
 	cmd.set_button(InputCmd.BTN_RELOAD, Input.is_key_pressed(KEY_R))
 	cmd.set_button(InputCmd.BTN_INTERACT, Input.is_key_pressed(KEY_E))
 
-	var s1_pressed: bool = InputCmd.is_bind_pressed(InputCmd.get_skill_key(0)) or (not InputCmd.is_key_assigned_anywhere(KEY_F) and Input.is_key_pressed(KEY_F))
-	var s2_pressed: bool = InputCmd.is_bind_pressed(InputCmd.get_skill_key(1)) or (not InputCmd.is_key_assigned_anywhere(KEY_G) and Input.is_key_pressed(KEY_G))
-	cmd.set_button(InputCmd.BTN_SKILL_1, s1_pressed)
-	cmd.set_button(InputCmd.BTN_SKILL_2, s2_pressed)
-	cmd.set_button(InputCmd.BTN_SKILL_3, InputCmd.is_bind_pressed(InputCmd.get_skill_key(2)))
-	cmd.set_button(InputCmd.BTN_SKILL_4, InputCmd.is_bind_pressed(InputCmd.get_skill_key(3)))
-	cmd.set_button(InputCmd.BTN_SKILL_5, InputCmd.is_bind_pressed(InputCmd.get_skill_key(4)))
-	cmd.set_button(InputCmd.BTN_SKILL_6, InputCmd.is_bind_pressed(InputCmd.get_skill_key(5)))
-	cmd.set_button(InputCmd.BTN_WIDGET_1, InputCmd.is_bind_pressed(InputCmd.get_widget_key(0)))
-	cmd.set_button(InputCmd.BTN_WIDGET_2, InputCmd.is_bind_pressed(InputCmd.get_widget_key(1)))
-	cmd.set_button(InputCmd.BTN_WIDGET_3, InputCmd.is_bind_pressed(InputCmd.get_widget_key(2)))
-	cmd.set_button(InputCmd.BTN_WIDGET_4, InputCmd.is_bind_pressed(InputCmd.get_widget_key(3)))
+	for s_flag in SkillManager.SKILL_BUTTON_FLAGS:
+		cmd.set_button(s_flag, false)
+	var n_skills: int = skill_manager.skill_ranks.size() if skill_manager != null else (6 if class_id == NetworkManager.CLASS_COMMANDO else 5)
+	var skill_order: Array[int] = InputCmd.get_active_skill_order(n_skills)
+	for vis_s in range(mini(skill_order.size(), SkillManager.SKILL_BUTTON_FLAGS.size())):
+		var pressed_s: bool = InputCmd.is_bind_pressed(InputCmd.get_skill_key(vis_s))
+		if vis_s == 0 and not InputCmd.is_key_assigned_anywhere(KEY_F) and Input.is_key_pressed(KEY_F):
+			pressed_s = true
+		elif vis_s == 1 and not InputCmd.is_key_assigned_anywhere(KEY_G) and Input.is_key_pressed(KEY_G):
+			pressed_s = true
+		var logical_s: int = skill_order[vis_s]
+		if logical_s >= 0 and logical_s < SkillManager.SKILL_BUTTON_FLAGS.size():
+			cmd.set_button(SkillManager.SKILL_BUTTON_FLAGS[logical_s], pressed_s)
+
+	for w_flag in SkillManager.WIDGET_BUTTON_FLAGS:
+		cmd.set_button(w_flag, false)
+	var widget_order: Array[int] = InputCmd.get_active_widget_order(4)
+	for vis_wd in range(mini(widget_order.size(), SkillManager.WIDGET_BUTTON_FLAGS.size())):
+		var pressed_wd: bool = InputCmd.is_bind_pressed(InputCmd.get_widget_key(vis_wd))
+		var logical_wd: int = widget_order[vis_wd]
+		if logical_wd >= 0 and logical_wd < SkillManager.WIDGET_BUTTON_FLAGS.size():
+			cmd.set_button(SkillManager.WIDGET_BUTTON_FLAGS[logical_wd], pressed_wd)
+
 	cmd.set_button(InputCmd.BTN_EMOTE, Input.is_key_pressed(KEY_T))
 
 	cmd.selected_weapon_slot = selected_weapon_slot
@@ -2012,7 +2084,7 @@ func _sync_seated_visual_orientation(veh: VehicleBase) -> void:
 		visual_root.global_transform.basis = veh.global_transform.basis * Basis(Vector3.UP, veh.get_seat_local_yaw(current_seat_index))
 	else:
 		# Open shooting Passengers / Wing-riders
-		var is_shooting: bool = _fire_pose_timer > 0.0 or (is_local_player and not is_bot and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or (latest_server_input != null and latest_server_input.has_button(InputCmd.BTN_FIRE))
+		var is_shooting: bool = _fire_pose_timer > 0.0 or (is_local_player and not is_bot and not is_cursor_free_mode() and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or (latest_server_input != null and latest_server_input.has_button(InputCmd.BTN_FIRE))
 		if is_shooting:
 			var veh_basis: Basis = veh.global_transform.basis
 			var veh_fwd: Vector3 = -veh_basis.z

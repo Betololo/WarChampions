@@ -105,6 +105,324 @@ class SniperScopeOverlay extends Control:
 		draw_circle(center, 1.4, Color(1.0, 0.92, 0.55, 1.0))
 
 
+class _TacticalMinimapControl extends Control:
+	const WORLD_MIN_X: float = -780.0
+	const WORLD_MAX_X: float = 780.0
+	const WORLD_MIN_Z: float = -540.0
+	const WORLD_MAX_Z: float = 540.0
+	const MAP_PAD: float = 4.0
+
+	var hud_owner: HUDController = null
+	var mortar_active: bool = false
+	var hover_local_pos: Vector2 = Vector2(-1.0, -1.0)
+
+	func _get_effective_size() -> Vector2:
+		return Vector2(
+			maxf(size.x, custom_minimum_size.x),
+			maxf(size.y, custom_minimum_size.y)
+		)
+
+	func _get_projection_params() -> Dictionary:
+		var s: Vector2 = _get_effective_size()
+		var usable_w: float = maxf(1.0, s.x - MAP_PAD * 2.0)
+		var usable_h: float = maxf(1.0, s.y - MAP_PAD * 2.0)
+		var world_w: float = WORLD_MAX_X - WORLD_MIN_X
+		var world_h: float = WORLD_MAX_Z - WORLD_MIN_Z
+		var px_per_m: float = minf(usable_w / world_w, usable_h / world_h)
+		var draw_w: float = world_w * px_per_m
+		var draw_h: float = world_h * px_per_m
+		return {
+			"origin_x": (s.x - draw_w) * 0.5,
+			"origin_y": (s.y - draw_h) * 0.5,
+			"px_per_m": px_per_m,
+		}
+
+	func world_to_minimap(world_pos: Vector3) -> Vector2:
+		var p: Dictionary = _get_projection_params()
+		var ox: float = float(p["origin_x"])
+		var oy: float = float(p["origin_y"])
+		var sc: float = float(p["px_per_m"])
+		return Vector2(
+			ox + (world_pos.x - WORLD_MIN_X) * sc,
+			oy + (world_pos.z - WORLD_MIN_Z) * sc
+		)
+
+	func minimap_to_world(local_pos: Vector2) -> Vector3:
+		var p: Dictionary = _get_projection_params()
+		var ox: float = float(p["origin_x"])
+		var oy: float = float(p["origin_y"])
+		var sc: float = maxf(0.0001, float(p["px_per_m"]))
+		var wx: float = WORLD_MIN_X + (local_pos.x - ox) / sc
+		var wz: float = WORLD_MIN_Z + (local_pos.y - oy) / sc
+		return Vector3(wx, 0.0, wz)
+
+	func _gui_input(event: InputEvent) -> void:
+		if not mortar_active or hud_owner == null:
+			return
+		if event is InputEventMouseMotion:
+			hover_local_pos = (event as InputEventMouseMotion).position
+			queue_redraw()
+		elif event is InputEventMouseButton and event.pressed:
+			var mb := event as InputEventMouseButton
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				hud_owner._on_minimap_mortar_clicked(mb.position)
+				accept_event()
+			elif mb.button_index == MOUSE_BUTTON_RIGHT:
+				hud_owner.set_mortar_targeting_mode(false)
+				accept_event()
+
+	func _build_rounded_land_poly(half_w_core: float, half_h_core: float, corner_r: float) -> PackedVector2Array:
+		var pts := PackedVector2Array()
+		var corners: Array[Dictionary] = [
+			{"cx": half_w_core, "cz": -half_h_core, "a0": -PI * 0.5, "a1": 0.0},
+			{"cx": half_w_core, "cz": half_h_core, "a0": 0.0, "a1": PI * 0.5},
+			{"cx": -half_w_core, "cz": half_h_core, "a0": PI * 0.5, "a1": PI},
+			{"cx": -half_w_core, "cz": -half_h_core, "a0": PI, "a1": PI * 1.5},
+		]
+		var steps: int = 4
+		for c in corners:
+			var cx: float = float(c["cx"])
+			var cz: float = float(c["cz"])
+			var a0: float = float(c["a0"])
+			var a1: float = float(c["a1"])
+			for k in range(steps + 1):
+				var t: float = float(k) / float(steps)
+				var ang: float = lerpf(a0, a1, t)
+				var wx: float = cx + cos(ang) * corner_r
+				var wz: float = cz + sin(ang) * corner_r
+				pts.append(world_to_minimap(Vector3(wx, 0.0, wz)))
+		return pts
+
+	func _draw_world_rect(cx: float, cz: float, w_x: float, w_z: float, col: Color) -> void:
+		var tl: Vector2 = world_to_minimap(Vector3(cx - w_x * 0.5, 0.0, cz - w_z * 0.5))
+		var br: Vector2 = world_to_minimap(Vector3(cx + w_x * 0.5, 0.0, cz + w_z * 0.5))
+		draw_rect(Rect2(tl, br - tl), col)
+
+	func _draw_diamond(pos: Vector2, r: float, fill: Color, border: Color) -> void:
+		var outer := PackedVector2Array([
+			pos + Vector2(0.0, -r - 1.2),
+			pos + Vector2(r + 1.2, 0.0),
+			pos + Vector2(0.0, r + 1.2),
+			pos + Vector2(-r - 1.2, 0.0),
+		])
+		var inner := PackedVector2Array([
+			pos + Vector2(0.0, -r),
+			pos + Vector2(r, 0.0),
+			pos + Vector2(0.0, r),
+			pos + Vector2(-r, 0.0),
+		])
+		draw_colored_polygon(outer, border)
+		draw_colored_polygon(inner, fill)
+
+	func _draw() -> void:
+		var s: Vector2 = _get_effective_size()
+		var proj: Dictionary = _get_projection_params()
+		var sc: float = float(proj["px_per_m"])
+
+		# 1. Ocean water background
+		var ocean_col := Color(0.11, 0.28, 0.44)
+		draw_rect(Rect2(Vector2.ZERO, s), ocean_col)
+
+		# 2. Sculpted island coastline (sandy shore + green landmass + hill contours)
+		var shore_poly: PackedVector2Array = _build_rounded_land_poly(710.0, 450.0, 46.0)
+		draw_colored_polygon(shore_poly, Color(0.68, 0.62, 0.44))
+		var land_poly: PackedVector2Array = _build_rounded_land_poly(710.0, 450.0, 35.0)
+		draw_colored_polygon(land_poly, Color(0.24, 0.36, 0.22))
+
+		# Subtle hill contours (Windmill Hill & Lighthouse Cliff)
+		draw_circle(world_to_minimap(Vector3(-230.0, 0.0, -240.0)), maxf(4.0, 72.0 * sc), Color(0.28, 0.41, 0.25))
+		draw_circle(world_to_minimap(Vector3(-470.0, 0.0, 315.0)), maxf(4.0, 56.0 * sc), Color(0.28, 0.41, 0.25))
+
+		# 3. Winding central river ribbon
+		var river_pts := PackedVector2Array()
+		var r_steps: int = 24
+		for ri in range(r_steps + 1):
+			var z_val: float = lerpf(WORLD_MIN_Z, WORLD_MAX_Z, float(ri) / float(r_steps))
+			var x_val: float = MapSeasideFrontline.get_river_center_x(z_val)
+			river_pts.append(world_to_minimap(Vector3(x_val, 0.0, z_val)))
+		draw_polyline(river_pts, ocean_col, maxf(3.0, 34.0 * sc), true)
+
+		# 4. Main Roads, Plaza, Runways, Piers & River Bridges
+		var road_col := Color(0.36, 0.34, 0.30)
+		var runway_col := Color(0.28, 0.29, 0.32)
+		var pier_col := Color(0.46, 0.38, 0.28)
+		var bridge_col := Color(0.54, 0.49, 0.40)
+
+		_draw_world_rect(-259.0, 40.0, 762.0, 16.0, road_col)
+		_draw_world_rect(424.0, 40.0, 432.0, 16.0, road_col)
+		_draw_world_rect(0.0, 50.0, 15.0, 820.0, road_col)
+		_draw_world_rect(0.0, 40.0, 106.0, 94.0, road_col)
+		_draw_world_rect(-149.0, 444.0, 542.0, 13.0, road_col)
+		_draw_world_rect(311.0, 444.0, 218.0, 13.0, road_col)
+		_draw_world_rect(-345.0, 246.0, 13.0, 412.0, road_col)
+
+		# Runways
+		_draw_world_rect(-490.0, -90.0, 220.0, 24.0, runway_col)
+		_draw_world_rect(490.0, 105.0, 220.0, 24.0, runway_col)
+
+		# Piers
+		_draw_world_rect(-370.0, 510.0, 14.0, 104.0, pier_col)
+		_draw_world_rect(0.0, 510.0, 14.0, 104.0, pier_col)
+		_draw_world_rect(370.0, 510.0, 14.0, 104.0, pier_col)
+
+		# Bridges spanning the river
+		_draw_world_rect(MapSeasideFrontline.get_river_center_x(40.0), 40.0, 64.0, 18.0, bridge_col)
+		_draw_world_rect(MapSeasideFrontline.get_river_center_x(444.0), 444.0, 64.0, 15.0, bridge_col)
+
+		if hud_owner == null:
+			draw_rect(Rect2(Vector2.ZERO, s), Color(0.08, 0.12, 0.18, 0.95), false, 2.0)
+			return
+
+		var local_hero: HeroCharacter = hud_owner._local_hero
+		var local_team: int = local_hero.team if (local_hero != null and is_instance_valid(local_hero)) else NetworkManager.TEAM_ROYAL
+		var font: Font = ThemeDB.fallback_font
+		var font_sz: int = 12 if mortar_active else 9
+
+		# 5. All 6 Conquest Flags A..F
+		if hud_owner._conquest != null:
+			var letters: PackedStringArray = PackedStringArray(["A", "B", "C", "D", "E", "F"])
+			var cps: Array[CapturePoint] = hud_owner._conquest.capture_points
+			for ci in range(cps.size()):
+				var cp: CapturePoint = cps[ci]
+				if cp == null:
+					continue
+				var cp_pos: Vector3 = cp.global_position if cp.is_inside_tree() else cp.position
+				var mp: Vector2 = world_to_minimap(cp_pos)
+				var f_col: Color = Color(0.76, 0.78, 0.82)
+				if cp.owner_team == NetworkManager.TEAM_ROYAL:
+					f_col = Color(0.22, 0.56, 1.0)
+				elif cp.owner_team == NetworkManager.TEAM_NATIONAL:
+					f_col = Color(0.94, 0.24, 0.24)
+				var r_box: float = 7.0 if mortar_active else 5.5
+				draw_rect(Rect2(mp - Vector2(r_box + 1.0, r_box + 1.0), Vector2((r_box + 1.0) * 2.0, (r_box + 1.0) * 2.0)), Color(0.05, 0.06, 0.08, 0.92))
+				draw_rect(Rect2(mp - Vector2(r_box, r_box), Vector2(r_box * 2.0, r_box * 2.0)), f_col)
+				var letter: String = letters[ci] if ci < letters.size() else str(ci)
+				if font != null:
+					draw_string(font, mp + Vector2(-3.5 if not mortar_active else -4.5, 3.5 if not mortar_active else 4.5), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz, Color.WHITE)
+
+		# 6. Structures (ArmorKit, Trench, Turret) when allied or nearby
+		if hud_owner.is_inside_tree():
+			var local_pos: Vector3 = local_hero.global_position if (local_hero != null and is_instance_valid(local_hero) and local_hero.is_inside_tree()) else Vector3.ZERO
+			var has_local_pos: bool = (local_hero != null and is_instance_valid(local_hero))
+			for grp_name in ["armor_kits", "trenches", "turrets"]:
+				for node in hud_owner.get_tree().get_nodes_in_group(grp_name):
+					if not (node is Node3D) or not is_instance_valid(node) or node.is_queued_for_deletion():
+						continue
+					var n3 := node as Node3D
+					var n_pos: Vector3 = n3.global_position if n3.is_inside_tree() else n3.position
+					var raw_team: Variant = n3.get("owner_team")
+					if raw_team == null:
+						raw_team = n3.get("team")
+					var n_team: int = int(raw_team) if raw_team != null else -1
+					var near_local: bool = has_local_pos and n_pos.distance_to(local_pos) <= 45.0
+					if n_team != local_team and not near_local:
+						continue
+					var sp: Vector2 = world_to_minimap(n_pos)
+					var s_col: Color = Color(0.32, 0.90, 0.96) if grp_name == "armor_kits" else (Color(0.86, 0.72, 0.36) if grp_name == "trenches" else Color(0.98, 0.62, 0.22))
+					if grp_name == "turrets":
+						_draw_diamond(sp, 3.2, s_col, Color(0.05, 0.06, 0.08))
+					elif grp_name == "trenches":
+						draw_rect(Rect2(sp - Vector2(3.5, 1.5), Vector2(7.0, 3.0)), s_col)
+					else:
+						draw_rect(Rect2(sp - Vector2(2.5, 2.5), Vector2(5.0, 5.0)), s_col)
+
+		# 7. Vehicles (allied, neutral, occupied by ally, marked, or sensed)
+		for v in hud_owner._vehicles_ref:
+			if v == null or not is_instance_valid(v) or v.is_destroyed:
+				continue
+			var v_pos: Vector3 = v.global_position if v.is_inside_tree() else v.position
+			var v_sensed: bool = (v.team >= 0 and v.team != local_team) and StatusEffectContainer.is_pos_sensed_by_team(v_pos, local_team, hud_owner._heroes_ref, local_hero)
+			var is_visible_v: bool = (v.team == local_team) or (v.team == -1) or v.is_marked or v_sensed
+			if not is_visible_v:
+				continue
+			var vp: Vector2 = world_to_minimap(v_pos)
+			var v_col: Color = Color(0.78, 0.76, 0.66)
+			if v.team == NetworkManager.TEAM_ROYAL:
+				v_col = Color(0.36, 0.74, 1.0)
+			elif v.team == NetworkManager.TEAM_NATIONAL:
+				v_col = Color(1.0, 0.34, 0.30)
+			var v_fwd_3d: Vector3 = -v.global_transform.basis.z if v.is_inside_tree() else Vector3(0.0, 0.0, -1.0)
+			var v_dir := Vector2(v_fwd_3d.x, v_fwd_3d.z)
+			if v_dir.length_squared() < 0.001:
+				v_dir = Vector2(0.0, -1.0)
+			else:
+				v_dir = v_dir.normalized()
+			var v_perp := Vector2(-v_dir.y, v_dir.x)
+			var vr: float = 4.6 if mortar_active else 3.8
+			var tri := PackedVector2Array([
+				vp + v_dir * vr,
+				vp - v_dir * (vr * 0.7) + v_perp * (vr * 0.75),
+				vp - v_dir * (vr * 0.7) - v_perp * (vr * 0.75),
+			])
+			draw_colored_polygon(tri, v_col)
+
+		# 8. Allied Heroes & Revealed Enemy Heroes (Sixth Sense or Mark Target)
+		for id_key in hud_owner._heroes_ref.keys():
+			var h: HeroCharacter = hud_owner._heroes_ref[id_key] as HeroCharacter
+			if h == null or not is_instance_valid(h) or h.is_defeated or h == local_hero:
+				continue
+			var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
+			var hp_2d: Vector2 = world_to_minimap(h_pos)
+			if h.team == local_team:
+				var ally_col: Color = Color(0.28, 0.68, 1.0) if h.team == NetworkManager.TEAM_ROYAL else Color(0.96, 0.34, 0.30)
+				draw_circle(hp_2d, 3.8, Color(0.04, 0.06, 0.08, 0.90))
+				draw_circle(hp_2d, 2.7, ally_col)
+			else:
+				var marked: bool = (h.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0
+				var sensed: bool = StatusEffectContainer.is_enemy_sensed_by_team(h, local_team, hud_owner._heroes_ref, local_hero)
+				if marked or sensed:
+					_draw_diamond(hp_2d, 4.0, Color(1.0, 0.16, 0.16), Color(1.0, 0.96, 0.85))
+
+		# 9. Local Hero: Translucent FOV Wedge + White/Gold Directional Arrow
+		if local_hero != null and is_instance_valid(local_hero) and not local_hero.is_defeated:
+			var lh_pos: Vector3 = local_hero.global_position if local_hero.is_inside_tree() else local_hero.position
+			var lp: Vector2 = world_to_minimap(lh_pos)
+			var fwd3: Vector3 = -(Basis(Vector3.UP, local_hero.aim_yaw).z)
+			var dir2 := Vector2(fwd3.x, fwd3.z)
+			if dir2.length_squared() < 0.001:
+				dir2 = Vector2(0.0, -1.0)
+			else:
+				dir2 = dir2.normalized()
+			var base_ang: float = atan2(dir2.y, dir2.x)
+			var half_fov: float = deg_to_rad(34.0)
+			var cone_r: float = 34.0 if mortar_active else 24.0
+			var fov_pts := PackedVector2Array([lp])
+			for fi in range(9):
+				var fa: float = lerpf(base_ang - half_fov, base_ang + half_fov, float(fi) / 8.0)
+				fov_pts.append(lp + Vector2(cos(fa), sin(fa)) * cone_r)
+			draw_colored_polygon(fov_pts, Color(1.0, 0.94, 0.65, 0.22))
+
+			var perp2 := Vector2(-dir2.y, dir2.x)
+			var ar: float = 7.0 if mortar_active else 5.5
+			var arrow_out := PackedVector2Array([
+				lp + dir2 * (ar + 1.5),
+				lp - dir2 * (ar * 0.75) + perp2 * (ar * 0.8 + 1.2),
+				lp - dir2 * (ar * 0.35),
+				lp - dir2 * (ar * 0.75) - perp2 * (ar * 0.8 + 1.2),
+			])
+			var arrow_in := PackedVector2Array([
+				lp + dir2 * ar,
+				lp - dir2 * (ar * 0.65) + perp2 * (ar * 0.68),
+				lp - dir2 * (ar * 0.25),
+				lp - dir2 * (ar * 0.65) - perp2 * (ar * 0.68),
+			])
+			draw_colored_polygon(arrow_out, Color(0.05, 0.06, 0.08, 0.96))
+			draw_colored_polygon(arrow_in, Color(1.0, 0.94, 0.36))
+
+		# 10. Mortar Target Reticle when targeting mode is active
+		if mortar_active and hover_local_pos.x >= 0.0 and hover_local_pos.y >= 0.0:
+			var r_col := Color(1.0, 0.86, 0.24, 0.95)
+			draw_arc(hover_local_pos, 14.0, 0.0, TAU, 24, r_col, 2.0, true)
+			draw_line(hover_local_pos - Vector2(18.0, 0.0), hover_local_pos + Vector2(18.0, 0.0), r_col, 1.5)
+			draw_line(hover_local_pos - Vector2(0.0, 18.0), hover_local_pos + Vector2(0.0, 18.0), r_col, 1.5)
+
+		# 11. Framed Border
+		var border_col := Color(1.0, 0.84, 0.26, 0.98) if mortar_active else Color(0.08, 0.12, 0.18, 0.95)
+		draw_rect(Rect2(Vector2.ZERO, s), border_col, false, 3.0 if mortar_active else 2.0)
+
+
+@export var hotkeys_config_path: String = InputCmd.DEFAULT_HOTKEYS_PATH
+
 var _portrait_gauge: PortraitGaugeControl
 var _portrait_tex: TextureRect
 var _level_lbl: Label
@@ -196,10 +514,26 @@ var _last_portrait_key: String = ""
 var _last_hotbar_class_id: int = -1
 var _slot_style_active: StyleBoxFlat
 var _slot_style_idle: StyleBoxFlat
+var _slot_style_drag_source: StyleBoxFlat
+var _slot_style_drag_target: StyleBoxFlat
 var _last_highlighted_slot: int = -1
 var _last_gauge_xp: int = -1
 var _last_gauge_level: int = -1
 var _last_gauge_team: int = -1
+
+var _alt_cursor_mode: bool = false
+var _prev_alt_key_held: bool = false
+var _drag_active: bool = false
+var _drag_category: String = ""
+var _drag_source_vis: int = -1
+var _drag_hover_vis: int = -1
+var _drag_preview: TextureRect = null
+var _alt_hint_lbl: Label = null
+
+var _minimap: _TacticalMinimapControl = null
+var _mortar_targeting_active: bool = false
+var _mortar_target_callback: Callable = Callable()
+var _mortar_banner_lbl: Label = null
 
 var _last_ping_ms: int = -1
 var _last_sim_lat_ms: int = -1
@@ -262,6 +596,7 @@ static func get_seat_display_name(seat_type: int, vehicle_type: int = -1) -> Str
 func _ready() -> void:
 	layer = 10
 	add_to_group("hud_controllers")
+	set_process_input(true)
 	_build_hud()
 
 
@@ -702,7 +1037,8 @@ func _build_hud() -> void:
 		var bg := PanelContainer.new()
 		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(w_idx == 0))
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bg.mouse_filter = Control.MOUSE_FILTER_PASS
+		bg.gui_input.connect(_on_slot_gui_input.bind("weapon", w_idx))
 		slot_v.add_child(bg)
 
 		var icon := TextureRect.new()
@@ -738,6 +1074,7 @@ func _build_hud() -> void:
 		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
 		bg.mouse_filter = Control.MOUSE_FILTER_PASS
+		bg.gui_input.connect(_on_slot_gui_input.bind("skill", s_idx))
 		sv.add_child(bg)
 
 		var icon := TextureRect.new()
@@ -752,6 +1089,7 @@ func _build_hud() -> void:
 		cd_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cd_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		cd_lbl.text = ""
+		cd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_style_label(cd_lbl, 12, Color(1.0, 0.90, 0.30))
 		bg.add_child(cd_lbl)
 
@@ -770,7 +1108,9 @@ func _build_hud() -> void:
 
 	# 4 Widget slots (Bandages, Wrench, Água, Antidote)
 	_widget_slot_bgs.clear()
+	var init_widget_order: Array[int] = InputCmd.get_active_widget_order(4)
 	for wj in range(4):
+		var logical_wj: int = init_widget_order[wj]
 		var wv := VBoxContainer.new()
 		wv.alignment = BoxContainer.ALIGNMENT_END
 		wv.add_theme_constant_override("separation", 2)
@@ -780,7 +1120,8 @@ func _build_hud() -> void:
 		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
 		bg.mouse_filter = Control.MOUSE_FILTER_PASS
-		var w_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_widget_%d" % wj)
+		bg.gui_input.connect(_on_slot_gui_input.bind("widget", wj))
+		var w_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_widget_%d" % logical_wj)
 		if not w_entry.is_empty():
 			bg.tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [
 				str(w_entry.get("name", "")),
@@ -797,7 +1138,7 @@ func _build_hud() -> void:
 		icon.custom_minimum_size = Vector2(30, 30)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.texture = CartoonAssets.get_texture("icon_widget_%d" % wj)
+		icon.texture = CartoonAssets.get_texture("icon_widget_%d" % logical_wj)
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bg.add_child(icon)
 
@@ -805,6 +1146,7 @@ func _build_hud() -> void:
 		cd_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		cd_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		cd_lbl.text = ""
+		cd_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_style_label(cd_lbl, 12, Color(1.0, 0.85, 0.25))
 		bg.add_child(cd_lbl)
 
@@ -820,12 +1162,41 @@ func _build_hud() -> void:
 		_widget_slot_cd_lbls.append(cd_lbl)
 		_widget_slot_keys.append(kl)
 
-	# 6. Mid-Right: Combat Mastery / Score XP (matching Screenshot 1)
+	# Alt-mode drag hint above hotbar
+	_alt_hint_lbl = Label.new()
+	_alt_hint_lbl.anchor_left = 0.5
+	_alt_hint_lbl.anchor_right = 0.5
+	_alt_hint_lbl.anchor_top = 1.0
+	_alt_hint_lbl.anchor_bottom = 1.0
+	_alt_hint_lbl.offset_left = -220.0
+	_alt_hint_lbl.offset_right = 220.0
+	_alt_hint_lbl.offset_top = -124.0
+	_alt_hint_lbl.offset_bottom = -104.0
+	_alt_hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_alt_hint_lbl.text = "[ALT] Arraste armas, skills ou itens para reorganizar"
+	_alt_hint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_alt_hint_lbl.visible = false
+	_style_label(_alt_hint_lbl, 12, Color(1.0, 0.90, 0.36))
+	add_child(_alt_hint_lbl)
+
+	# Floating Drag Preview Icon
+	_drag_preview = TextureRect.new()
+	_drag_preview.custom_minimum_size = Vector2(34, 34)
+	_drag_preview.size = Vector2(34, 34)
+	_drag_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_drag_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_drag_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_drag_preview.modulate = Color(1.0, 1.0, 1.0, 0.85)
+	_drag_preview.z_index = 50
+	_drag_preview.visible = false
+	add_child(_drag_preview)
+
+	# 6. Mid-Right: Combat Mastery / Score XP (cleanly below Killfeed)
 	_mastery_lbl = Label.new()
 	_mastery_lbl.anchor_left = 1.0
 	_mastery_lbl.anchor_right = 1.0
-	_mastery_lbl.anchor_top = 0.44
-	_mastery_lbl.anchor_bottom = 0.56
+	_mastery_lbl.anchor_top = 0.50
+	_mastery_lbl.anchor_bottom = 0.62
 	_mastery_lbl.offset_left = -280.0
 	_mastery_lbl.offset_right = -24.0
 	_mastery_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -833,14 +1204,46 @@ func _build_hud() -> void:
 	_style_label(_mastery_lbl, 16, Color(1.0, 0.94, 0.72))
 	add_child(_mastery_lbl)
 
-	# 7. Top-Right Killfeed
+	# 7. Top-Right Tactical Minimap (182x182) & Killfeed neatly below it
+	_minimap = _TacticalMinimapControl.new()
+	_minimap.name = "TacticalMinimap"
+	_minimap.hud_owner = self
+	_minimap.anchor_left = 1.0
+	_minimap.anchor_right = 1.0
+	_minimap.anchor_top = 0.0
+	_minimap.anchor_bottom = 0.0
+	_minimap.custom_minimum_size = Vector2(182.0, 182.0)
+	_minimap.offset_left = -198.0
+	_minimap.offset_right = -16.0
+	_minimap.offset_top = 12.0
+	_minimap.offset_bottom = 194.0
+	_minimap.size = Vector2(182.0, 182.0)
+	_minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_minimap)
+
+	_mortar_banner_lbl = Label.new()
+	_mortar_banner_lbl.anchor_left = 0.5
+	_mortar_banner_lbl.anchor_right = 0.5
+	_mortar_banner_lbl.anchor_top = 0.5
+	_mortar_banner_lbl.anchor_bottom = 0.5
+	_mortar_banner_lbl.offset_left = -240.0
+	_mortar_banner_lbl.offset_right = 240.0
+	_mortar_banner_lbl.offset_top = -242.0
+	_mortar_banner_lbl.offset_bottom = -216.0
+	_mortar_banner_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_mortar_banner_lbl.text = "MORTEIRO: Clique no mapa para bombardear (ESC / Direito cancela)"
+	_mortar_banner_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mortar_banner_lbl.visible = false
+	_style_label(_mortar_banner_lbl, 15, Color(1.0, 0.90, 0.30))
+	add_child(_mortar_banner_lbl)
+
 	_killfeed_lbl = Label.new()
 	_killfeed_lbl.anchor_left = 1.0
 	_killfeed_lbl.anchor_right = 1.0
 	_killfeed_lbl.offset_left = -420.0
-	_killfeed_lbl.offset_right = -18.0
-	_killfeed_lbl.offset_top = 12.0
-	_killfeed_lbl.offset_bottom = 180.0
+	_killfeed_lbl.offset_right = -16.0
+	_killfeed_lbl.offset_top = 202.0
+	_killfeed_lbl.offset_bottom = 350.0
 	_killfeed_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_killfeed_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_style_label(_killfeed_lbl, 14, Color(0.98, 0.98, 0.98))
@@ -1118,6 +1521,9 @@ func refresh_hotkey_labels() -> void:
 
 
 func _hide_local_hud_overlays() -> void:
+	_cancel_hotbar_drag()
+	if _mortar_targeting_active:
+		set_mortar_targeting_mode(false)
 	if _poison_tint_rect != null:
 		_poison_tint_rect.visible = false
 	if _crosshair != null:
@@ -1132,8 +1538,315 @@ func _hide_local_hud_overlays() -> void:
 	_hide_all_sixth_sense_markers()
 
 
+func _make_drag_slot_style(is_target: bool) -> StyleBoxFlat:
+	if is_target and _slot_style_drag_target != null:
+		return _slot_style_drag_target
+	if not is_target and _slot_style_drag_source != null:
+		return _slot_style_drag_source
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.28, 0.72, 1.0, 0.36) if is_target else Color(1.0, 0.84, 0.24, 0.36)
+	sb.border_color = Color(0.45, 0.92, 1.0, 0.98) if is_target else Color(1.0, 0.90, 0.32, 0.98)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(6)
+	if is_target:
+		_slot_style_drag_target = sb
+	else:
+		_slot_style_drag_source = sb
+	return sb
+
+
+func _get_slot_bgs_for_category(category: String) -> Array[PanelContainer]:
+	match category:
+		"weapon":
+			return _weapon_slot_bgs
+		"skill":
+			return _skill_slot_bgs
+		"widget":
+			return _widget_slot_bgs
+		_:
+			return []
+
+
+func _get_slot_icons_for_category(category: String) -> Array[TextureRect]:
+	match category:
+		"weapon":
+			return _weapon_slot_icons
+		"skill":
+			return _skill_slot_icons
+		"widget":
+			return _widget_slot_icons
+		_:
+			return []
+
+
+func _find_slot_at_point(category: String, global_pt: Vector2) -> int:
+	var bgs: Array[PanelContainer] = _get_slot_bgs_for_category(category)
+	for i in range(bgs.size()):
+		var bg: PanelContainer = bgs[i]
+		if bg != null and bg.is_visible_in_tree() and bg.get_global_rect().has_point(global_pt):
+			return i
+	return -1
+
+
+func _refresh_drag_slot_highlights() -> void:
+	var active_vis_weapon: int = -1
+	if _local_hero != null and is_instance_valid(_local_hero) and not _local_hero.weapons.is_empty():
+		var w_order: Array[int] = InputCmd.get_active_weapon_order(_local_hero.weapons.size())
+		active_vis_weapon = w_order.find(clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1))
+
+	for i in range(_weapon_slot_bgs.size()):
+		if _drag_active and _drag_category == "weapon":
+			if i == _drag_source_vis:
+				_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_drag_slot_style(false))
+			elif i == _drag_hover_vis:
+				_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_drag_slot_style(true))
+			else:
+				_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(i == active_vis_weapon))
+		else:
+			_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(i == active_vis_weapon))
+
+	for i in range(_skill_slot_bgs.size()):
+		if _drag_active and _drag_category == "skill" and i == _drag_source_vis:
+			_skill_slot_bgs[i].add_theme_stylebox_override("panel", _make_drag_slot_style(false))
+		elif _drag_active and _drag_category == "skill" and i == _drag_hover_vis:
+			_skill_slot_bgs[i].add_theme_stylebox_override("panel", _make_drag_slot_style(true))
+		else:
+			_skill_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(false))
+
+	for i in range(_widget_slot_bgs.size()):
+		if _drag_active and _drag_category == "widget" and i == _drag_source_vis:
+			_widget_slot_bgs[i].add_theme_stylebox_override("panel", _make_drag_slot_style(false))
+		elif _drag_active and _drag_category == "widget" and i == _drag_hover_vis:
+			_widget_slot_bgs[i].add_theme_stylebox_override("panel", _make_drag_slot_style(true))
+		else:
+			_widget_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(false))
+
+
+func _begin_hotbar_drag(category: String, vis_idx: int) -> void:
+	var icons: Array[TextureRect] = _get_slot_icons_for_category(category)
+	if vis_idx < 0 or vis_idx >= icons.size():
+		return
+	_drag_active = true
+	_drag_category = category
+	_drag_source_vis = vis_idx
+	_drag_hover_vis = vis_idx
+	if _drag_preview != null:
+		_drag_preview.texture = icons[vis_idx].texture
+		_drag_preview.position = get_viewport().get_mouse_position() - Vector2(17.0, 17.0)
+		_drag_preview.visible = true
+	_refresh_drag_slot_highlights()
+
+
+func _cancel_hotbar_drag() -> void:
+	if not _drag_active:
+		return
+	_drag_active = false
+	_drag_category = ""
+	_drag_source_vis = -1
+	_drag_hover_vis = -1
+	if _drag_preview != null:
+		_drag_preview.visible = false
+	_last_highlighted_slot = -1
+	_refresh_drag_slot_highlights()
+
+
+func _on_slot_gui_input(event: InputEvent, category: String, vis_idx: int) -> void:
+	if not (_alt_cursor_mode or Input.is_key_pressed(KEY_ALT)):
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			_begin_hotbar_drag(category, vis_idx)
+
+
+func _input(event: InputEvent) -> void:
+	if not _drag_active:
+		return
+	if event is InputEventMouseMotion:
+		var mm := event as InputEventMouseMotion
+		if _drag_preview != null:
+			_drag_preview.position = mm.global_position - Vector2(17.0, 17.0)
+		var next_hover: int = _find_slot_at_point(_drag_category, mm.global_position)
+		if next_hover != _drag_hover_vis:
+			_drag_hover_vis = next_hover
+			_refresh_drag_slot_highlights()
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
+			var target_vis: int = _find_slot_at_point(_drag_category, mb.global_position)
+			if target_vis < 0:
+				target_vis = _drag_hover_vis
+			if target_vis >= 0 and target_vis != _drag_source_vis:
+				swap_hotbar_slots(_drag_category, _drag_source_vis, target_vis)
+			_cancel_hotbar_drag()
+
+
+func swap_hotbar_slots(category: String, vis_a: int, vis_b: int) -> bool:
+	if vis_a == vis_b or vis_a < 0 or vis_b < 0:
+		return false
+	var active_order: Array[int] = []
+	match category:
+		"weapon":
+			var w_cnt: int = _local_hero.weapons.size() if (_local_hero != null and is_instance_valid(_local_hero) and not _local_hero.weapons.is_empty()) else 4
+			active_order = InputCmd.get_active_weapon_order(w_cnt)
+		"skill":
+			var s_cnt: int = 6
+			if _local_hero != null and is_instance_valid(_local_hero):
+				s_cnt = _local_hero.skill_manager.skill_ranks.size() if _local_hero.skill_manager != null else (6 if _local_hero.class_id == NetworkManager.CLASS_COMMANDO else 5)
+			active_order = InputCmd.get_active_skill_order(s_cnt)
+		"widget":
+			active_order = InputCmd.get_active_widget_order(4)
+		_:
+			return false
+
+	if vis_a >= active_order.size() or vis_b >= active_order.size():
+		return false
+	if not InputCmd.swap_logical_slots_in_order(category, active_order[vis_a], active_order[vis_b]):
+		return false
+
+	InputCmd.save_hotkeys_to_config(hotkeys_config_path)
+	_last_highlighted_slot = -1
+	_last_ammo_key = ""
+	_refresh_hotbar_icons()
+	_refresh_slot_cooldowns_immediate()
+	_refresh_drag_slot_highlights()
+	return true
+
+
+func is_mortar_targeting_active() -> bool:
+	return _mortar_targeting_active
+
+
+func set_mortar_targeting_mode(active: bool, callback: Callable = Callable()) -> void:
+	_mortar_targeting_active = active
+	_mortar_target_callback = callback if active else Callable()
+	if active:
+		_cancel_hotbar_drag()
+	if _mortar_banner_lbl != null:
+		_mortar_banner_lbl.visible = active
+	if _minimap != null:
+		_minimap.mortar_active = active
+		_minimap.hover_local_pos = Vector2(-1.0, -1.0)
+		if active:
+			_minimap.anchor_left = 0.5
+			_minimap.anchor_right = 0.5
+			_minimap.anchor_top = 0.5
+			_minimap.anchor_bottom = 0.5
+			_minimap.custom_minimum_size = Vector2(420.0, 420.0)
+			_minimap.offset_left = -210.0
+			_minimap.offset_right = 210.0
+			_minimap.offset_top = -210.0
+			_minimap.offset_bottom = 210.0
+			_minimap.size = Vector2(420.0, 420.0)
+			_minimap.mouse_filter = Control.MOUSE_FILTER_STOP
+		else:
+			_minimap.anchor_left = 1.0
+			_minimap.anchor_right = 1.0
+			_minimap.anchor_top = 0.0
+			_minimap.anchor_bottom = 0.0
+			_minimap.custom_minimum_size = Vector2(182.0, 182.0)
+			_minimap.offset_left = -198.0
+			_minimap.offset_right = -16.0
+			_minimap.offset_top = 12.0
+			_minimap.offset_bottom = 194.0
+			_minimap.size = Vector2(182.0, 182.0)
+			_minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_minimap.queue_redraw()
+	if active:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	elif not _alt_cursor_mode and not Input.is_key_pressed(KEY_ALT) and not DisplayServer.get_name().contains("headless"):
+		var menu_open: bool = false
+		if is_inside_tree():
+			for m in get_tree().get_nodes_in_group("class_select_menus"):
+				if m is CanvasLayer and (m as CanvasLayer).visible:
+					menu_open = true
+					break
+		if not menu_open:
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _on_minimap_mortar_clicked(local_pos: Vector2) -> void:
+	if not _mortar_targeting_active or _minimap == null:
+		return
+	var world_pos: Vector3 = _minimap.minimap_to_world(local_pos)
+	var cb: Callable = _mortar_target_callback
+	set_mortar_targeting_mode(false)
+	if cb.is_valid():
+		cb.call(world_pos)
+
+
+func _refresh_widget_hotbar_icons() -> void:
+	if _widget_slot_icons.is_empty():
+		return
+	var widget_order: Array[int] = InputCmd.get_active_widget_order(4)
+	for vis_w in range(mini(widget_order.size(), _widget_slot_icons.size())):
+		var logical_w: int = widget_order[vis_w]
+		var w_key: String = "icon_widget_%d" % logical_w
+		_widget_slot_icons[vis_w].texture = CartoonAssets.get_texture(w_key)
+		if vis_w < _widget_slot_bgs.size():
+			var w_entry: Dictionary = SkillCatalog.get_entry_by_key(w_key)
+			if not w_entry.is_empty():
+				_widget_slot_bgs[vis_w].tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [
+					str(w_entry.get("name", "")),
+					str(w_entry.get("category", "")),
+					str(w_entry.get("effect_stats", "")),
+					str(w_entry.get("cooldown", "")),
+					str(w_entry.get("duration", "")),
+					str(w_entry.get("area", "")),
+					str(w_entry.get("description", "")),
+				]
+			else:
+				_widget_slot_bgs[vis_w].tooltip_text = ""
+
+
+func _refresh_slot_cooldowns_immediate() -> void:
+	if _local_hero == null or not is_instance_valid(_local_hero):
+		return
+	if _local_hero.skill_manager == null or not (_local_hero.skill_manager is SkillManager):
+		return
+	var sm := _local_hero.skill_manager as SkillManager
+	var num_skills: int = sm.skill_ranks.size()
+	var skill_order: Array[int] = InputCmd.get_active_skill_order(num_skills)
+	for vis_s in range(_skill_slot_boxes.size()):
+		var has_slot: bool = vis_s < skill_order.size()
+		if _skill_slot_boxes[vis_s].visible != has_slot:
+			_skill_slot_boxes[vis_s].visible = has_slot
+		if not has_slot:
+			continue
+		var logical_s: int = skill_order[vis_s]
+		var rank: int = sm.skill_ranks[logical_s]
+		var cd: float = sm.skill_cooldowns[logical_s]
+		var target_cd_txt: String
+		var target_col: Color
+		if rank <= 0:
+			target_col = Color(0.45, 0.45, 0.45, 0.55)
+			target_cd_txt = ""
+		elif cd > 0.0:
+			target_col = Color(0.55, 0.55, 0.55, 0.72)
+			target_cd_txt = "%.0fs" % ceilf(cd)
+		else:
+			target_col = Color.WHITE
+			target_cd_txt = "R%d" % rank
+		if _skill_slot_icons[vis_s].modulate != target_col:
+			_skill_slot_icons[vis_s].modulate = target_col
+		if _skill_slot_cd_lbls[vis_s].text != target_cd_txt:
+			_skill_slot_cd_lbls[vis_s].text = target_cd_txt
+
+	var widget_order: Array[int] = InputCmd.get_active_widget_order(4)
+	for vis_w in range(mini(widget_order.size(), _widget_slot_icons.size())):
+		var logical_w: int = widget_order[vis_w]
+		var wcd: float = sm.widget_cooldowns[logical_w]
+		var w_txt: String = "%.0fs" % ceilf(wcd) if wcd > 0.0 else ""
+		var w_col: Color = Color(0.55, 0.55, 0.55, 0.72) if wcd > 0.0 else Color.WHITE
+		if _widget_slot_icons[vis_w].modulate != w_col:
+			_widget_slot_icons[vis_w].modulate = w_col
+		if _widget_slot_cd_lbls[vis_w].text != w_txt:
+			_widget_slot_cd_lbls[vis_w].text = w_txt
+
+
 func _refresh_hotbar_icons() -> void:
 	refresh_hotkey_labels()
+	_refresh_widget_hotbar_icons()
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
 		_last_hotbar_class_id = -1
@@ -1142,33 +1855,37 @@ func _refresh_hotbar_icons() -> void:
 	if _skill_slot_icons.is_empty() or _weapon_slot_boxes.is_empty():
 		return
 	_last_hotbar_class_id = _local_hero.class_id
-	for i in range(4):
-		if i < _local_hero.weapons.size():
-			_weapon_slot_boxes[i].visible = true
-			var w: WeaponBase = _local_hero.weapons[i] as WeaponBase
+	var weapon_order: Array[int] = InputCmd.get_active_weapon_order(_local_hero.weapons.size())
+	for vis_w in range(4):
+		if vis_w < weapon_order.size():
+			var logical_w: int = weapon_order[vis_w]
+			_weapon_slot_boxes[vis_w].visible = true
+			var w: WeaponBase = _local_hero.weapons[logical_w] as WeaponBase
 			if w != null:
 				var w_arch: int = clampi(w.archetype, 0, 2)
-				_weapon_slot_icons[i].texture = CartoonAssets.get_texture("icon_weapon_%d_%d" % [w.weapon_kind, w_arch])
+				_weapon_slot_icons[vis_w].texture = CartoonAssets.get_texture("icon_weapon_%d_%d" % [w.weapon_kind, w_arch])
 				if not w.fired.is_connected(_on_local_weapon_fired):
 					w.fired.connect(_on_local_weapon_fired)
 				if not _bound_weapon_signals.has(w):
 					_bound_weapon_signals.append(w)
 		else:
-			_weapon_slot_boxes[i].visible = false
+			_weapon_slot_boxes[vis_w].visible = false
 
 	var num_skills: int = (
 		_local_hero.skill_manager.skill_ranks.size()
 		if _local_hero.skill_manager != null
 		else (6 if _local_hero.class_id == NetworkManager.CLASS_COMMANDO else 5)
 	)
-	for i in range(_skill_slot_icons.size()):
-		if i < num_skills:
-			var icon_key: String = "icon_skill_%d_%d" % [_local_hero.class_id, i]
-			_skill_slot_icons[i].texture = CartoonAssets.get_texture(icon_key)
-			if i < _skill_slot_bgs.size():
+	var skill_order: Array[int] = InputCmd.get_active_skill_order(num_skills)
+	for vis_s in range(_skill_slot_icons.size()):
+		if vis_s < skill_order.size():
+			var logical_s: int = skill_order[vis_s]
+			var icon_key: String = "icon_skill_%d_%d" % [_local_hero.class_id, logical_s]
+			_skill_slot_icons[vis_s].texture = CartoonAssets.get_texture(icon_key)
+			if vis_s < _skill_slot_bgs.size():
 				var entry: Dictionary = SkillCatalog.get_entry_by_key(icon_key)
 				if not entry.is_empty():
-					_skill_slot_bgs[i].tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [
+					_skill_slot_bgs[vis_s].tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [
 						str(entry.get("name", "")),
 						str(entry.get("category", "")),
 						str(entry.get("effect_stats", "")),
@@ -1178,12 +1895,21 @@ func _refresh_hotbar_icons() -> void:
 						str(entry.get("description", "")),
 					]
 				else:
-					_skill_slot_bgs[i].tooltip_text = ""
-		elif i < _skill_slot_bgs.size():
-			_skill_slot_bgs[i].tooltip_text = ""
+					_skill_slot_bgs[vis_s].tooltip_text = ""
+		elif vis_s < _skill_slot_bgs.size():
+			_skill_slot_bgs[vis_s].tooltip_text = ""
 
 
 func _process(delta: float) -> void:
+	var alt_key_now: bool = Input.is_key_pressed(KEY_ALT)
+	if alt_key_now != _prev_alt_key_held:
+		_prev_alt_key_held = alt_key_now
+		_alt_cursor_mode = alt_key_now
+		if not _alt_cursor_mode:
+			_cancel_hotbar_drag()
+	if _alt_hint_lbl != null:
+		_alt_hint_lbl.visible = _alt_cursor_mode and not _mortar_targeting_active
+
 	if _hitmarker_timer > 0.0:
 		_hitmarker_timer -= delta
 		if _hitmarker_timer <= 0.0:
@@ -1249,6 +1975,8 @@ func _process(delta: float) -> void:
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
 		_hide_local_hud_overlays()
+		if _minimap != null:
+			_minimap.queue_redraw()
 		return
 
 	if _poison_tint_rect != null:
@@ -1286,7 +2014,7 @@ func _process(delta: float) -> void:
 		if _scope_overlay.visible:
 			_scope_overlay.queue_redraw()
 	if _crosshair != null:
-		_crosshair.visible = not is_scoped
+		_crosshair.visible = not is_scoped and not _mortar_targeting_active
 		_crosshair_bloom = maxf(0.0, _crosshair_bloom - 26.0 * delta)
 		var speed_horiz: float = Vector2(_local_hero.velocity.x, _local_hero.velocity.z).length()
 		var move_bloom: float = clampf(speed_horiz / 8.0, 0.0, 1.5) * 6.0
@@ -1317,13 +2045,15 @@ func _process(delta: float) -> void:
 		if show_para:
 			_parachute_lbl.text = "[ESPAÇO] Fechar Paraquedas" if _local_hero.is_parachuting else "[ESPAÇO] Abrir Paraquedas"
 
-	# Update Active Weapon slot highlight & Ammo counter
+	# Update Active Weapon slot highlight & Ammo counter (via weapon_slot_order)
 	if not _local_hero.weapons.is_empty():
 		var slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
-		if slot != _last_highlighted_slot:
+		if slot != _last_highlighted_slot and not (_drag_active and _drag_category == "weapon"):
 			_last_highlighted_slot = slot
-			for i in range(mini(_local_hero.weapons.size(), _weapon_slot_bgs.size())):
-				_weapon_slot_bgs[i].add_theme_stylebox_override("panel", _make_slot_style(i == slot))
+			var w_order: Array[int] = InputCmd.get_active_weapon_order(_local_hero.weapons.size())
+			var active_vis_w: int = w_order.find(slot)
+			for vis_i in range(mini(w_order.size(), _weapon_slot_bgs.size())):
+				_weapon_slot_bgs[vis_i].add_theme_stylebox_override("panel", _make_slot_style(vis_i == active_vis_w))
 		var w: WeaponBase = _local_hero.weapons[slot] as WeaponBase
 		if w != null:
 			var ammo_key: String = "%d|%s|%s|%s|%d" % [slot, w.weapon_name, str(w.is_melee), str(w.is_reloading), w.ammo_in_mag]
@@ -1342,7 +2072,7 @@ func _process(delta: float) -> void:
 					_ammo_value_lbl.text = "%d" % w.ammo_in_mag
 					_weapon_name_lbl.text = "%s | ∞" % w.weapon_name
 
-	# Update RPG Portrait ring, Skills & Widgets
+	# Update RPG Portrait ring, Skills & Widgets (via skill_slot_order & widget_slot_order)
 	if _local_hero.skill_manager != null and _local_hero.skill_manager is SkillManager:
 		var sm := _local_hero.skill_manager as SkillManager
 		var xp_next: int = maxi(1, sm.get_xp_for_next_level())
@@ -1358,43 +2088,13 @@ func _process(delta: float) -> void:
 			_portrait_gauge.queue_redraw()
 			_mastery_lbl.text = "Combat Mastery %d\nScore: %d/%d" % [sm.level, sm.xp, xp_next]
 
-		var num_skills: int = sm.skill_ranks.size()
-		for i in range(_skill_slot_boxes.size()):
-			var has_slot: bool = i < num_skills
-			if _skill_slot_boxes[i].visible != has_slot:
-				_skill_slot_boxes[i].visible = has_slot
-			if not has_slot:
-				continue
-			var rank: int = sm.skill_ranks[i]
-			var cd: float = sm.skill_cooldowns[i]
-			var target_cd_txt: String
-			var target_col: Color
-			if rank <= 0:
-				target_col = Color(0.45, 0.45, 0.45, 0.55)
-				target_cd_txt = ""
-			elif cd > 0.0:
-				target_col = Color(0.55, 0.55, 0.55, 0.72)
-				target_cd_txt = "%.0fs" % ceilf(cd)
-			else:
-				target_col = Color.WHITE
-				target_cd_txt = "R%d" % rank
-			if _skill_slot_icons[i].modulate != target_col:
-				_skill_slot_icons[i].modulate = target_col
-			if _skill_slot_cd_lbls[i].text != target_cd_txt:
-				_skill_slot_cd_lbls[i].text = target_cd_txt
-
-		for j in range(mini(sm.widget_cooldowns.size(), _widget_slot_icons.size())):
-			var wcd: float = sm.widget_cooldowns[j]
-			var w_txt: String = "%.0fs" % ceilf(wcd) if wcd > 0.0 else ""
-			var w_col: Color = Color(0.55, 0.55, 0.55, 0.72) if wcd > 0.0 else Color.WHITE
-			if _widget_slot_icons[j].modulate != w_col:
-				_widget_slot_icons[j].modulate = w_col
-			if _widget_slot_cd_lbls[j].text != w_txt:
-				_widget_slot_cd_lbls[j].text = w_txt
+		_refresh_slot_cooldowns_immediate()
 
 	_update_interact_prompt()
 	_update_vehicle_hp_panel(delta)
 	_update_sixth_sense_markers()
+	if _minimap != null:
+		_minimap.queue_redraw()
 
 
 func spawn_damage_number(world_pos: Vector3, amount: int, is_crit: bool = false, style_tag: String = "") -> void:

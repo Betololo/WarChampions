@@ -93,6 +93,7 @@ var _skills_grid: GridContainer
 
 func _ready() -> void:
 	layer = 20
+	add_to_group("class_select_menus")
 	set_process_input(true)
 	InputCmd.load_hotkeys_from_config(hotkeys_config_path)
 	_build_ui()
@@ -109,7 +110,7 @@ func _input(event: InputEvent) -> void:
 			_cancel_hotkey_listen()
 			get_viewport().set_input_as_handled()
 			return
-		if k.keycode in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]:
+		if k.keycode in [KEY_CTRL, KEY_ALT, KEY_META]:
 			return
 		assign_hotkey_from_ui(_listening_hotkey_kind, _listening_hotkey_slot, k.keycode)
 		get_viewport().set_input_as_handled()
@@ -1271,5 +1272,5 @@ func show_menu() -> void:
 
 func hide_menu() -> void:
 	visible = false
-	if not DisplayServer.get_name().contains("headless"):
+	if not DisplayServer.get_name().contains("headless") and not Input.is_key_pressed(KEY_ALT):
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
