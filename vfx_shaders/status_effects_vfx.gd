@@ -27,6 +27,7 @@ const BUFF_ICON_TABLE: Array[Array] = [
 	[NetSerializer.BUFF_CARRIED_SHIELD, "icon_skill_3_0"],
 	[NetSerializer.BUFF_VEHICLE_BUSTER, "icon_skill_3_4"],
 	[NetSerializer.BUFF_TNT_ROPE, "icon_skill_3_2"],
+	[NetSerializer.BUFF_ENGINEER_INVULN, "icon_skill_4_4"],
 ]
 
 static var _xray_mat: ShaderMaterial = null
@@ -368,6 +369,9 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	elif (hero.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0:
 		rim_col = Color(0.32, 0.84, 1.0)
 		rim_str = 1.45
+	elif (hero.active_buffs & NetSerializer.BUFF_ENGINEER_INVULN) != 0:
+		rim_col = Color(1.0, 0.88, 0.28)
+		rim_str = 1.85
 	elif (hero.active_buffs & NetSerializer.BUFF_VEHICLE_BUSTER) != 0:
 		rim_col = Color(1.0, 0.42, 0.16)
 		rim_str = 1.50
@@ -446,6 +450,7 @@ static func _has_continuous_particle_buff(hero: HeroCharacter) -> bool:
 		| NetSerializer.BUFF_CARRIED_SHIELD
 		| NetSerializer.BUFF_VEHICLE_BUSTER
 		| NetSerializer.BUFF_TNT_ROPE
+		| NetSerializer.BUFF_ENGINEER_INVULN
 	)
 	if (hero.active_buffs & PARTICLE_BUFF_MASK) != 0:
 		return true
@@ -526,6 +531,9 @@ static func _spawn_active_buff_tick_vfx(parent: Node, hero: HeroCharacter) -> vo
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.34, 0.34), 1.15, randf_range(-0.34, 0.34)), Color(1.0, 0.34, 0.14, 0.92), 0.12, 0.65, false)
 	if (b & NetSerializer.BUFF_TNT_ROPE) != 0:
 		_spawn_rising_mote(parent, base + Vector3(0.24, 1.18, -0.22), Color(1.0, 0.58, 0.14, 0.92), 0.10, 0.50, false)
+	if (b & NetSerializer.BUFF_ENGINEER_INVULN) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.42, 0.42), 1.05, randf_range(-0.42, 0.42)), Color(1.0, 0.86, 0.28, 0.94), 0.12, 0.55, false)
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 1.25, randf_range(-0.36, 0.36)), Color(0.32, 0.94, 1.0, 0.92), 0.10, 0.50, false)
 
 
 static func _spawn_sixth_sense_radar_pulse(parent: Node, origin: Vector3, radius: float) -> void:
@@ -604,8 +612,9 @@ static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector
 	flash_root.position = world_pos
 	parent.add_child(flash_root)
 
-	var base_r: float = 0.16 if weapon_kind == 6 or weapon_kind == 2 else (0.14 if weapon_kind == 4 else 0.10)
-	var mat: StandardMaterial3D = _get_shared_mat(Color(1.0, 0.90, 0.32, 0.95), true)
+	var base_r: float = 0.16 if weapon_kind == 6 or weapon_kind == 2 else (0.14 if (weapon_kind == 4 or weapon_kind == 13) else 0.10)
+	var flash_col := Color(0.34, 0.94, 1.0, 0.95) if weapon_kind == 13 else Color(1.0, 0.90, 0.32, 0.95)
+	var mat: StandardMaterial3D = _get_shared_mat(flash_col, true)
 
 	var core := MeshInstance3D.new()
 	core.mesh = _get_shared_sphere()
@@ -709,12 +718,12 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 
 	var seg_len: float = clampf(total_len * 0.25, 1.2, 9.0 if weapon_kind == 4 else 5.5)
 	var tracer := MeshInstance3D.new()
-	var thick: float = 0.036 if weapon_kind == 4 else 0.024
+	var thick: float = 0.044 if weapon_kind == 13 else (0.036 if weapon_kind == 4 else 0.024)
 	tracer.mesh = _get_shared_box()
 	tracer.scale = Vector3(thick, thick, seg_len)
 	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
-	var col := Color(1.0, 0.94, 0.58, 0.88) if weapon_kind == 4 else Color(1.0, 0.86, 0.35, 0.80)
+	var col := Color(0.34, 0.94, 1.0, 0.94) if weapon_kind == 13 else (Color(1.0, 0.94, 0.58, 0.88) if weapon_kind == 4 else Color(1.0, 0.86, 0.35, 0.80))
 	tracer.material_override = _get_shared_mat(col, true)
 
 	var start_d: float = minf(total_len * 0.5, seg_len * 0.5 + 0.15)
@@ -1083,6 +1092,33 @@ static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_po
 						if tw != null:
 							tw.tween_property(lance, "position:z", -1.65, dur)
 							tw.tween_property(vring, "scale", Vector3(3.2, 0.8, 3.2), dur)
+			NetworkManager.CLASS_ENGINEER:
+				match slot_idx:
+					0, 1: # Construct Trench / Turret: golden-cyan blueprint shockwave ring
+						dur = 0.62
+						var mat_eng := _get_shared_mat(Color(0.32, 0.88, 1.0, 0.88), true)
+						var bring := _vfx_part(root, torus, mat_eng, Vector3(0.0, 0.14, 0.0), Vector3(0.8, 0.7, 0.8), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(bring, "scale", Vector3(3.6, 0.7, 3.6), dur)
+					2: # Armor Vehicle: gleaming gold armor cross & aura ring
+						dur = 0.58
+						var mat_arm := _get_shared_mat(Color(1.0, 0.82, 0.24, 0.92), true)
+						_vfx_plus_cross(root, mat_arm, Vector3(0.0, 1.10, 0.0), 0.48, 0.12, fade_meshes)
+						var aring := _vfx_part(root, torus, mat_arm, Vector3(0.0, 0.25, 0.0), Vector3(1.2, 0.8, 1.2), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(aring, "scale", Vector3(3.4, 0.8, 3.4), dur)
+					3: # Mortar Call: crimson telemetry flare rising skyward
+						dur = 0.65
+						var mat_mr := _get_shared_mat(Color(1.0, 0.30, 0.20, 0.92), true)
+						var flare := _vfx_part(root, cone, mat_mr, Vector3(0.0, 1.10, 0.0), Vector3(0.36, 1.4, 0.36), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(flare, "position:y", 3.6, dur)
+					_: # Invulnerable Armor: bright golden-cyan dome pulse
+						dur = 0.65
+						var mat_inv := _get_shared_mat(Color(1.0, 0.88, 0.30, 0.92), true)
+						var dome := _vfx_part(root, sph, mat_inv, Vector3(0.0, 1.05, 0.0), Vector3(1.4, 2.0, 1.4), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(dome, "scale", Vector3(2.4, 2.6, 2.4), dur)
 
 	if tw != null:
 		for mi in fade_meshes:
@@ -1245,6 +1281,41 @@ static func spawn_explosion_area_ring(parent: Node, origin: Vector3, radius: flo
 	var ring_meshes: Array[MeshInstance3D] = []
 	_spawn_aoe_rings_into(root, radius, Color(1.0, 0.44, 0.12), 0.65, 0.16, tw, ring_meshes)
 	if tw != null:
+		tw.chain().tween_callback(root.queue_free)
+
+	return root
+
+
+static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: float = 7.0, delay: float = 1.5) -> Node3D:
+	if parent == null or radius <= 0.0 or DisplayServer.get_name().contains("headless"):
+		return null
+	warm_shared_meshes()
+
+	var root := Node3D.new()
+	root.name = "MortarWarningVFX"
+	root.position = origin + Vector3(0.0, 0.08, 0.0)
+	parent.add_child(root)
+
+	var outer_ring := MeshInstance3D.new()
+	outer_ring.mesh = _get_shared_torus()
+	outer_ring.material_override = _get_shared_mat(Color(1.0, 0.18, 0.14, 0.90), true)
+	outer_ring.scale = Vector3(radius * 2.0, 0.45, radius * 2.0)
+	outer_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(outer_ring)
+
+	var fill_disc := MeshInstance3D.new()
+	fill_disc.mesh = _get_shared_cylinder()
+	fill_disc.material_override = _get_shared_mat(Color(1.0, 0.22, 0.16, 0.28), true)
+	fill_disc.scale = Vector3(radius * 0.25, 0.03, radius * 0.25)
+	fill_disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(fill_disc)
+
+	var tw: Tween = root.create_tween() if root.is_inside_tree() else null
+	if tw != null:
+		var safe_delay: float = maxf(0.1, delay)
+		tw.set_parallel(true)
+		tw.tween_property(fill_disc, "scale", Vector3(radius * 1.95, 0.03, radius * 1.95), safe_delay)
+		tw.tween_property(outer_ring, "scale", Vector3(radius * 2.15, 0.70, radius * 2.15), safe_delay)
 		tw.chain().tween_callback(root.queue_free)
 
 	return root

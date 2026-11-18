@@ -11,6 +11,8 @@ signal defeated(killer_id: int, explosive: bool)
 signal respawned()
 signal emote_triggered(emote_idx: int)
 
+const ClassEngineerScript := preload("res://entities/characters/classes/class_engineer.gd")
+
 const GRAVITY: float = 22.0
 const JUMP_VELOCITY: float = 8.8
 const PARACHUTE_MAX_FALL: float = -3.8
@@ -108,6 +110,7 @@ var _leg_r_pivot: Node3D
 var _calf_l_pivot: Node3D
 var _calf_r_pivot: Node3D
 var _held_weapon_root: Node3D
+var _held_weapon_root_l: Node3D
 var _parachute_rig: Node3D
 var _defeat_prop: Node3D
 var _mesh_parts: Array[MeshInstance3D] = []
@@ -123,6 +126,11 @@ var hero_camera: HeroCamera
 
 var _walk_phase: float = 0.0
 var _weapon_recoil_anim: float = 0.0
+var _weapon_recoil_anim_l: float = 0.0
+var _dual_shot_parity: int = 0
+var _last_fired_hand: int = 0
+var _weapon_grip_local_l: Vector3 = Vector3(0.0, -0.04, 0.0)
+var _weapon_muzzle_local_l: Vector3 = Vector3(0.0, 0.035, -0.25)
 var _fire_pose_timer: float = 0.0
 var _cycle_anim_timer: float = 0.0
 var _cycle_anim_duration: float = 0.0
@@ -220,6 +228,8 @@ func configure_class_loadout() -> void:
 			ClassCommando.configure_hero(self)
 		NetworkManager.CLASS_DEMOLISHER:
 			ClassDemolisher.configure_hero(self)
+		NetworkManager.CLASS_ENGINEER:
+			ClassEngineerScript.configure_hero(self)
 
 	for w in weapons:
 		if w is WeaponBase:
@@ -250,6 +260,10 @@ func _apply_class_defaults() -> void:
 			max_hp = 110
 			base_move_speed = 5.4
 			capsule_radius = 0.46
+		NetworkManager.CLASS_ENGINEER:
+			max_hp = 125
+			base_move_speed = 6.3
+			capsule_radius = 0.43
 	hp = max_hp
 	if _capsule_shape != null:
 		_capsule_shape.radius = capsule_radius
@@ -361,6 +375,15 @@ func _get_visual_style(is_royal: bool) -> Dictionary:
 		style["shade_col"] = Color(1.0, 0.66, 0.26)
 		style["headgear"] = "visor_helmet"
 		style["pauldron"] = true
+	elif class_id == NetworkManager.CLASS_ENGINEER:
+		style["hip_x"] = 0.148
+		style["thigh_r"] = 0.094
+		style["sh_x"] = 0.258
+		style["arm_r_scale"] = 1.02
+		style["beard_style"] = 0
+		style["use_shades"] = false
+		style["headgear"] = "engineer_cap"
+		style["pauldron"] = false
 	return style
 
 
@@ -510,6 +533,9 @@ func _attach_head_and_gear(style: Dictionary, mats: Dictionary) -> void:
 			var fedora_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.76)
 			var fedora_mesh := HeroMeshBuilder.build_fedora_mesh(style["fedora_band"], style["fedora_col"])
 			HeroMeshBuilder.add_part(_head_pivot, fedora_mesh, Vector3(0.0, 0.302, -0.004), Vector3(-0.12, 0.0, -0.06), fedora_mat, _mesh_parts)
+		"engineer_cap":
+			var ecap_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.44)
+			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_engineer_cap_mesh(bool(style["is_royal"])), Vector3(0.0, 0.290, 0.0), Vector3(-0.04, 0.0, 0.0), ecap_mat, _mesh_parts)
 
 
 func _rebuild_cartoon_visuals() -> void:
@@ -598,6 +624,11 @@ func _rebuild_cartoon_visuals() -> void:
 	_held_weapon_root.name = "HeldWeaponRoot"
 	_held_weapon_root.position = Vector3(0.20, 0.30, -0.14)
 	_torso_pivot.add_child(_held_weapon_root)
+	_held_weapon_root_l = Node3D.new()
+	_held_weapon_root_l.name = "HeldWeaponRootL"
+	_held_weapon_root_l.position = Vector3(-0.22, 0.42, -0.34)
+	_held_weapon_root_l.visible = false
+	_torso_pivot.add_child(_held_weapon_root_l)
 	_shown_weapon_kind = -1
 	_rebuild_held_weapon_mesh()
 
@@ -698,6 +729,8 @@ func _rebuild_held_weapon_mesh() -> void:
 		_weapon_foregrip_local = t_info.get("foregrip", Vector3.ZERO)
 		_weapon_muzzle_local = t_info.get("muzzle", Vector3(0.0, 0.0, -0.18))
 		_weapon_two_handed = false
+		if _held_weapon_root_l != null:
+			_held_weapon_root_l.visible = false
 		return
 
 	_tnt_rope_bundle = null
@@ -722,6 +755,15 @@ func _rebuild_held_weapon_mesh() -> void:
 	_weapon_foregrip_local = w_info.get("foregrip", Vector3(0.0, -0.015, -0.24))
 	_weapon_muzzle_local = w_info.get("muzzle", Vector3(0.0, 0.035, -0.58))
 	_weapon_two_handed = bool(w_info.get("two_handed", true))
+	var is_dual: bool = (w.weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or w.weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
+	if _held_weapon_root_l != null:
+		if is_dual:
+			var wl_info: Dictionary = HeroMeshBuilder.populate_weapon_root(_held_weapon_root_l, w.weapon_kind, w_arch)
+			_weapon_grip_local_l = wl_info.get("grip", Vector3(0.0, -0.04, 0.0))
+			_weapon_muzzle_local_l = wl_info.get("muzzle", Vector3(0.0, 0.035, -0.25))
+			_held_weapon_root_l.visible = true
+		else:
+			_held_weapon_root_l.visible = false
 	var named_parts: Dictionary = w_info.get("parts_by_name", {})
 	for part_name in named_parts.keys():
 		var mi := named_parts[part_name] as MeshInstance3D
@@ -793,8 +835,19 @@ func _on_weapon_fired_anim(w_kind: int, _muzzle: Vector3, _hit: Vector3) -> void
 	trigger_weapon_fire_visual(w_kind, false)
 
 
-func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) -> void:
-	_weapon_recoil_anim = 1.0
+func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false, hand_override: int = -1) -> void:
+	if w_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or w_kind == WeaponBase.WeaponKind.DUAL_PISTOLS:
+		var hand: int = hand_override if hand_override >= 0 else (_dual_shot_parity & 1)
+		if hand_override < 0:
+			_dual_shot_parity = (_dual_shot_parity + 1) & 1
+		_last_fired_hand = hand
+		if hand == 1:
+			_weapon_recoil_anim_l = 1.0
+		else:
+			_weapon_recoil_anim = 1.0
+	else:
+		_last_fired_hand = 0
+		_weapon_recoil_anim = 1.0
 	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG) else 0.55
 	var active_interval: float = 0.0
 	match w_kind:
@@ -814,7 +867,11 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) ->
 		hero_camera.add_recoil(0.0)
 
 
-func get_muzzle_world_position() -> Vector3:
+func get_muzzle_world_position(hand_override: int = -1) -> Vector3:
+	var is_dual: bool = (_shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or _shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
+	var use_left: bool = is_dual and _held_weapon_root_l != null and ((hand_override == 1) or (hand_override < 0 and _last_fired_hand == 1))
+	if use_left and not is_scoping and is_inside_tree():
+		return _held_weapon_root_l.to_global(_weapon_muzzle_local_l)
 	if is_scoping or _held_weapon_root == null or not is_inside_tree():
 		var fwd: Vector3 = -(Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
 		return global_position + Vector3(0.0, 1.48 if not is_crouching else 1.0, 0.0) + fwd * 0.65
@@ -955,6 +1012,7 @@ func _animate_character(delta: float) -> void:
 		_defeat_prop.visible = is_defeated
 
 	_weapon_recoil_anim = maxf(0.0, _weapon_recoil_anim - 7.5 * delta)
+	_weapon_recoil_anim_l = maxf(0.0, _weapon_recoil_anim_l - 7.5 * delta)
 	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
 	_cycle_anim_timer = maxf(0.0, _cycle_anim_timer - delta)
 	_skill_anim_timer = maxf(0.0, _skill_anim_timer - delta)
@@ -1021,6 +1079,9 @@ func _animate_character(delta: float) -> void:
 			can_shoot_seat = false
 		if _held_weapon_root != null:
 			_held_weapon_root.visible = can_shoot_seat
+		if _held_weapon_root_l != null:
+			var is_dual_in_veh: bool = (_shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or _shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
+			_held_weapon_root_l.visible = can_shoot_seat and is_dual_in_veh
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
 		if current_seat_pose == "sit":
@@ -1079,6 +1140,8 @@ func _animate_character(delta: float) -> void:
 	if is_falling_air:
 		if _held_weapon_root != null:
 			_held_weapon_root.visible = false
+		if _held_weapon_root_l != null:
+			_held_weapon_root_l.visible = false
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
 		var flutter_freq: float = 24.0
@@ -1110,6 +1173,8 @@ func _animate_character(delta: float) -> void:
 	_hips_pivot.rotation.x = 0.0
 	if _held_weapon_root != null:
 		_held_weapon_root.visible = true
+	if _held_weapon_root_l != null:
+		_held_weapon_root_l.visible = (_shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or _shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
 
 	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
 	if horiz_speed > 0.4 and (is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0):
@@ -1224,6 +1289,13 @@ func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
 					2: style = "throw_overhead"; dur = 0.55
 					3: style = "plant_kneel"; dur = 0.55
 					4: style = "weapon_charge"; dur = 0.50
+			NetworkManager.CLASS_ENGINEER:
+				match slot_idx:
+					0: style = "plant_kneel"; dur = 0.60
+					1: style = "plant_kneel"; dur = 0.60
+					2: style = "weapon_charge"; dur = 0.55
+					3: style = "mark_point"; dur = 0.65
+					4: style = "flex_shield"; dur = 0.55
 	_skill_anim_style = style
 	last_skill_anim_name = style
 	_skill_anim_duration = dur
@@ -1373,6 +1445,20 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 			WeaponBase.WeaponKind.PISTOL:
 				_held_weapon_root.position = Vector3(0.20, 0.44, -0.34 + kick * 0.05)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.75 + kick * 0.28, lerpf(0.16, 0.04, fire_blend), 0.42 if reloading else 0.0)
+			WeaponBase.WeaponKind.DUAL_REVOLVERS, WeaponBase.WeaponKind.DUAL_PISTOLS:
+				var kick_l: float = _weapon_recoil_anim_l
+				var dual_roll: float = 0.40 if reloading else 0.0
+				_held_weapon_root.position = Vector3(0.22, 0.42, -0.34 + kick * 0.06)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.78 + kick * 0.30, lerpf(0.10, 0.02, fire_blend), dual_roll)
+				if _held_weapon_root_l != null:
+					_held_weapon_root_l.visible = true
+					_held_weapon_root_l.position = Vector3(-0.22, 0.42, -0.34 + kick_l * 0.06)
+					_held_weapon_root_l.rotation = Vector3(aim_pitch * 0.78 + kick_l * 0.30, lerpf(-0.10, -0.02, fire_blend), -dual_roll)
+					left_target = _held_weapon_root_l.transform * _weapon_grip_local_l
+					custom_left_target = true
+			WeaponBase.WeaponKind.WELDING_TORCH:
+				_held_weapon_root.position = Vector3(0.22, 0.38, -0.26 + kick * 0.02)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.72 + 0.06, lerpf(0.18, 0.05, fire_blend), 0.0)
 			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE:
 				var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				if _shown_weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE and _cycle_anim_timer > 0.0 and _cycle_anim_duration > 0.001:
@@ -2278,6 +2364,8 @@ func apply_knockback(impulse: Vector3) -> void:
 
 func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = false, bypass_enclosure: bool = false, is_dot_tick: bool = false) -> int:
 	if is_defeated or amount <= 0:
+		return 0
+	if status_effects != null and status_effects.has_method("is_invulnerable") and status_effects.is_invulnerable():
 		return 0
 	if current_vehicle_id >= 0 and current_seat_enclosed and not bypass_enclosure:
 		return 0

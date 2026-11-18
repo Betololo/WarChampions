@@ -72,6 +72,7 @@ var carried_shield_swing_timer: float = 0.0
 var vehicle_triple_dmg_timer: float = 0.0
 
 var tnt_rope_active: bool = false
+var invuln_timer: float = 0.0
 
 var marked_timer: float = 0.0
 var mark_sweep_timer: float = 0.0
@@ -195,6 +196,7 @@ func _physics_process(delta: float) -> void:
 		deactivate_carried_shield(true)
 
 	vehicle_triple_dmg_timer = maxf(0.0, vehicle_triple_dmg_timer - delta)
+	invuln_timer = maxf(0.0, invuln_timer - delta)
 
 	# Combat Medicine Heal-over-Time
 	if hot_timer > 0.0:
@@ -291,6 +293,8 @@ func _sync_buffs() -> void:
 		b |= NetSerializer.BUFF_VEHICLE_BUSTER
 	if tnt_rope_active:
 		b |= NetSerializer.BUFF_TNT_ROPE
+	if invuln_timer > 0.0:
+		b |= NetSerializer.BUFF_ENGINEER_INVULN
 	owner_hero.active_buffs = b
 
 
@@ -770,6 +774,17 @@ func is_tnt_rope_active() -> bool:
 	return tnt_rope_active
 
 
+func activate_invulnerability(duration: float = 1.5) -> void:
+	invuln_timer = maxf(invuln_timer, duration)
+	_sync_flags()
+
+
+func is_invulnerable() -> bool:
+	if invuln_timer > 0.0:
+		return true
+	return owner_hero != null and (owner_hero.active_buffs & NetSerializer.BUFF_ENGINEER_INVULN) != 0
+
+
 func clear_all() -> void:
 	burn_timer = 0.0
 	burn_dps = 0.0
@@ -806,6 +821,7 @@ func clear_all() -> void:
 	carried_shield_swing_timer = 0.0
 	vehicle_triple_dmg_timer = 0.0
 	tnt_rope_active = false
+	invuln_timer = 0.0
 	marked_timer = 0.0
 	mark_sweep_timer = 0.0
 	if owner_hero != null:

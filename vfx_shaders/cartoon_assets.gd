@@ -132,9 +132,9 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _sprite_hp_cross()
 		"icon_ammo":
 			return _sprite_bullet()
-		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3":
+		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3", "portrait_royal_4":
 			return _sprite_portrait(0, int(key.right(1)))
-		"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3":
+		"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3", "portrait_national_4":
 			return _sprite_portrait(1, int(key.right(1)))
 		_:
 			if key.begins_with("icon_weapon_"):
@@ -739,6 +739,12 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 		_draw_rect(img, 27, 30, 6, 5, Color(0.98, 0.56, 0.14))
 		_draw_rect(img, 39, 30, 6, 5, Color(0.98, 0.56, 0.14))
 		_draw_rect(img, 28, 41, 16, 4, Color(0.24, 0.15, 0.10)) # Heavy mustache
+	elif class_id == 4:
+		_draw_rect(img, 24, 29, 11, 7, Color(0.76, 0.58, 0.22))
+		_draw_rect(img, 37, 29, 11, 7, Color(0.76, 0.58, 0.22))
+		_draw_rect(img, 26, 30, 7, 5, Color(0.24, 0.86, 0.96))
+		_draw_rect(img, 39, 30, 7, 5, Color(0.24, 0.86, 0.96))
+		_draw_rect(img, 29, 41, 14, 4, Color(0.28, 0.18, 0.12))
 	elif class_id == 1 or class_id == 2:
 		_draw_rect(img, 26, 31, 9, 5, Color(0.1, 0.1, 0.12))
 		_draw_rect(img, 37, 31, 9, 5, Color(0.1, 0.1, 0.12))
@@ -747,13 +753,15 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 		_draw_rect(img, 40, 32, 4, 4, Color(0.12, 0.12, 0.12))
 		_draw_rect(img, 29, 41, 14, 4, Color(0.28, 0.18, 0.12)) # Mustache
 	# Hat / Beret / Visor Helmet
-	var hat_col := Color(0.75, 0.16, 0.16) if class_id == 1 else (Color(0.12, 0.12, 0.14) if class_id == 2 else (Color(0.32, 0.36, 0.28) if (class_id == 3 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 3 else jacket.darkened(0.25))))
+	var hat_col := Color(0.75, 0.16, 0.16) if class_id == 1 else (Color(0.12, 0.12, 0.14) if class_id == 2 else (Color(0.32, 0.36, 0.28) if (class_id == 3 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 3 else (Color(0.30, 0.38, 0.26) if (class_id == 4 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 4 else jacket.darkened(0.25))))))
 	_draw_rect(img, 20, 14, 32, 10, hat_col)
 	if class_id == 2:
 		_draw_rect(img, 12, 21, 48, 4, hat_col)
 	elif class_id == 3:
 		_draw_rect(img, 18, 21, 36, 5, Color(0.22, 0.24, 0.28))
 		_draw_rect(img, 24, 21, 24, 2, Color(0.92, 0.52, 0.14))
+	elif class_id == 4:
+		_draw_rect(img, 20, 21, 34, 4, Color(0.16, 0.14, 0.12))
 	_draw_ring(img, 36, 36, 34.0, 30.0, Color(0.92, 0.92, 0.95))
 	return ImageTexture.create_from_image(img)
 
@@ -1145,6 +1153,28 @@ static func _sprite_weapon(kind_str: String) -> ImageTexture:
 			_draw_line(img, Vector2(53, 23), Vector2(71, 13), 13.0, olive_hi)
 			_draw_line(img, Vector2(58, 20), Vector2(66, 16), 14.0, red_hi)
 
+		"11": # Dual Revolvers (twin steel six-shooters)
+			for oy in [0, 16]:
+				_draw_rect(img, 18, 16 + oy, 11, 14, walnut_hi)
+				_draw_rect(img, 27, 13 + oy, 14, 10, brass_hi)
+				_draw_circle(img, 36, 18 + oy, 5.5, steel_dark)
+				_draw_rect(img, 40, 14 + oy, 30, 5, steel_hi)
+
+		"12": # Dual Pistols (twin blued semi-autos)
+			for oy in [0, 16]:
+				_draw_rect(img, 22, 17 + oy, 10, 13, walnut_dark)
+				_draw_rect(img, 20, 11 + oy, 42, 6, steel_hi)
+				_draw_rect(img, 22, 17 + oy, 38, 4, steel_dark)
+				_draw_rect(img, 58, 12 + oy, 6, 4, brass_hi)
+
+		"13": # Welding Torch (brass fuel cylinder + copper neck + cyan-amber flame jet)
+			_draw_rect(img, 12, 28, 12, 18, walnut_dark)
+			_draw_rect(img, 22, 24, 24, 14, brass_hi)
+			_draw_rect(img, 24, 18, 28, 8, steel_mid)
+			_draw_line(img, Vector2(52, 22), Vector2(72, 16), 5.0, copper_hi)
+			_draw_circle(img, 79, 15, 7.0, Color(0.32, 0.92, 1.0))
+			_draw_circle(img, 76, 16, 4.0, Color(1.0, 0.88, 0.36))
+
 		_: # Default to Pistol
 			_draw_rect(img, 32, 32, 14, 18, walnut_dark)
 			_draw_rect(img, 34, 34, 10, 14, walnut_hi)
@@ -1459,6 +1489,43 @@ static func _sprite_skill(slot_str: String) -> ImageTexture:
 			_draw_rect(img, 24, 18, 9, 3, Color(0.65, 0.70, 0.75))
 			_draw_star(img, 20.0, 16.0, 7.0, Color(1.0, 0.42, 0.12))
 			_draw_circle(img, 20.0, 16.0, 2.8, Color(1.0, 0.94, 0.38))
+
+		"4_0": # Trincheira (Trench): sandbag wall + steel cap + rear ladder rungs
+			_draw_rounded_badge(img, Color(0.42, 0.34, 0.22), Color(0.22, 0.16, 0.10), Color(0.92, 0.72, 0.32))
+			_draw_rect(img, 8, 20, 24, 11, ink)
+			_draw_rect(img, 9, 21, 22, 9, Color(0.62, 0.54, 0.36))
+			_draw_rect(img, 8, 17, 24, 4, Color(0.45, 0.50, 0.56))
+			_draw_rect(img, 14, 12, 12, 3, Color(0.75, 0.62, 0.34))
+
+		"4_1": # Metralhadora Montada c/ Escudo: heavy gun shield + tripod barrel
+			_draw_rounded_badge(img, Color(0.24, 0.34, 0.44), Color(0.12, 0.18, 0.24), Color(0.55, 0.82, 0.96))
+			_draw_rect(img, 14, 10, 8, 16, ink)
+			_draw_rect(img, 15, 11, 6, 14, Color(0.65, 0.72, 0.80))
+			_draw_rect(img, 20, 15, 13, 5, Color(0.36, 0.42, 0.48))
+			_draw_line(img, Vector2(18, 25), Vector2(11, 32), 2.5, ink)
+			_draw_line(img, Vector2(18, 25), Vector2(26, 32), 2.5, ink)
+
+		"4_2": # Blindar Veiculo: olive vehicle hull + golden 2x armor shield
+			_draw_rounded_badge(img, Color(0.28, 0.40, 0.24), Color(0.14, 0.22, 0.12), Color(0.96, 0.80, 0.28))
+			_draw_rect(img, 7, 21, 20, 9, ink)
+			_draw_rect(img, 8, 22, 18, 7, Color(0.40, 0.52, 0.32))
+			_draw_rect(img, 20, 11, 13, 15, ink)
+			_draw_rect(img, 21, 12, 11, 13, Color(0.96, 0.78, 0.22))
+			_draw_rect(img, 25, 15, 3, 7, white)
+			_draw_rect(img, 23, 17, 7, 3, white)
+
+		"4_3": # Morteiro via Minimapa: red radar crosshairs + falling shell
+			_draw_rounded_badge(img, Color(0.48, 0.18, 0.14), Color(0.26, 0.08, 0.06), Color(1.0, 0.45, 0.32))
+			_draw_ring(img, 20, 22, 11.0, 8.5, Color(1.0, 0.32, 0.24))
+			_draw_line(img, Vector2(20, 9), Vector2(20, 31), 2.0, Color(1.0, 0.75, 0.55))
+			_draw_line(img, Vector2(9, 22), Vector2(31, 22), 2.0, Color(1.0, 0.75, 0.55))
+			_draw_circle(img, 20, 18, 4.0, Color(1.0, 0.90, 0.36))
+
+		"4_4": # Armadura Invulneravel: radiant cyan-gold armor crest
+			_draw_rounded_badge(img, Color(0.18, 0.44, 0.58), Color(0.08, 0.22, 0.34), Color(0.42, 0.96, 1.0))
+			_draw_circle(img, 20, 20, 11.0, Color(1.0, 0.86, 0.28))
+			_draw_circle(img, 20, 20, 8.0, Color(0.28, 0.90, 1.0))
+			_draw_star(img, 20.0, 20.0, 6.0, white)
 
 		_: # Fallback outlined badge
 			_draw_rounded_badge(img, Color(0.24, 0.36, 0.56), Color(0.12, 0.18, 0.30), Color(0.75, 0.85, 0.98))

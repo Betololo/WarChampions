@@ -54,6 +54,7 @@ func _ready() -> void:
 	await _test_phase12_task1_fixes()
 	await _test_phase12_task2_demolisher_rework()
 	await _test_phase12_task3_hotkeys_drag_minimap()
+	await _test_phase12_task4_field_engineer()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -7236,7 +7237,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	var budgets_ok: bool = (mesh_count <= 900 and uniq_meshes.size() <= 350 and uniq_mats.size() <= 200)
 
 	_assert(
-		game6.heroes_by_id.size() == 28 and demo_bot_count >= 6 and rope_flow_ok and fp_client_refresh_ok and budgets_ok and NetSerializer.INPUT_CMD_BYTES == 15,
+		game6.heroes_by_id.size() == 28 and demo_bot_count >= 5 and rope_flow_ok and fp_client_refresh_ok and budgets_ok and NetSerializer.INPUT_CMD_BYTES == 15,
 		"Phase 11.6g: 14v14 spawns %d Demolisher bots, MainGame TNT Rope & FirePatch refresh, INPUT_CMD=15B, map budgets (%d/%d/%d)" % [
 			demo_bot_count, mesh_count, uniq_meshes.size(), uniq_mats.size()
 		]
@@ -8501,5 +8502,254 @@ func _test_phase12_task3_hotkeys_drag_minimap() -> void:
 	if FileAccess.file_exists(test_cfg_path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(test_cfg_path))
 	InputCmd.reset_default_hotkeys()
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase12_task4_field_engineer() -> void:
+	print("--- Phase 12 Task 4: Field Engineer Class, Dual Weapons, Welder & 5 Skills ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	# 1. NetSerializer 3-bit class_id (4) & u32 active_buffs (1 << 16) + 24-hero MTU < 1200B
+	var eng_buffs: int = NetSerializer.BUFF_ENGINEER_INVULN | NetSerializer.BUFF_HERO_SHIELD
+	var auth_bytes: PackedByteArray = NetSerializer.pack_authoritative_state(
+		120, Vector3(4.0, 1.0, -5.0), Vector3.ZERO, NetSerializer.SNAP_GROUNDED,
+		125, 0, -1, -1, 0, eng_buffs, 0, 0
+	)
+	var auth_dec: Dictionary = NetSerializer.unpack_authoritative_state(auth_bytes)
+	var heroes24: Array[Dictionary] = []
+	for i in range(24):
+		heroes24.append({
+			"id": 100 + i,
+			"team": i % 2,
+			"class_id": NetworkManager.CLASS_ENGINEER if (i % 5 == 4) else (i % 5),
+			"weapon_slot": 0,
+			"flags": NetSerializer.SNAP_GROUNDED,
+			"buffs": eng_buffs if i == 4 else 0,
+			"pos": Vector3(float(i) * 3.0, 0.0, 0.0),
+			"vel": Vector3.ZERO,
+			"yaw": 0.0,
+			"pitch": 0.0,
+			"hp": 125,
+			"shield": 0,
+			"vehicle_id": -1,
+			"seat_idx": -1,
+		})
+	var ws24_bytes: PackedByteArray = NetSerializer.pack_world_snapshot(
+		200, 3333, 50, 50, heroes24,
+		[{"id": 50, "type": VehicleBase.VehicleType.MOUNTED_MG, "team": 0, "hp": 320, "pos": Vector3.ZERO, "rot": Quaternion.IDENTITY, "turret_yaw": 0.0, "turret_pitch": 0.0, "seats": [-1]}],
+		[{"owner": 0, "capturing_team": -1, "progress": 1.0}]
+	)
+	var ws24_dec: Dictionary = NetSerializer.unpack_world_snapshot(ws24_bytes)
+	var ws_eng_hero: Dictionary = (ws24_dec.get("heroes", []) as Array)[4]
+	_assert(
+		NetSerializer.INPUT_CMD_BYTES == 15
+		and ws24_bytes.size() < 1200
+		and int(auth_dec.get("buffs", 0)) == eng_buffs
+		and int(ws_eng_hero.get("class_id", -1)) == NetworkManager.CLASS_ENGINEER
+		and int(ws_eng_hero.get("buffs", 0)) == eng_buffs,
+		"Phase 12.4a: NetSerializer 3-bit class_id=4 + u32 BUFF_ENGINEER_INVULN + 24-hero MTU (%dB < 1200B)" % ws24_bytes.size()
+	)
+
+	# 2. ClassEngineer stats, 3D visuals (Dual L+R roots + cap) & CartoonAssets icons
+	var eng := HeroCharacter.new()
+	eng.setup_identity(401, "EngRoyal", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 0, true, false)
+	eng.position = Vector3.ZERO
+	arena.add_child(eng)
+	await _flush_deferred()
+	var stats_ok: bool = (
+		eng.max_hp == 125
+		and eng.hp == 125
+		and is_equal_approx(eng.base_move_speed, 6.3)
+		and eng.skill_manager is EngineerSkills
+		and eng.weapons.size() == 3
+		and (eng.weapons[0] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+		and (eng.weapons[1] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.SHOTGUN
+		and (eng.weapons[2] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.WELDING_TORCH
+		and eng._held_weapon_root != null
+		and eng._held_weapon_root_l != null
+		and eng._held_weapon_root_l.visible
+	)
+	var icons_ok: bool = (
+		CartoonAssets.get_texture("portrait_royal_4") != null
+		and CartoonAssets.get_texture("portrait_national_4") != null
+		and CartoonAssets.get_texture("icon_weapon_11_0") != null
+		and CartoonAssets.get_texture("icon_weapon_12_0") != null
+		and CartoonAssets.get_texture("icon_weapon_13_0") != null
+		and CartoonAssets.get_texture("icon_skill_4_0") != null
+		and CartoonAssets.get_texture("icon_skill_4_4") != null
+	)
+	_assert(stats_ok and icons_ok, "Phase 12.4b: ClassEngineer 125 HP / 6.3 m/s, Dual Revolvers L+R roots, Welding Torch & 2D icons")
+
+	# 3. Dual Revolvers / Dual Pistols alternating muzzles & Welding Torch heal/damage
+	eng.trigger_weapon_fire_visual(WeaponBase.WeaponKind.DUAL_REVOLVERS, false)
+	var m_right: Vector3 = eng.get_muzzle_world_position()
+	eng.trigger_weapon_fire_visual(WeaponBase.WeaponKind.DUAL_REVOLVERS, false)
+	var m_left: Vector3 = eng.get_muzzle_world_position()
+	var dual_alt_ok: bool = absf(m_right.x - m_left.x) > 0.25
+
+	var eng_pistol := HeroCharacter.new()
+	eng_pistol.weapon_slot_archetypes = {0: 1, 1: 0, 2: 0}
+	eng_pistol.setup_identity(402, "EngDualPistol", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 1, false, false)
+	arena.add_child(eng_pistol)
+	var dual_pistol_ok: bool = ((eng_pistol.weapons[0] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
+
+	var ally_jeep := VehicleJeep.new()
+	ally_jeep.id = 61
+	ally_jeep.team = NetworkManager.TEAM_ROYAL
+	ally_jeep.position = Vector3(0.0, 0.0, -2.2)
+	ally_jeep.rotation.y = PI * 0.5
+	arena.add_child(ally_jeep)
+	ally_jeep.hp = 200
+	var enemy_hero := HeroCharacter.new()
+	enemy_hero.setup_identity(403, "EnemyTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	enemy_hero.position = Vector3(4.0, 0.0, -2.2)
+	arena.add_child(enemy_hero)
+	var veh_arr_t: Array[VehicleBase] = [ally_jeep]
+	var heroes_dict_t: Dictionary = {401: eng, 403: enemy_hero}
+	var ctx_t: Dictionary = {
+		"heroes": heroes_dict_t,
+		"heroes_by_id": heroes_dict_t,
+		"vehicles": veh_arr_t,
+		"projectiles_root": arena,
+		"vehicles_root": arena,
+	}
+	var weld_cmd := InputCmd.new()
+	weld_cmd.selected_weapon_slot = 2
+	weld_cmd.aim_yaw = 0.0
+	weld_cmd.aim_pitch = 0.0
+	var welder: WeaponBase = eng.weapons[2] as WeaponBase
+	welder.fire_server(weld_cmd, ctx_t)
+	var repaired_ok: bool = (ally_jeep.hp == 215)
+	# Put enemy inside jeep -> Welding Torch should damage instead of repair!
+	ally_jeep.try_enter_hero(enemy_hero)
+	var hp_before_enemy_weld: int = ally_jeep.hp
+	welder.fire_server(weld_cmd, ctx_t)
+	var expected_jeep_dmg: int = maxi(1, int(roundf(float(WeldingWeapon.WELD_ENEMY_VEH_DMG) * 0.55)))
+	var enemy_veh_dmg_ok: bool = (ally_jeep.hp == hp_before_enemy_weld - expected_jeep_dmg)
+	ally_jeep.exit_hero(enemy_hero)
+	enemy_hero.position = Vector3(0.0, 0.0, -2.0)
+	ally_jeep.position = Vector3(30.0, 0.0, 30.0)
+	var e_hp_before: int = enemy_hero.hp
+	welder.fire_server(weld_cmd, ctx_t)
+	var enemy_hero_weld_ok: bool = (enemy_hero.hp == e_hp_before - WeldingWeapon.WELD_HERO_DMG)
+	_assert(
+		dual_alt_ok and dual_pistol_ok and repaired_ok and enemy_veh_dmg_ok and enemy_hero_weld_ok,
+		"Phase 12.4c: Dual L/R alternating muzzles (alt=%s, pist=%s, rep=%s, ev=%s, eh=%s, hp_jeep=%d)" % [
+			str(dual_alt_ok), str(dual_pistol_ok), str(repaired_ok), str(enemy_veh_dmg_ok), str(enemy_hero_weld_ok), ally_jeep.hp
+		]
+	)
+
+	# 4. Skills 0..4 verification
+	var sm: EngineerSkills = eng.skill_manager as EngineerSkills
+	var lag := LagCompensator.new()
+	arena.add_child(lag)
+	ctx_t["lag_compensator"] = lag
+
+	# Skill 0: Trincheira (3.0s build, 850 HP, CD 0 while active, 18s CD when destroyed)
+	var sk_cmd := InputCmd.new()
+	sk_cmd.buttons = InputCmd.BTN_SKILL_1
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	var build_blocks_ok: bool = sm.is_building() and sm.blocks_weapon_fire()
+	sk_cmd.buttons = 0
+	for _i in range(32):
+		sm.step_server(0.1, sk_cmd, ctx_t)
+	var trench: EngineerSkills.TrenchEntity = sm._active_trench
+	var trench_ok: bool = (
+		trench != null
+		and is_instance_valid(trench)
+		and trench.max_hp == 850
+		and trench.hp == 850
+		and trench.collision_layer == (1 | 64)
+		and is_equal_approx(sm.skill_cooldowns[0], 0.0)
+	)
+	# Destroying trench triggers 18s cooldown
+	trench.apply_damage_server(900, 403)
+	var trench_cd_ok: bool = is_equal_approx(sm.skill_cooldowns[0], 18.0)
+
+	# Skill 1: Metralhadora Montada c/ Escudo (2.0s build, 320 HP, blocks frontal shots, CD on destroy)
+	sk_cmd.buttons = InputCmd.BTN_SKILL_2
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	for _i in range(22):
+		sm.step_server(0.1, sk_cmd, ctx_t)
+	var turret: VehicleShieldedMG = sm._active_turret
+	var turret_ok: bool = (
+		turret != null
+		and is_instance_valid(turret)
+		and turret.vehicle_type == VehicleBase.VehicleType.MOUNTED_MG
+		and turret.max_hp == 320
+		and turret.freeze
+		and is_equal_approx(sm.skill_cooldowns[1], 0.0)
+	)
+	# Seat gunner facing -Z and test frontal bullet block from enemy in front (-Z -> shot_dir = +Z)
+	turret.turret_yaw = 0.0
+	turret.try_enter_hero(eng)
+	var shield_blocks_ok: bool = turret.is_frontal_shield_blocking_dir(Vector3(0.0, 0.0, -1.0)) and not turret.is_frontal_shield_blocking_dir(Vector3(0.0, 0.0, 1.0))
+	var eng_hp_before_frontal: int = eng.hp
+	var hitscan_p := HitscanWeapon.new()
+	hitscan_p.configure(enemy_hero, WeaponBase.WeaponKind.PISTOL, 0)
+	hitscan_p._apply_hero_hit(eng, Vector3(0.0, 0.0, 1.0), 5.0, false, Vector3.ZERO, 1.0, ctx_t, {}, {}, {})
+	var shield_dmg_blocked_ok: bool = (eng.hp == eng_hp_before_frontal)
+	turret.exit_hero(eng)
+	turret.apply_damage_server(400, 403, Vector3(0.0, 0.0, -1.0), turret.global_position, true)
+	var turret_cd_ok: bool = is_equal_approx(sm.skill_cooldowns[1], 18.0)
+
+	# Skill 2: Blindar Veiculo (2.0s channel -> 2x max HP + armor plates, 20s CD)
+	ally_jeep.position = eng.position + Vector3(2.5, 0.0, 0.0)
+	var base_jeep_max: int = ally_jeep.max_hp
+	ally_jeep.hp = 120
+	sk_cmd.buttons = InputCmd.BTN_SKILL_3
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	for _i in range(22):
+		sm.step_server(0.1, sk_cmd, ctx_t)
+	var armor_ok: bool = (
+		ally_jeep.is_armored
+		and ally_jeep.max_hp == base_jeep_max * 2
+		and ally_jeep.hp == 120 + base_jeep_max
+		and ally_jeep._armor_plates_root != null
+		and sm.skill_cooldowns[2] > 19.0 and sm.skill_cooldowns[2] <= 20.0
+	)
+
+	# Skill 3: Morteiro via Minimapa (0 CD until target chosen -> 1.5s timer -> 80 max AoE dmg)
+	enemy_hero.hp = enemy_hero.max_hp
+	enemy_hero.position = Vector3(16.0, 0.0, -16.0)
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	var mortar_deferred_ok: bool = is_equal_approx(sm.skill_cooldowns[3], 0.0)
+	sk_cmd.buttons = 0
+	var fired_m: bool = sm.fire_mortar_at(enemy_hero.position, ctx_t)
+	var mortar_cd_started_ok: bool = fired_m and sm.skill_cooldowns[3] > 17.0
+	for _i in range(17):
+		eng.status_effects._physics_process(0.1)
+		sm.step_server(0.1, sk_cmd, ctx_t)
+	var mortar_hit_ok: bool = (enemy_hero.hp == enemy_hero.max_hp - 80)
+
+	# Skill 4: Armadura Invulneravel (1.5s full damage immunity)
+	sk_cmd.buttons = InputCmd.BTN_SKILL_5
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	var invuln_active_ok: bool = (eng.active_buffs & NetSerializer.BUFF_ENGINEER_INVULN) != 0 and eng.status_effects.is_invulnerable()
+	var dmg_while_invuln: int = eng.apply_damage_server(95, 403, true)
+	for _i in range(17):
+		eng.status_effects._physics_process(0.1)
+		sm.step_server(0.1, sk_cmd, ctx_t)
+	var invuln_expired_ok: bool = not eng.status_effects.is_invulnerable()
+	var dmg_after_invuln: int = eng.apply_damage_server(15, 403, false)
+	var invuln_ok: bool = (invuln_active_ok and dmg_while_invuln == 0 and invuln_expired_ok and dmg_after_invuln == 15)
+
+	_assert(
+		build_blocks_ok and trench_ok and trench_cd_ok
+		and turret_ok and shield_blocks_ok and shield_dmg_blocked_ok and turret_cd_ok
+		and armor_ok and mortar_deferred_ok and mortar_cd_started_ok and mortar_hit_ok and invuln_ok,
+		"Phase 12.4d: 5 Skills (blk=%s tr=%s trcd=%s tur=%s shb=%s shd=%s tcd=%s arm=%s md=%s mcd=%s mh=%s inv=%s)" % [
+			str(build_blocks_ok), str(trench_ok), str(trench_cd_ok), str(turret_ok),
+			str(shield_blocks_ok), str(shield_dmg_blocked_ok), str(turret_cd_ok), str(armor_ok),
+			str(mortar_deferred_ok), str(mortar_cd_started_ok), str(mortar_hit_ok), str(invuln_ok)
+		]
+	)
+
 	arena.queue_free()
 	await _flush_deferred()

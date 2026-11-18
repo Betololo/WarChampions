@@ -12,6 +12,7 @@ enum VehicleType {
 	AA_GUN,
 	MOTORCYCLE,
 	APC,
+	MOUNTED_MG,
 }
 
 enum SeatType {
@@ -43,6 +44,9 @@ var vehicle_type: int = VehicleType.JEEP
 var team: int = -1 # -1 = neutral/capturable, 0 = Royal, 1 = National
 var max_hp: int = 350
 var hp: int = 350
+var _base_max_hp: int = 0
+var is_armored: bool = false
+var _armor_plates_root: Node3D = null
 var turret_yaw: float = 0.0
 var turret_pitch: float = 0.0
 var is_destroyed: bool = false
@@ -100,6 +104,7 @@ func _ready() -> void:
 	add_child(_visual_root)
 
 	_setup_vehicle_stats_and_seats()
+	_base_max_hp = max_hp
 	_build_vehicle_mesh()
 	get_cached_visual_meshes()
 
@@ -129,7 +134,7 @@ func is_watercraft() -> bool:
 
 
 func is_ground_vehicle() -> bool:
-	return not is_aircraft() and not is_watercraft() and vehicle_type != VehicleType.AA_GUN
+	return not is_aircraft() and not is_watercraft() and vehicle_type != VehicleType.AA_GUN and vehicle_type != VehicleType.MOUNTED_MG
 
 
 func _get_world_y() -> float:
@@ -489,9 +494,40 @@ func _on_destroyed(attacker_id: int) -> void:
 	destroyed.emit(id)
 
 
+func apply_engineer_armor() -> bool:
+	if is_destroyed or is_armored:
+		return false
+	if _base_max_hp <= 0:
+		_base_max_hp = maxi(1, max_hp)
+	is_armored = true
+	max_hp = _base_max_hp * 2
+	hp = mini(max_hp, hp + _base_max_hp)
+	attach_engineer_armor_visuals()
+	return true
+
+
+func attach_engineer_armor_visuals() -> void:
+	is_armored = true
+	if _visual_root == null:
+		return
+	if _armor_plates_root != null and is_instance_valid(_armor_plates_root):
+		return
+	_armor_plates_root = VehicleMeshBuilder.build_engineer_armor_plates(_visual_root, vehicle_type, team)
+	_cached_visual_meshes.clear()
+	get_cached_visual_meshes()
+
+
 func _respawn_vehicle() -> void:
 	is_destroyed = false
 	is_marked = false
+	is_armored = false
+	if _base_max_hp > 0:
+		max_hp = _base_max_hp
+	if _armor_plates_root != null and is_instance_valid(_armor_plates_root):
+		_armor_plates_root.queue_free()
+		_armor_plates_root = null
+		_cached_visual_meshes.clear()
+		get_cached_visual_meshes()
 	marked_timer = 0.0
 	_respawn_timer = 0.0
 	_last_xray_state = -1
@@ -516,7 +552,7 @@ func _respawn_vehicle() -> void:
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	visible = true
-	freeze = (vehicle_type == VehicleType.AA_GUN) or (multiplayer.multiplayer_peer != null and not multiplayer.is_server())
+	freeze = (vehicle_type == VehicleType.AA_GUN or vehicle_type == VehicleType.MOUNTED_MG) or (multiplayer.multiplayer_peer != null and not multiplayer.is_server())
 	collision_layer = 8
 	respawned.emit(id)
 

@@ -16,6 +16,9 @@ enum WeaponKind {
 	FLAMETHROWER,
 	GRENADE_LAUNCHER,
 	STICK_GRENADE,
+	DUAL_REVOLVERS,
+	DUAL_PISTOLS,
+	WELDING_TORCH,
 }
 
 signal fired(weapon_kind: int, muzzle_pos: Vector3, hit_pos: Vector3)
@@ -303,6 +306,51 @@ func _load_weapon_stats() -> void:
 			is_melee = true
 			bullet_speed_mps = 100.0
 			bullet_gravity_scale = 0.0
+		WeaponKind.DUAL_REVOLVERS:
+			weapon_name = "2 Revólveres"
+			base_damage_max = 18.0
+			base_damage_min = 11.0
+			falloff_start_m = 16.0
+			falloff_end_m = 45.0
+			max_range_m = 125.0
+			base_fire_interval = 0.22
+			base_mag_size = 12
+			reload_duration = 1.55
+			base_spread_rad = 0.016
+			recoil_rad = 0.022
+			is_automatic = false
+			bullet_speed_mps = 125.0
+			bullet_gravity_scale = 0.0
+		WeaponKind.DUAL_PISTOLS:
+			weapon_name = "2 Pistolas"
+			base_damage_max = 12.0
+			base_damage_min = 6.5
+			falloff_start_m = 14.0
+			falloff_end_m = 40.0
+			max_range_m = 115.0
+			base_fire_interval = 0.13
+			base_mag_size = 24
+			reload_duration = 1.45
+			base_spread_rad = 0.022
+			recoil_rad = 0.015
+			is_automatic = true
+			bullet_speed_mps = 120.0
+			bullet_gravity_scale = 0.0
+		WeaponKind.WELDING_TORCH:
+			weapon_name = "Maçarico de Solda"
+			base_damage_max = 10.0
+			base_damage_min = 10.0
+			falloff_start_m = 3.6
+			falloff_end_m = 3.6
+			max_range_m = 3.6
+			base_fire_interval = 0.12
+			base_mag_size = 100
+			reload_duration = 1.50
+			base_spread_rad = 0.0
+			recoil_rad = 0.0
+			is_automatic = true
+			bullet_speed_mps = 100.0
+			bullet_gravity_scale = 0.0
 
 
 static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
@@ -330,6 +378,12 @@ static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
 			return ["Lança-Granadas", "Trapper", "Canhão"][arch]
 		WeaponKind.STICK_GRENADE:
 			return "Granada de Cabo"
+		WeaponKind.DUAL_REVOLVERS:
+			return "2 Revólveres"
+		WeaponKind.DUAL_PISTOLS:
+			return "2 Pistolas"
+		WeaponKind.WELDING_TORCH:
+			return "Maçarico de Solda"
 	return "Arma"
 
 
@@ -341,7 +395,15 @@ func _apply_archetype_modifiers() -> void:
 	mag_size = base_mag_size
 	spread_rad = base_spread_rad
 
-	if is_explosive_weapon or weapon_kind == WeaponKind.FLAMETHROWER or weapon_kind == WeaponKind.GRENADE_LAUNCHER or weapon_kind == WeaponKind.STICK_GRENADE:
+	if (
+		is_explosive_weapon
+		or weapon_kind == WeaponKind.FLAMETHROWER
+		or weapon_kind == WeaponKind.GRENADE_LAUNCHER
+		or weapon_kind == WeaponKind.STICK_GRENADE
+		or weapon_kind == WeaponKind.DUAL_REVOLVERS
+		or weapon_kind == WeaponKind.DUAL_PISTOLS
+		or weapon_kind == WeaponKind.WELDING_TORCH
+	):
 		return
 
 	if is_melee:
@@ -517,7 +579,8 @@ func get_aim_origin_and_dir(
 	cmd: InputCmd,
 	space_state: PhysicsDirectSpaceState3D = null,
 	lag_comp: LagCompensator = null,
-	heroes_by_id: Dictionary = {}
+	heroes_by_id: Dictionary = {},
+	hand_side: int = 0
 ) -> Dictionary:
 	var crouch: bool = owner_hero != null and owner_hero.is_crouching
 	var eye_offset: float = 1.05 if crouch else 1.52
@@ -539,7 +602,8 @@ func get_aim_origin_and_dir(
 	var aim_basis := Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0))
 	var right_vec: Vector3 = aim_basis.x.normalized()
 	var fwd_vec: Vector3 = (-aim_basis.z).normalized()
-	var origin: Vector3 = hero_pos + Vector3(0.0, eye_offset, 0.0) + right_vec * 0.24 - fwd_vec * 0.25
+	var side_sign: float = -1.0 if hand_side == 1 else 1.0
+	var origin: Vector3 = hero_pos + Vector3(0.0, eye_offset, 0.0) + right_vec * (0.24 * side_sign) - fwd_vec * 0.25
 
 	var pivot_pt: Vector3 = cam_ray.get("pivot", cam_origin)
 	var spring_len: float = float(cam_ray.get("spring_length", 0.0))
@@ -559,6 +623,10 @@ func get_aim_origin_and_dir(
 			for v_node in owner_hero.get_tree().get_nodes_in_group("vehicles"):
 				if v_node is VehicleBase and (v_node as VehicleBase).id == owner_hero.current_vehicle_id:
 					excludes.append((v_node as CollisionObject3D).get_rid())
+					if v_node.has_method("get_shield_rid"):
+						var s_rid: RID = v_node.get_shield_rid()
+						if s_rid.is_valid():
+							excludes.append(s_rid)
 		query.exclude = excludes
 		var hit: Dictionary = space_state.intersect_ray(query)
 		if not hit.is_empty():

@@ -22,7 +22,7 @@ const SNAP_EMOTING: int = 1 << 13
 const SNAP_MARKED_TARGET: int = 1 << 14
 const SNAP_KEG_CONCUSSED: int = 1 << 15
 
-## Compact active buff flags (16-bit mask for overhead skill icons & remote rim VFX).
+## Compact active buff flags (32-bit mask for overhead skill icons & remote rim VFX).
 const BUFF_HERO_SHIELD: int = 1 << 0
 const BUFF_LEG_IT: int = 1 << 1
 const BUFF_ELIXIR: int = 1 << 2
@@ -39,6 +39,7 @@ const BUFF_HASTE: int = 1 << 12
 const BUFF_CARRIED_SHIELD: int = 1 << 13
 const BUFF_VEHICLE_BUSTER: int = 1 << 14
 const BUFF_TNT_ROPE: int = 1 << 15
+const BUFF_ENGINEER_INVULN: int = 1 << 16
 
 
 static func _pack_angle_u16(radians: float) -> int:
@@ -129,7 +130,7 @@ static func pack_authoritative_state(
 	buf.put_16(clampi(vehicle_id, -1, 32767))
 	buf.put_8(clampi(seat_idx, -1, 127))
 	buf.put_u8(knockback_seq & 0xFF)
-	buf.put_u16(buffs & 0xFFFF)
+	buf.put_u32(buffs & 0xFFFFFFFF)
 	buf.put_8(clampi(weapon_slot, -1, 127))
 	buf.put_u8(forced_weapon_seq & 0xFF)
 	return buf.data_array
@@ -148,9 +149,19 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 	var vehicle_id: int = buf.get_16()
 	var seat_idx: int = buf.get_8()
 	var knockback_seq: int = buf.get_u8()
-	var buffs: int = buf.get_u16() if bytes.size() >= 40 else 0
-	var weapon_slot: int = buf.get_8() if bytes.size() >= 41 else -1
-	var forced_weapon_seq: int = buf.get_u8() if bytes.size() >= 42 else 0
+	var buffs: int = 0
+	var weapon_slot: int = -1
+	var forced_weapon_seq: int = 0
+	if bytes.size() >= 44:
+		buffs = buf.get_u32()
+		weapon_slot = buf.get_8()
+		forced_weapon_seq = buf.get_u8()
+	elif bytes.size() >= 40:
+		buffs = buf.get_u16()
+		if bytes.size() >= 41:
+			weapon_slot = buf.get_8()
+		if bytes.size() >= 42:
+			forced_weapon_seq = buf.get_u8()
 	return {
 		"ack_tick": ack_tick,
 		"pos": pos,
@@ -201,10 +212,11 @@ static func pack_world_snapshot(
 	for i in range(hero_count):
 		var h: Dictionary = heroes[i]
 		buf.put_u32(int(h.get("id", 0)))
-		var meta: int = (int(h.get("team", 0)) & 0x3) | ((int(h.get("class_id", 0)) & 0x3) << 2) | ((int(h.get("weapon_slot", 0)) & 0x3) << 4)
+		var cid: int = int(h.get("class_id", 0))
+		var meta: int = (int(h.get("team", 0)) & 0x3) | ((cid & 0x3) << 2) | ((int(h.get("weapon_slot", 0)) & 0x3) << 4) | ((cid & 0x4) << 4)
 		buf.put_u8(meta)
 		buf.put_u16(int(h.get("flags", 0)) & 0xFFFF)
-		buf.put_u16(int(h.get("buffs", 0)) & 0xFFFF)
+		buf.put_u32(int(h.get("buffs", 0)) & 0xFFFFFFFF)
 		var pos: Vector3 = h.get("pos", Vector3.ZERO)
 		buf.put_float(pos.x)
 		buf.put_float(pos.y)
@@ -275,7 +287,7 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 		var id: int = buf.get_u32()
 		var meta: int = buf.get_u8()
 		var flags: int = buf.get_u16()
-		var buffs: int = buf.get_u16()
+		var buffs: int = buf.get_u32()
 		var pos := Vector3(buf.get_float(), buf.get_float(), buf.get_float())
 		var vel: Vector3 = _get_vec3_s16_vel(buf)
 		var yaw: float = _unwrap_signed_angle(_unpack_angle_u16(buf.get_u16()))
@@ -287,7 +299,7 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 		heroes_out.append({
 			"id": id,
 			"team": meta & 0x3,
-			"class_id": (meta >> 2) & 0x3,
+			"class_id": ((meta >> 2) & 0x3) | ((meta >> 4) & 0x4),
 			"weapon_slot": (meta >> 4) & 0x3,
 			"flags": flags,
 			"buffs": buffs,

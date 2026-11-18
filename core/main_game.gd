@@ -6,6 +6,8 @@ extends Node3D
 ## ConquestManager (50 Tickets + 6 Flags), Vehicles, Bots, HUD & Class Menu.
 
 const MAP_SCENE: PackedScene = preload("res://maps/seaside_frontline.tscn")
+const EngineerSkillsScript := preload("res://entities/skills/engineer_skills.gd")
+const VehicleShieldedMGScript := preload("res://entities/vehicles/vehicle_shielded_mg.gd")
 
 var heroes_root: Node3D
 var vehicles_root: Node3D
@@ -74,6 +76,8 @@ func _ready() -> void:
 	NetworkManager.game_event_received.connect(_on_game_event)
 	NetworkManager.connection_state_changed.connect(_on_connection_state_changed)
 	NetworkManager.seat_switch_requested.connect(_on_seat_switch_requested)
+	NetworkManager.mortar_target_received.connect(_on_mortar_target_received)
+	NetworkManager.mortar_cancel_received.connect(_on_mortar_cancel_received)
 
 	_load_map()
 	_setup_ui()
@@ -129,7 +133,7 @@ func _sync_vehicle_authority_freeze() -> void:
 		var v := v_val as VehicleBase
 		if v == null or not is_instance_valid(v):
 			continue
-		var should_freeze: bool = (v.vehicle_type == VehicleBase.VehicleType.AA_GUN) or not auth
+		var should_freeze: bool = (v.vehicle_type == VehicleBase.VehicleType.AA_GUN or v.vehicle_type == VehicleBase.VehicleType.MOUNTED_MG) or not auth
 		v.freeze = should_freeze
 		if should_freeze:
 			v.linear_velocity = Vector3.ZERO
@@ -448,10 +452,24 @@ func _clear_match_entities() -> void:
 				ch.queue_free()
 	heroes_by_id.clear()
 	var reset_vehs: Array[VehicleBase] = []
-	for v_val in vehicles_by_id.values():
-		var vb := v_val as VehicleBase
-		if vb != null and is_instance_valid(vb) and not reset_vehs.has(vb):
+	var remove_vids: Array[int] = []
+	for vid_key in vehicles_by_id.keys():
+		var vb := vehicles_by_id[vid_key] as VehicleBase
+		if vb == null or not is_instance_valid(vb):
+			remove_vids.append(int(vid_key))
+			continue
+		if vb.vehicle_type == VehicleBase.VehicleType.MOUNTED_MG:
+			remove_vids.append(int(vid_key))
+			vb.queue_free()
+			continue
+		if not reset_vehs.has(vb):
 			reset_vehs.append(vb)
+	for rvid in remove_vids:
+		vehicles_by_id.erase(rvid)
+	if is_inside_tree():
+		for t_node in get_tree().get_nodes_in_group("trenches"):
+			if is_instance_valid(t_node):
+				t_node.queue_free()
 	if map_instance != null:
 		for mv in map_instance.spawned_vehicles:
 			if mv != null and is_instance_valid(mv) and not reset_vehs.has(mv):
@@ -463,6 +481,7 @@ func _clear_match_entities() -> void:
 		vb._respawn_vehicle()
 	_sync_vehicle_authority_freeze()
 	_refresh_combat_context()
+	_sync_hud_vehicles()
 
 
 func _spawn_14v14_bots(human_team: int) -> void:
@@ -473,11 +492,11 @@ func _spawn_14v14_bots(human_team: int) -> void:
 	var enemy_team: int = NetworkManager.TEAM_NATIONAL if human_team == NetworkManager.TEAM_ROYAL else NetworkManager.TEAM_ROYAL
 
 	for i in range(ally_count):
-		var cls: int = i % 4
+		var cls: int = i % 5
 		NetworkManager.register_bot(bot_id, "AllyBot_%d" % (i + 1), human_team, cls, i % 3)
 		bot_id += 1
 	for j in range(enemy_count):
-		var cls_e: int = j % 4
+		var cls_e: int = (j + 2) % 5
 		NetworkManager.register_bot(bot_id, "EnemyBot_%d" % (j + 1), enemy_team, cls_e, j % 3)
 		bot_id += 1
 
@@ -520,7 +539,7 @@ func _physics_process(delta: float) -> void:
 
 		# 1. Step AI Bots
 		var cps: Array[CapturePoint] = map_instance.capture_points if map_instance != null else []
-		var veh_arr: Array[VehicleBase] = map_instance.spawned_vehicles if map_instance != null else []
+		var veh_arr: Array[VehicleBase] = _get_live_vehicles_array()
 		for bid in bot_brains.keys():
 			var brain: BotController = bot_brains[bid]
 			var bhero: HeroCharacter = heroes_by_id.get(bid, null)
@@ -826,8 +845,9 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			var shooter: HeroCharacter = heroes_by_id.get(shooter_id, null)
 			var origin_fallback: Vector3 = payload.get("origin", Vector3.ZERO)
 			var is_vehicle_shot: bool = bool(payload.get("vehicle_shot", false))
+			var hand: int = int(payload.get("hand", -1))
 			var use_origin: bool = is_vehicle_shot or shooter == null or shooter.current_vehicle_id >= 0
-			var muzzle_pos: Vector3 = origin_fallback if use_origin else shooter.get_muzzle_world_position()
+			var muzzle_pos: Vector3 = origin_fallback if use_origin else shooter.get_muzzle_world_position(hand)
 			var aim_dir: Vector3 = payload.get("dir", Vector3.FORWARD)
 			var is_remote_client_own_shot: bool = (shooter_id == NetworkManager.local_peer_id and not NetworkManager.is_server_authority())
 
@@ -841,7 +861,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 					dist_m = local_hero.global_position.distance_to(muzzle_pos)
 				SoundSynthesizer.play_weapon_fire(w_kind, dist_m, is_local_shooter, muzzle_pos)
 				if shooter != null and not is_vehicle_shot:
-					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot)
+					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot, hand)
 				StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
 
 			var arcs: Array = payload.get("arcs", [])
@@ -896,7 +916,12 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			var exp_attacker_id: int = int(payload.get("attacker_id", -1))
 			SoundSynthesizer.play_sfx("explosion", 0.0, exp_attacker_id == NetworkManager.local_peer_id, exp_pos)
 		"vehicle_destroyed":
+			var v_id_dead: int = int(payload.get("vehicle_id", -1))
 			var v_type: int = int(payload.get("vehicle_type", 0))
+			if v_type == VehicleBase.VehicleType.MOUNTED_MG and v_id_dead >= 0:
+				vehicles_by_id.erase(v_id_dead)
+				_refresh_combat_context()
+				_sync_hud_vehicles()
 			var attacker_id: int = int(payload.get("attacker_id", -1))
 			var attacker: HeroCharacter = heroes_by_id.get(attacker_id, null)
 			if NetworkManager.is_server_authority() and attacker != null and attacker.skill_manager != null and attacker.skill_manager.has_method("award_xp"):
@@ -1012,3 +1037,123 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				var h: HeroCharacter = heroes_by_id.get(hid, null)
 				if h != null and h.skill_manager != null and h.skill_manager.has_method("upgrade_skill"):
 					h.skill_manager.upgrade_skill(int(payload.get("slot", -1)))
+		"mortar_mode":
+			var m_hero_id: int = int(payload.get("hero_id", -1))
+			if m_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("set_mortar_targeting_mode"):
+				var active_m: bool = bool(payload.get("active", false))
+				hud.set_mortar_targeting_mode(active_m, func(world_pos: Vector3) -> void:
+					NetworkManager.send_mortar_target(world_pos.x, world_pos.z)
+				)
+		"mortar_strike":
+			var ms_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var ms_rad: float = float(payload.get("radius", 7.0))
+			var ms_delay: float = float(payload.get("delay", 1.5))
+			if projectiles_root != null:
+				StatusEffectsVFX.spawn_mortar_warning_ring(projectiles_root, ms_pos, ms_rad, ms_delay)
+			SoundSynthesizer.play_sfx("mortar_whistle", 0.0, false, ms_pos)
+		"mortar_explode":
+			var me_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var me_rad: float = float(payload.get("radius", 7.0))
+			var me_hero_id: int = int(payload.get("hero_id", -1))
+			if projectiles_root != null:
+				StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, me_pos, "explosion", me_rad)
+				StatusEffectsVFX.spawn_explosion_area_ring(projectiles_root, me_pos, me_rad)
+			SoundSynthesizer.play_sfx("explosion", 0.0, me_hero_id == NetworkManager.local_peer_id, me_pos)
+		"trench_spawn":
+			var ts_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var ts_owner: int = int(payload.get("owner_id", -1))
+			SoundSynthesizer.play_sfx("build_construct", 0.0, ts_owner == NetworkManager.local_peer_id, ts_pos)
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				var vis_t := EngineerSkillsScript.TrenchEntity.new()
+				vis_t._is_visual_only = true
+				vis_t.trench_id = int(payload.get("trench_id", -1))
+				vis_t.owner_id = ts_owner
+				vis_t.team = int(payload.get("team", 0))
+				vis_t.position = ts_pos
+				vis_t.rotation.y = float(payload.get("yaw", 0.0))
+				projectiles_root.add_child(vis_t)
+		"trench_destroyed":
+			var td_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var td_id: int = int(payload.get("trench_id", -1))
+			if projectiles_root != null:
+				StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, td_pos, "explosion", 2.2)
+				if not NetworkManager.is_server_authority():
+					for ch in projectiles_root.get_children():
+						if ch is EngineerSkillsScript.TrenchEntity and (ch as EngineerSkillsScript.TrenchEntity).trench_id == td_id:
+							ch.queue_free()
+			SoundSynthesizer.play_sfx("explosion", 0.0, false, td_pos)
+		"eng_turret_spawn":
+			var et_vid: int = int(payload.get("vehicle_id", -1))
+			var et_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var et_yaw: float = float(payload.get("yaw", 0.0))
+			var et_owner: int = int(payload.get("owner_id", -1))
+			var found_turret: VehicleBase = null
+			if projectiles_root != null:
+				for ch in projectiles_root.get_children():
+					if ch is VehicleShieldedMG and (ch as VehicleBase).id == et_vid:
+						found_turret = ch as VehicleBase
+						break
+			if found_turret == null and vehicles_root != null:
+				for ch in vehicles_root.get_children():
+					if ch is VehicleShieldedMG and (ch as VehicleBase).id == et_vid:
+						found_turret = ch as VehicleBase
+						break
+			if found_turret == null and not NetworkManager.is_server_authority() and vehicles_root != null:
+				var vis_turret := VehicleShieldedMGScript.new() as VehicleShieldedMG
+				vis_turret.id = et_vid
+				vis_turret.team = int(payload.get("team", 0))
+				vis_turret.owner_id = et_owner
+				vis_turret.position = et_pos
+				vis_turret.rotation.y = et_yaw
+				vis_turret.turret_yaw = et_yaw
+				vehicles_root.add_child(vis_turret)
+				found_turret = vis_turret
+			if found_turret != null:
+				vehicles_by_id[et_vid] = found_turret
+				_refresh_combat_context()
+				_sync_vehicle_authority_freeze()
+				_sync_hud_vehicles()
+			SoundSynthesizer.play_sfx("build_construct", 0.0, et_owner == NetworkManager.local_peer_id, et_pos)
+		"veh_armored":
+			var av_id: int = int(payload.get("vehicle_id", -1))
+			var av_node: VehicleBase = vehicles_by_id.get(av_id, null) as VehicleBase
+			if av_node != null and is_instance_valid(av_node):
+				av_node.is_armored = true
+				av_node.max_hp = int(payload.get("max_hp", av_node.max_hp))
+				av_node.hp = int(payload.get("hp", av_node.hp))
+				av_node.attach_engineer_armor_visuals()
+			SoundSynthesizer.play_sfx("build_construct", 0.0, int(payload.get("hero_id", -1)) == NetworkManager.local_peer_id, av_node.global_position if av_node != null else Vector3.ZERO)
+
+
+func _get_live_vehicles_array() -> Array[VehicleBase]:
+	var arr: Array[VehicleBase] = []
+	for v_val in vehicles_by_id.values():
+		var vb := v_val as VehicleBase
+		if vb != null and is_instance_valid(vb) and not vb.is_queued_for_deletion():
+			arr.append(vb)
+	return arr
+
+
+func _sync_hud_vehicles() -> void:
+	if hud != null:
+		hud.bind_context(conquest_manager, _get_live_vehicles_array(), heroes_by_id)
+
+
+func _on_mortar_target_received(peer_id: int, wx: float, wz: float) -> void:
+	if not NetworkManager.is_server_authority():
+		return
+	var hero: HeroCharacter = heroes_by_id.get(peer_id, null)
+	if hero == null or not is_instance_valid(hero) or hero.is_defeated:
+		return
+	if hero.skill_manager != null and hero.skill_manager.has_method("fire_mortar_at"):
+		if _cached_combat_ctx.is_empty():
+			_refresh_combat_context()
+		hero.skill_manager.fire_mortar_at(Vector3(wx, 0.0, wz), _cached_combat_ctx)
+
+
+func _on_mortar_cancel_received(peer_id: int) -> void:
+	if not NetworkManager.is_server_authority():
+		return
+	var hero: HeroCharacter = heroes_by_id.get(peer_id, null)
+	if hero != null and is_instance_valid(hero) and hero.skill_manager != null and hero.skill_manager.has_method("cancel_mortar_mode"):
+		hero.skill_manager.cancel_mortar_mode()

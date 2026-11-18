@@ -573,6 +573,8 @@ static func get_vehicle_display_name(v_type: int) -> String:
 			return "MOTO"
 		VehicleBase.VehicleType.APC:
 			return "BLINDADO"
+		VehicleBase.VehicleType.MOUNTED_MG:
+			return "TORRETA MG"
 		_:
 			return "VEÍCULO"
 
@@ -1728,9 +1730,12 @@ func is_mortar_targeting_active() -> bool:
 	return _mortar_targeting_active
 
 
-func set_mortar_targeting_mode(active: bool, callback: Callable = Callable()) -> void:
+func set_mortar_targeting_mode(active: bool, callback: Callable = Callable(), notify_cancel: bool = true) -> void:
+	var was_active: bool = _mortar_targeting_active
 	_mortar_targeting_active = active
 	_mortar_target_callback = callback if active else Callable()
+	if was_active and not active and notify_cancel:
+		NetworkManager.send_mortar_cancel()
 	if active:
 		_cancel_hotbar_drag()
 	if _mortar_banner_lbl != null:
@@ -1781,7 +1786,7 @@ func _on_minimap_mortar_clicked(local_pos: Vector2) -> void:
 		return
 	var world_pos: Vector3 = _minimap.minimap_to_world(local_pos)
 	var cb: Callable = _mortar_target_callback
-	set_mortar_targeting_mode(false)
+	set_mortar_targeting_mode(false, Callable(), false)
 	if cb.is_valid():
 		cb.call(world_pos)
 

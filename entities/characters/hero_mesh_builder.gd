@@ -266,6 +266,8 @@ static func get_torso_profile(class_id: int) -> Dictionary:
 		return {"waist_rx": 0.170, "waist_rz": 0.128, "chest_rx": 0.295, "chest_rz": 0.172, "hem_y": -0.32}
 	elif class_id == 3:
 		return {"waist_rx": 0.195, "waist_rz": 0.138, "chest_rx": 0.345, "chest_rz": 0.200, "hem_y": -0.16}
+	elif class_id == 4:
+		return {"waist_rx": 0.186, "waist_rz": 0.136, "chest_rx": 0.320, "chest_rz": 0.188, "hem_y": -0.14}
 	return {"waist_rx": 0.180, "waist_rz": 0.132, "chest_rx": 0.305, "chest_rz": 0.182, "hem_y": -0.18}
 
 
@@ -309,6 +311,17 @@ static func build_torso_mesh(class_id: int) -> ArrayMesh:
 			{"y": 0.61, "rx": 0.262, "rz": 0.158, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.05},
 			{"y": 0.65, "rx": 0.126, "rz": 0.114, "p": 2.1, "col": c_lit, "v": 0.00},
 		], 20))
+	elif class_id == 4: # Field Engineer utility vest & heavy leather workshop apron
+		return _store_mesh(k, make_loft([
+			{"y": -0.14, "z": 0.006, "rx": 0.244, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
+			{"y": -0.02, "rx": 0.214, "rz": 0.156, "p": 2.4, "col": c_shade, "side_ao": 0.10, "v": 0.86},
+			{"y": 0.06, "rx": 0.186, "rz": 0.136, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
+			{"y": 0.23, "rx": 0.254, "rz": 0.172, "p": 2.5, "col": c_mid, "side_ao": 0.10, "v": 0.50},
+			{"y": 0.45, "rx": 0.322, "rz": 0.190, "p": 2.5, "col": c_lit, "side_ao": 0.12, "v": 0.24},
+			{"y": 0.54, "rx": 0.312, "rz": 0.180, "p": 2.3, "col": c_lit, "side_ao": 0.08, "v": 0.12},
+			{"y": 0.60, "rx": 0.252, "rz": 0.152, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.05},
+			{"y": 0.64, "rx": 0.114, "rz": 0.106, "p": 2.1, "col": c_lit, "v": 0.00},
+		], 20))
 	# Soldier tailored WWII jacket with pinched waist & flared coat tail
 	return _store_mesh(k, make_loft([
 		{"y": -0.18, "z": 0.006, "rx": 0.238, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
@@ -329,12 +342,12 @@ static func build_collar_lapels_mesh(class_id: int) -> ArrayMesh:
 		return _mesh_cache[k] as ArrayMesh
 	var col_rim := Color(0.95, 0.95, 0.98)
 	var col_lapel := Color.WHITE
-	var collar_top_y: float = 0.740 if class_id == 2 else (0.710 if class_id == 3 else (0.662 if class_id == 1 else 0.678))
+	var collar_top_y: float = 0.740 if class_id == 2 else (0.710 if class_id == 3 else (0.688 if class_id == 4 else (0.662 if class_id == 1 else 0.678)))
 	var collar_z: float = 0.012 if class_id == 2 else 0.006
-	var collar_rx: float = 0.124 if class_id == 3 else (0.118 if class_id == 1 else (0.112 if class_id == 2 else 0.108))
-	var collar_rz: float = 0.114 if class_id == 3 else (0.108 if class_id == 1 else (0.104 if class_id == 2 else 0.100))
-	var lapel_z: float = -0.194 if class_id == 1 else (-0.186 if class_id == 3 else (-0.162 if class_id == 2 else -0.168))
-	var lapel_h: float = 0.19 if class_id == 1 else (0.28 if class_id == 2 else 0.22)
+	var collar_rx: float = 0.124 if class_id == 3 else (0.118 if class_id == 1 else (0.114 if class_id == 4 else (0.112 if class_id == 2 else 0.108)))
+	var collar_rz: float = 0.114 if class_id == 3 else (0.108 if class_id == 1 else (0.105 if class_id == 4 else (0.104 if class_id == 2 else 0.100)))
+	var lapel_z: float = -0.194 if class_id == 1 else (-0.186 if class_id == 3 else (-0.175 if class_id == 4 else (-0.162 if class_id == 2 else -0.168)))
+	var lapel_h: float = 0.19 if class_id == 1 else (0.28 if class_id == 2 else (0.21 if class_id == 4 else 0.22))
 
 	var parts: Array[Dictionary] = [
 		{
@@ -464,6 +477,37 @@ static func build_backpack_mesh(class_id: int) -> ArrayMesh:
 					{"y": 0.08, "rx": 0.018, "rz": 0.010, "p": 2.2, "col": c_strap.lightened(0.15)},
 				],
 			})
+	elif class_id == 4: # Field Engineer: Twin compact welding gas cylinders + brass gauge + canvas tool roll
+		parts.append({
+			"seg": 14,
+			"xform": _xform(Vector3(0.0, 0.30, 0.200)),
+			"rings": [
+				{"y": -0.15, "rx": 0.150, "rz": 0.052, "p": 2.5, "col": Color(0.46, 0.44, 0.38)},
+				{"y": 0.00, "rx": 0.158, "rz": 0.058, "p": 2.5, "col": Color(0.56, 0.52, 0.44)},
+				{"y": 0.15, "rx": 0.148, "rz": 0.052, "p": 2.4, "col": Color(0.46, 0.44, 0.38)},
+			],
+		})
+		for sx in [-0.078, 0.078]:
+			var cyl_col: Color = Color(0.22, 0.48, 0.68) if sx < 0.0 else Color(0.72, 0.36, 0.16)
+			parts.append({
+				"seg": 14,
+				"xform": _xform(Vector3(sx, 0.32, 0.264)),
+				"rings": [
+					{"y": -0.16, "rx": 0.054, "rz": 0.054, "p": 2.0, "col": cyl_col.darkened(0.18)},
+					{"y": 0.02, "rx": 0.058, "rz": 0.058, "p": 2.0, "col": cyl_col},
+					{"y": 0.14, "rx": 0.050, "rz": 0.050, "p": 2.0, "col": cyl_col.darkened(0.10)},
+					{"y": 0.18, "rx": 0.024, "rz": 0.024, "p": 2.0, "col": c_brass},
+				],
+			})
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, 0.505, 0.220), Vector3(0.0, 0.0, PI * 0.5)),
+			"rings": [
+				{"y": -0.155, "rx": 0.048, "rz": 0.048, "p": 2.0, "col": Color(0.36, 0.32, 0.24)},
+				{"y": 0.0, "rx": 0.052, "rz": 0.052, "p": 2.0, "col": c_brass},
+				{"y": 0.155, "rx": 0.048, "rz": 0.048, "p": 2.0, "col": Color(0.36, 0.32, 0.24)},
+			],
+		})
 	else: # Soldier: WWII field rucksack + top bedroll cylinder + leather straps
 		parts.append({
 			"seg": 14,
@@ -641,6 +685,18 @@ static func build_bandolier_mesh(class_id: int) -> ArrayMesh:
 					{"y": 0.012, "rx": 0.019, "rz": 0.019, "p": 2.0, "col": gren_body},
 					{"y": 0.028, "rx": 0.016, "rz": 0.016, "p": 2.0, "col": gren_cap},
 				], 10, true, _xform(sp + Vector3(0.0, 0.0, -0.016), Vector3(0.0, 0.0, 0.58)), 20 + i0)
+
+		elif class_id == 4: # Wrench & brass gauge tool harness along Engineer chest strap
+			var tool_steel := Color(0.72, 0.76, 0.82)
+			var brass_gauge := Color(0.92, 0.72, 0.24)
+			for t in [0.16, 0.26, 0.36]:
+				var idx: float = t * float(pts.size() - 1)
+				var i0: int = clampi(int(idx), 0, pts.size() - 2)
+				var sp: Vector3 = pts[i0].lerp(pts[i0 + 1], idx - float(i0))
+				add_loft_to_st(st, [
+					{"y": -0.024, "rx": 0.013, "rz": 0.013, "p": 2.2, "col": tool_steel if t > 0.20 else brass_gauge},
+					{"y": 0.024, "rx": 0.015, "rz": 0.015, "p": 2.2, "col": tool_steel},
+				], 8, true, _xform(sp + Vector3(0.0, 0.0, -0.014), Vector3(0.0, 0.0, 0.52)), 30 + i0)
 
 	st.generate_normals()
 	return _store_mesh("band_%d" % class_id, st.commit())
@@ -977,6 +1033,47 @@ static func build_visor_helmet_mesh(is_royal: bool) -> ArrayMesh:
 			"rings": [
 				{"y": -0.045, "rx": 0.024, "rz": 0.034, "p": 2.4, "col": visor_col},
 				{"y": 0.045, "rx": 0.024, "rz": 0.034, "p": 2.4, "col": accent_col},
+			],
+		})
+	return _store_mesh(k, _commit_lofts(parts))
+
+
+## Builds Field Engineer mechanic cap with brass-rimmed welding goggles resting on brow.
+static func build_engineer_cap_mesh(is_royal: bool) -> ArrayMesh:
+	var k := "ecap_%s" % str(is_royal)
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	var cap_col := Color(0.32, 0.40, 0.28) if is_royal else Color(0.24, 0.26, 0.30)
+	var brim_col := Color(0.16, 0.14, 0.12)
+	var brass_col := Color(0.86, 0.66, 0.24)
+	var lens_col := Color(0.22, 0.82, 0.92)
+	var parts: Array[Dictionary] = [
+		{
+			"seg": 18,
+			"rings": [
+				{"y": -0.018, "rx": 0.156, "rz": 0.168, "p": 2.2, "col": cap_col.darkened(0.20)},
+				{"y": 0.032, "rx": 0.150, "rz": 0.162, "p": 2.1, "col": cap_col},
+				{"y": 0.098, "rx": 0.132, "rz": 0.144, "p": 2.0, "col": cap_col.lightened(0.08)},
+				{"y": 0.132, "rx": 0.072, "rz": 0.082, "p": 2.0, "col": cap_col.lightened(0.10)},
+			],
+		},
+		{
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, -0.005, -0.158), Vector3(0.22, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.008, "rx": 0.122, "rz": 0.056, "p": 2.5, "col": brim_col},
+				{"y": 0.008, "rx": 0.118, "rz": 0.052, "p": 2.4, "col": brim_col.lightened(0.08)},
+			],
+		},
+	]
+	for sx in [-0.054, 0.054]:
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(sx, 0.036, -0.162), Vector3(PI * 0.5, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.016, "rx": 0.038, "rz": 0.034, "p": 2.0, "col": brass_col},
+				{"y": 0.012, "rx": 0.034, "rz": 0.030, "p": 2.0, "col": brass_col},
+				{"y": 0.018, "rx": 0.025, "rz": 0.022, "p": 2.0, "col": lens_col},
 			],
 		})
 	return _store_mesh(k, _commit_lofts(parts))
@@ -1702,6 +1799,38 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 			info["grip"] = Vector3(0.0, 0.0, 0.01)
 			info["foregrip"] = Vector3.ZERO
 			info["muzzle"] = Vector3(0.0, 0.0, -0.34)
+			info["two_handed"] = false
+
+		11: # Dual Revolvers (Single-handed steel six-shooter with brass frame & wood grip)
+			add_part(root, p_grip, Vector3(0.0, -0.058, -0.01), Vector3(0.32, 0.0, 0.0), wood_mat, dummy)
+			_add_box_part(root, Vector3(0.030, 0.044, 0.11), Vector3(0.0, 0.024, -0.04), Vector3.ZERO, brass_mat, dummy)
+			_add_cyl_part(root, 0.032, 0.032, 0.068, Vector3(0.0, 0.030, -0.055), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 12, dummy)
+			_add_cyl_part(root, 0.016, 0.014, 0.20, Vector3(0.0, 0.038, -0.19), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 10, dummy)
+			_add_box_part(root, Vector3(0.012, 0.014, 0.19), Vector3(0.0, 0.056, -0.19), Vector3.ZERO, brass_mat, dummy)
+			info["grip"] = Vector3(0.0, -0.045, 0.0)
+			info["foregrip"] = Vector3.ZERO
+			info["muzzle"] = Vector3(0.0, 0.038, -0.29)
+			info["two_handed"] = false
+
+		12: # Dual Pistols (Single-handed blued-steel semi-auto with brass accent)
+			add_part(root, p_grip, Vector3(0.0, -0.062, -0.015), Vector3(0.24, 0.0, 0.0), metal_mat, dummy)
+			_add_box_part(root, Vector3(0.032, 0.042, 0.22), Vector3(0.0, 0.032, -0.08), Vector3.ZERO, blued_metal_mat, dummy)
+			_add_box_part(root, Vector3(0.024, 0.012, 0.18), Vector3(0.0, 0.054, -0.08), Vector3.ZERO, brass_mat, dummy)
+			_add_cyl_part(root, 0.012, 0.012, 0.08, Vector3(0.0, 0.032, -0.21), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 10, dummy)
+			info["grip"] = Vector3(0.0, -0.045, 0.0)
+			info["foregrip"] = Vector3.ZERO
+			info["muzzle"] = Vector3(0.0, 0.032, -0.25)
+			info["two_handed"] = false
+
+		13: # Welding Torch (Regulator brass fuel canister + copper swan-neck nozzle + glowing tip)
+			add_part(root, p_grip, Vector3(0.0, -0.052, 0.0), Vector3(0.22, 0.0, 0.0), wood_mat, dummy)
+			_add_cyl_part(root, 0.044, 0.044, 0.18, Vector3(0.0, -0.010, -0.06), Vector3(PI * 0.5, 0.0, 0.0), brass_mat, 12, dummy)
+			_add_box_part(root, Vector3(0.046, 0.050, 0.22), Vector3(0.0, 0.030, -0.08), Vector3.ZERO, steel_mat, dummy)
+			_add_cyl_part(root, 0.016, 0.013, 0.26, Vector3(0.0, 0.040, -0.28), Vector3(PI * 0.5, 0.0, 0.0), copper_mat, 10, dummy)
+			_add_cyl_part(root, 0.020, 0.012, 0.06, Vector3(0.0, 0.040, -0.43), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 10, dummy)
+			info["grip"] = Vector3(0.0, -0.040, 0.0)
+			info["foregrip"] = Vector3.ZERO
+			info["muzzle"] = Vector3(0.0, 0.040, -0.46)
 			info["two_handed"] = false
 
 		_: # Service Pistol (arch 0=Classic Slide, 1=Suppressed Tactical Auto, 2=Brass Six-Shooter Revolver)

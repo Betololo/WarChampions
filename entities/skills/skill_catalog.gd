@@ -247,6 +247,64 @@ const DEMOLISHER_SKILLS: Array[Dictionary] = [
 	},
 ]
 
+const ENGINEER_SKILLS: Array[Dictionary] = [
+	{
+		"icon": "icon_skill_4_0",
+		"name": "Trincheira",
+		"category": "Construção / Cobertura",
+		"cooldown": "18s (ao destruir)",
+		"duration": "Até destruir (850 HP)",
+		"area": "5.0m x 3.0m",
+		"effect_stats": "850 HP + Escada & Plataforma",
+		"description": "Constrói (3.0s) uma trincheira reforçada com escada traseira e plataforma elevada para atirar sobre o parapeito (máx 1 ativa).",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_4_1",
+		"name": "Metralhadora Montada c/ Escudo",
+		"category": "Construção / Torreta",
+		"cooldown": "18s (ao destruir)",
+		"duration": "Até destruir (320 HP)",
+		"area": "360° + Escudo Frontal",
+		"effect_stats": "320 HP + MG Balística Pesada",
+		"description": "Constrói (2.0s) uma metralhadora fixa 360° com escudo frontal blindado contra balas (máx 1 ativa).",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_4_2",
+		"name": "Blindar Veículo",
+		"category": "Suporte / Blindagem",
+		"cooldown": "20s",
+		"duration": "Permanente (até destruir)",
+		"area": "Veículo ocupado ou 7m",
+		"effect_stats": "2x HP Máx + Placas Blindadas",
+		"description": "Canaliza (2.0s) para dobrar o HP máximo e adicionar placas laterais blindadas ao veículo alvo.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_4_3",
+		"name": "Morteiro via Minimapa",
+		"category": "Artilharia Tática",
+		"cooldown": "18s",
+		"duration": "1.5s impacto",
+		"area": "Raio 7.0m",
+		"effect_stats": "80 dano AoE + Aviso",
+		"description": "Abre o minimapa para clicar no alvo: dispara projétil de morteiro que alerta por 1.5s e explode em área.",
+		"aoe_radius": 7.0,
+	},
+	{
+		"icon": "icon_skill_4_4",
+		"name": "Armadura Invulnerável",
+		"category": "Defesa Pessoal",
+		"cooldown": "18s",
+		"duration": "1.5s",
+		"area": "Individual",
+		"effect_stats": "100% Imunidade a Dano",
+		"description": "Ativa aura dourada/ciano de invulnerabilidade total contra todo dano por 1.5s.",
+		"aoe_radius": 0.0,
+	},
+]
+
 const WIDGETS: Array[Dictionary] = [
 	{
 		"icon": "icon_widget_0",
@@ -306,6 +364,8 @@ static func get_class_skills(class_id: int) -> Array[Dictionary]:
 			src = COMMANDO_SKILLS
 		NetworkManager.CLASS_DEMOLISHER:
 			src = DEMOLISHER_SKILLS
+		NetworkManager.CLASS_ENGINEER:
+			src = ENGINEER_SKILLS
 		_:
 			return []
 	var out: Array[Dictionary] = []
@@ -322,7 +382,7 @@ static func get_widgets() -> Array[Dictionary]:
 
 
 static func get_entry_by_key(icon_key: String) -> Dictionary:
-	for arr in [SOLDIER_SKILLS, GUNNER_SKILLS, COMMANDO_SKILLS, DEMOLISHER_SKILLS, WIDGETS]:
+	for arr in [SOLDIER_SKILLS, GUNNER_SKILLS, COMMANDO_SKILLS, DEMOLISHER_SKILLS, ENGINEER_SKILLS, WIDGETS]:
 		for item in arr:
 			if str(item.get("icon", "")) == icon_key:
 				return item.duplicate()

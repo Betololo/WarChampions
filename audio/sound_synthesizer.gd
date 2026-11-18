@@ -144,7 +144,7 @@ func play_sfx(
 		var dist_m: float = _listener_pos.distance_to(world_pos) if _has_listener_pos else 0.0
 		if dist_m > WORLD_MAX_DISTANCE_M:
 			return
-		var min_cd_ms: int = FLAME_SFX_INTERVAL_MS if sfx_name == "shoot_flame" else WORLD_SFX_COOLDOWN_MS
+		var min_cd_ms: int = FLAME_SFX_INTERVAL_MS if (sfx_name == "shoot_flame" or sfx_name == "weld_arc") else WORLD_SFX_COOLDOWN_MS
 		var last_ms: int = int(_world_sfx_cooldowns.get(sfx_name, -10000))
 		if now_ms - last_ms < min_cd_ms:
 			return
@@ -154,7 +154,7 @@ func play_sfx(
 	else:
 		if _local_sfx_pool.is_empty():
 			return
-		if sfx_name == "shoot_flame":
+		if sfx_name == "shoot_flame" or sfx_name == "weld_arc":
 			var last_local_ms: int = int(_local_sfx_cooldowns.get(sfx_name, -10000))
 			if now_ms - last_local_ms < FLAME_SFX_INTERVAL_MS:
 				return
@@ -210,6 +210,16 @@ func play_weapon_fire(
 		10: # Stick Grenade
 			clip = "stick_grenade"
 			gain_off = 0.6
+		11: # Dual Revolvers
+			clip = "shoot_revolver"
+			gain_off = 0.6
+		12: # Dual Pistols
+			clip = "shoot_pistol"
+			p_jitter = randf_range(0.98, 1.08)
+		13: # Welding Torch
+			clip = "weld_arc"
+			p_jitter = randf_range(0.92, 1.08)
+			gain_off = -1.0
 	var effective_pos: Vector3 = world_pos
 	if not is_local_priority and world_pos == Vector3.ZERO and distance_m > 0.0:
 		effective_pos = (_listener_pos if _has_listener_pos else Vector3.ZERO) + Vector3(distance_m, 0.0, 0.0)
@@ -236,6 +246,10 @@ func _build_clips() -> void:
 	_clips["shoot_flame"] = _synth_flame_roar(0.42, 0.72)
 	_clips["shoot_launcher"] = _synth_gunshot(0.240, 185.0, 48.0, 0.58, 0.90, 1.5, 0.28, 0.65)
 	_clips["stick_grenade"] = _synth_gunshot(0.180, 320.0, 72.0, 0.55, 0.88, 1.8, 0.36, 0.68)
+	_clips["shoot_revolver"] = _synth_gunshot(0.145, 360.0, 82.0, 0.44, 0.90, 1.9, 0.38, 0.68)
+	_clips["weld_arc"] = _synth_weld_arc(0.22, 0.78)
+	_clips["mortar_whistle"] = _synth_mortar_whistle(0.85, 0.82)
+	_clips["build_construct"] = _synth_build_construct(0.26, 0.84)
 
 	# Combat, feedback & UI clips normalized to 0.78..0.92 peak
 	_clips["explosion"] = _synth_explosion(0.48, 0.92)
@@ -533,4 +547,56 @@ func _synth_gibberish(duration: float) -> AudioStreamWAV:
 		buf[i] = wave * syllable * (1.0 - t * 0.6)
 	_lowpass_smooth(buf, 0.30)
 	_normalize_peak(buf, 0.78)
+	return _make_wav(buf, false)
+
+
+func _synth_weld_arc(duration: float, target_peak: float) -> AudioStreamWAV:
+	var n: int = maxi(1, int(duration * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var phase: float = 0.0
+	for i in range(n):
+		var t: float = float(i) / float(maxi(1, n))
+		var env: float = sin(clampf(t * 8.0, 0.0, 1.0) * PI * 0.5) * (1.0 - maxf(0.0, (t - 0.72) / 0.28))
+		phase += TAU * (210.0 + sin(t * 95.0) * 45.0) / float(SAMPLE_RATE)
+		var buzz: float = sin(phase) * 0.42 + sin(phase * 3.0) * 0.28
+		var crackle: float = randf_range(-1.0, 1.0) * (0.65 if randf() < 0.35 else 0.25)
+		buf[i] = tanh((buzz + crackle) * 1.3) * env
+	_lowpass_smooth(buf, 0.42)
+	_normalize_peak(buf, target_peak)
+	return _make_wav(buf, false)
+
+
+func _synth_mortar_whistle(duration: float, target_peak: float) -> AudioStreamWAV:
+	var n: int = maxi(1, int(duration * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var phase: float = 0.0
+	for i in range(n):
+		var t: float = float(i) / float(maxi(1, n))
+		var freq: float = lerpf(1180.0, 340.0, pow(t, 0.78))
+		phase += TAU * freq / float(SAMPLE_RATE)
+		var env: float = sin(clampf(t * 6.0, 0.0, 1.0) * PI * 0.5) * (0.35 + 0.65 * t) * (1.0 - maxf(0.0, (t - 0.85) / 0.15))
+		var air: float = randf_range(-1.0, 1.0) * 0.14
+		buf[i] = (sin(phase) * 0.75 + sin(phase * 2.0) * 0.15 + air) * env
+	_lowpass_smooth(buf, 0.40)
+	_normalize_peak(buf, target_peak)
+	return _make_wav(buf, false)
+
+
+func _synth_build_construct(duration: float, target_peak: float) -> AudioStreamWAV:
+	var n: int = maxi(1, int(duration * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var p1: float = 0.0
+	var p2: float = 0.0
+	for i in range(n):
+		var t: float = float(i) / float(maxi(1, n))
+		p1 += TAU * 420.0 / float(SAMPLE_RATE)
+		p2 += TAU * 690.0 / float(SAMPLE_RATE)
+		var clank1: float = exp(-pow((t - 0.14) / 0.06, 2.0)) * (sin(p1) * 0.7 + randf_range(-0.3, 0.3))
+		var clank2: float = exp(-pow((t - 0.62) / 0.07, 2.0)) * (sin(p2) * 0.7 + randf_range(-0.35, 0.35))
+		buf[i] = clank1 + clank2
+	_lowpass_smooth(buf, 0.44)
+	_normalize_peak(buf, target_peak)
 	return _make_wav(buf, false)

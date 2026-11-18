@@ -4,6 +4,7 @@ extends WeaponBase
 ## Hitscan weapons (SMG, MG, Shotgun, Pistol, Sniper, Knife) using Server-Side Lag Compensation.
 
 var _frenzy_hit_counter: int = 0
+var _dual_hand_idx: int = 0
 
 
 func fire_server(cmd: InputCmd, context: Dictionary) -> void:
@@ -16,11 +17,16 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	if weapon_kind == WeaponKind.STICK_GRENADE and owner_hero.status_effects != null and owner_hero.status_effects.has_method("trigger_carried_shield_swing_gap"):
 		owner_hero.status_effects.trigger_carried_shield_swing_gap(0.48)
 
+	var is_dual: bool = (weapon_kind == WeaponKind.DUAL_REVOLVERS or weapon_kind == WeaponKind.DUAL_PISTOLS)
+	var used_hand: int = _dual_hand_idx if is_dual else 0
+	if is_dual:
+		_dual_hand_idx = 1 - _dual_hand_idx
+
 	var world_3d: World3D = owner_hero.get_world_3d() if owner_hero.is_inside_tree() else null
 	var space_state: PhysicsDirectSpaceState3D = world_3d.direct_space_state if world_3d != null else null
 	var lag_comp: LagCompensator = context.get("lag_compensator", null)
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state, lag_comp, heroes_by_id)
+	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state, lag_comp, heroes_by_id, used_hand)
 	var origin: Vector3 = aim["origin"]
 	var base_dir: Vector3 = aim["dir"]
 
@@ -37,6 +43,10 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		for v_node in owner_hero.get_tree().get_nodes_in_group("vehicles"):
 			if v_node is VehicleBase and (v_node as VehicleBase).id == owner_hero.current_vehicle_id:
 				exclude_rids.append((v_node as CollisionObject3D).get_rid())
+				if v_node.has_method("get_shield_rid"):
+					var s_rid: RID = v_node.get_shield_rid()
+					if s_rid.is_valid():
+						exclude_rids.append(s_rid)
 
 	var pellet_hits: Array[Vector3] = []
 	var pellet_arcs: Array[PackedVector3Array] = []
@@ -285,6 +295,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	NetworkManager.broadcast_game_event("shot_vfx", {
 		"shooter_id": owner_hero.entity_id,
 		"weapon_kind": weapon_kind,
+		"hand": used_hand,
 		"origin": origin,
 		"dir": base_dir,
 		"hits": pellet_hits,
@@ -378,6 +389,25 @@ func _apply_hero_hit(
 			"headshot": false,
 		})
 		return
+
+	if victim.current_vehicle_id >= 0:
+		var vehs_by_id: Dictionary = context.get("vehicles_by_id", {})
+		var v_occ: Node = vehs_by_id.get(victim.current_vehicle_id, null) as Node
+		if v_occ == null:
+			for v_cand in context.get("vehicles", []):
+				if v_cand is VehicleBase and (v_cand as VehicleBase).id == victim.current_vehicle_id:
+					v_occ = v_cand as Node
+					break
+		if v_occ != null and v_occ.has_method("is_frontal_shield_blocking_dir") and bool(v_occ.is_frontal_shield_blocking_dir(atk_from_target)):
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": hit_pos,
+				"kind": "spark",
+				"attacker_id": owner_hero.entity_id,
+				"victim_id": victim.entity_id,
+				"damage": 0,
+				"headshot": false,
+			})
+			return
 
 	var dealt: int = victim.apply_damage_server(dmg, owner_hero.entity_id, false)
 

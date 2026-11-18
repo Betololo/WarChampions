@@ -766,3 +766,109 @@ static func build_apc_visuals(root: Node3D, team: int) -> Dictionary:
 	_add_box(barrel_piv, Vector3(0.18, 0.22, 0.26), Vector3(0.20, -0.02, -0.08), Vector3.ZERO, trim_mat, "AmmoBox")
 
 	return {"turret": turret, "barrel": barrel_piv, "wheels": wheels}
+
+
+static func build_mounted_mg_visuals(root: Node3D, team: int) -> Dictionary:
+	var pal: Dictionary = _make_palette(team)
+	var armor_mat: Material = pal["armor_mat"]
+	var armor_hi: Material = pal["armor_hi"]
+	var trim_mat: Material = pal["trim_mat"]
+	var steel_mat: Material = pal["steel_mat"]
+	var dark_mat: Material = pal["dark_metal"]
+
+	# Sandbag perimeter curb + heavy steel tripod pedestal
+	_add_cyl(root, 0.92, 1.06, 0.18, Vector3(0.0, 0.09, 0.0), Vector3.ZERO, steel_mat, 12, "BasePlate")
+	for i in range(3):
+		var ang: float = float(i) * (TAU / 3.0)
+		_add_box(root, Vector3(0.14, 0.22, 1.15), Vector3(sin(ang) * 0.45, 0.20, cos(ang) * 0.45), Vector3(0.0, ang, 0.0), dark_mat, "TripodLeg")
+	_add_cyl(root, 0.18, 0.24, 0.88, Vector3(0.0, 0.54, 0.0), Vector3.ZERO, steel_mat, 12, "PedestalCol")
+	_add_cyl(root, 0.34, 0.36, 0.12, Vector3(0.0, 0.98, 0.0), Vector3.ZERO, armor_hi, 14, "TurretRing")
+
+	# 360-degree rotating turret + sculpted frontal armored gun shield
+	var turret := Node3D.new()
+	turret.name = "Turret"
+	turret.position = Vector3(0.0, 1.04, 0.0)
+	root.add_child(turret)
+
+	_add_cyl(turret, 0.24, 0.28, 0.22, Vector3(0.0, 0.10, 0.0), Vector3.ZERO, dark_mat, 12, "PintleHead")
+	# Main frontal steel gun shield + angled side wings + team trim stripe
+	_add_box(turret, Vector3(0.92, 0.86, 0.10), Vector3(0.0, 0.48, -0.44), Vector3(0.14, 0.0, 0.0), armor_hi, "GunShieldCenter")
+	_add_box(turret, Vector3(0.96, 0.12, 0.12), Vector3(0.0, 0.86, -0.49), Vector3(0.14, 0.0, 0.0), trim_mat, "GunShieldTopTrim")
+	for sx in [-1.0, 1.0]:
+		_add_box(turret, Vector3(0.36, 0.82, 0.09), Vector3(sx * 0.56, 0.46, -0.34), Vector3(0.14, sx * -0.42, 0.0), armor_mat, "GunShieldWing")
+		_add_box(turret, Vector3(0.38, 0.10, 0.10), Vector3(sx * 0.56, 0.82, -0.39), Vector3(0.14, sx * -0.42, 0.0), trim_mat, "WingTrim")
+
+	# Heavy ballistic MG barrel pivot
+	var barrel_piv := Node3D.new()
+	barrel_piv.name = "BarrelPivot"
+	barrel_piv.position = Vector3(0.0, 0.46, -0.30)
+	turret.add_child(barrel_piv)
+	_add_box(barrel_piv, Vector3(0.20, 0.22, 0.66), Vector3(0.0, 0.0, -0.08), Vector3.ZERO, dark_mat, "MGReceiver")
+	_add_cyl(barrel_piv, 0.060, 0.068, 0.76, Vector3(0.0, 0.02, -0.68), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, 10, "CoolingJacket")
+	_add_cyl(barrel_piv, 0.034, 0.040, 1.22, Vector3(0.0, 0.02, -1.28), Vector3(-PI * 0.5, 0.0, 0.0), dark_mat, 10, "MGBarrel")
+	_add_cyl(barrel_piv, 0.058, 0.034, 0.20, Vector3(0.0, 0.02, -1.92), Vector3(-PI * 0.5, 0.0, 0.0), trim_mat, 10, "MuzzleCone")
+	_add_box(barrel_piv, Vector3(0.18, 0.22, 0.28), Vector3(0.22, -0.02, -0.06), Vector3.ZERO, trim_mat, "AmmoBox")
+	# Rear spade handles
+	for sx in [-0.11, 0.11]:
+		_add_cyl(barrel_piv, 0.018, 0.018, 0.22, Vector3(sx, 0.02, 0.34), Vector3.ZERO, steel_mat, 8, "SpadeGrip")
+
+	return {"turret": turret, "barrel": barrel_piv}
+
+
+static func build_engineer_armor_plates(visual_root: Node3D, vehicle_type: int, team: int) -> Node3D:
+	var plates := Node3D.new()
+	plates.name = "EngineerArmorPlates"
+	visual_root.add_child(plates)
+
+	var steel_mat: Material = make_mat(Color(0.56, 0.62, 0.68), "veh_steel", 0.32, 0.68)
+	var trim_col: Color = Color(0.28, 0.86, 1.0) if team != 1 else Color(1.0, 0.68, 0.20)
+	var glow_trim := make_mat(trim_col, "", 0.22, 0.55)
+
+	var half_w: float = 1.25
+	var skirt_len: float = 3.6
+	var skirt_y: float = 0.84
+	var front_z: float = -2.25
+	match vehicle_type:
+		VehicleBase.VehicleType.TANK:
+			half_w = 1.94
+			skirt_len = 4.6
+			skirt_y = 0.88
+			front_z = -2.65
+		VehicleBase.VehicleType.APC:
+			half_w = 1.34
+			skirt_len = 4.2
+			skirt_y = 0.98
+			front_z = -2.42
+		VehicleBase.VehicleType.JEEP:
+			half_w = 1.14
+			skirt_len = 3.5
+			skirt_y = 0.72
+			front_z = -2.20
+		VehicleBase.VehicleType.MOTORCYCLE:
+			half_w = 0.42
+			skirt_len = 1.5
+			skirt_y = 0.60
+			front_z = -1.02
+		VehicleBase.VehicleType.BOAT:
+			half_w = 1.50
+			skirt_len = 4.6
+			skirt_y = 0.88
+			front_z = -3.15
+		VehicleBase.VehicleType.PLANE:
+			half_w = 0.62
+			skirt_len = 2.6
+			skirt_y = 0.92
+			front_z = -2.25
+		VehicleBase.VehicleType.AA_GUN, VehicleBase.VehicleType.MOUNTED_MG:
+			half_w = 0.96
+			skirt_len = 1.35
+			skirt_y = 0.72
+			front_z = -0.96
+
+	for sx in [-1.0, 1.0]:
+		_add_box(plates, Vector3(0.08, 0.44, skirt_len), Vector3(sx * half_w, skirt_y, 0.0), Vector3.ZERO, steel_mat, "ArmorSkirt")
+		_add_box(plates, Vector3(0.09, 0.08, skirt_len * 0.92), Vector3(sx * (half_w + 0.01), skirt_y + 0.16, 0.0), Vector3.ZERO, glow_trim, "ArmorTrim")
+	_add_box(plates, Vector3(half_w * 1.45, 0.34, 0.10), Vector3(0.0, skirt_y + 0.04, front_z), Vector3(-0.18, 0.0, 0.0), steel_mat, "ArmorFrontPlate")
+	_add_box(plates, Vector3(half_w * 1.40, 0.07, 0.11), Vector3(0.0, skirt_y + 0.18, front_z - 0.02), Vector3(-0.18, 0.0, 0.0), glow_trim, "ArmorFrontTrim")
+
+	return plates
