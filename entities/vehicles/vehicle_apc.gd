@@ -46,7 +46,8 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 	_apply_arcade_drive(delta, drv_cmd, MAX_SPEED, ACCEL, STEER_RATE, LATERAL_GRIP, IDLE_DRAG, 0.65)
 	var throttle: float = -drv_cmd.move_dir.y if drv_cmd != null else 0.0
 	_assist_curb_climb(throttle, 2.5, 0.55)
-	_process_roadkill(driver, context, Vector2(1.35, 2.45), 5.5)
+	if driver != null:
+		_process_roadkill(driver, context, Vector2(1.35, 2.45), 5.5)
 
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", _last_heroes_by_id)
 	var gunner: HeroCharacter = get_gunner_hero(heroes_by_id)

@@ -131,11 +131,14 @@ func is_ground_vehicle() -> bool:
 	return not is_aircraft() and not is_watercraft() and vehicle_type != VehicleType.AA_GUN
 
 
+func _get_world_y() -> float:
+	return global_position.y if is_inside_tree() else position.y
+
+
 func is_submerged_in_water() -> bool:
 	if not is_ground_vehicle():
 		return false
-	var cur_y: float = global_position.y if is_inside_tree() else position.y
-	return cur_y <= HeroCharacter.WATER_LEVEL - 0.35
+	return _get_world_y() <= HeroCharacter.WATER_LEVEL - 0.35
 
 
 func _setup_vehicle_stats_and_seats() -> void:
@@ -511,7 +514,7 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 		return
 	if is_submerged_in_water():
 		_water_submerge_timer += delta
-		if (global_position.y if is_inside_tree() else position.y) <= HeroCharacter.WATER_LEVEL - 0.70 or _water_submerge_timer >= 0.40:
+		if _get_world_y() <= HeroCharacter.WATER_LEVEL - 0.70 or _water_submerge_timer >= 0.40:
 			hp = 0
 			_on_destroyed(-1)
 			return

@@ -540,9 +540,10 @@ func _physics_process(delta: float) -> void:
 				hero.skill_manager.step_server(delta, hero.latest_server_input, combat_ctx)
 
 			if hero.current_vehicle_id < 0 and not hero.weapons.is_empty():
-				var slot: int = clampi(hero.latest_server_input.selected_weapon_slot, 0, hero.weapons.size() - 1)
-				hero.selected_weapon_slot = slot
-				var w: WeaponBase = hero.weapons[slot] as WeaponBase
+				var incoming_slot: int = clampi(hero.latest_server_input.selected_weapon_slot, 0, hero.weapons.size() - 1)
+				if hero.should_apply_client_weapon_slot(incoming_slot, hero.latest_server_input.tick):
+					hero.selected_weapon_slot = incoming_slot
+				var w: WeaponBase = hero.weapons[hero.selected_weapon_slot] as WeaponBase
 				if w != null:
 					var was_reloading: bool = w.is_reloading
 					w.step_timers(delta, hero.latest_server_input)
@@ -562,7 +563,9 @@ func _physics_process(delta: float) -> void:
 					hero.current_vehicle_id,
 					hero.current_seat_index,
 					hero.knockback_seq,
-					hero.active_buffs
+					hero.active_buffs,
+					hero.selected_weapon_slot,
+					hero.forced_weapon_seq
 				)
 				NetworkManager.send_authoritative_state(hero.entity_id, packed)
 

@@ -107,7 +107,9 @@ static func pack_authoritative_state(
 	vehicle_id: int,
 	seat_idx: int,
 	knockback_seq: int,
-	buffs: int = 0
+	buffs: int = 0,
+	weapon_slot: int = -1,
+	forced_weapon_seq: int = 0
 ) -> PackedByteArray:
 	var buf := StreamPeerBuffer.new()
 	buf.put_u32(ack_tick)
@@ -124,6 +126,8 @@ static func pack_authoritative_state(
 	buf.put_8(clampi(seat_idx, -1, 127))
 	buf.put_u8(knockback_seq & 0xFF)
 	buf.put_u16(buffs & 0xFFFF)
+	buf.put_8(clampi(weapon_slot, -1, 127))
+	buf.put_u8(forced_weapon_seq & 0xFF)
 	return buf.data_array
 
 
@@ -141,6 +145,8 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 	var seat_idx: int = buf.get_8()
 	var knockback_seq: int = buf.get_u8()
 	var buffs: int = buf.get_u16() if bytes.size() >= 40 else 0
+	var weapon_slot: int = buf.get_8() if bytes.size() >= 41 else -1
+	var forced_weapon_seq: int = buf.get_u8() if bytes.size() >= 42 else 0
 	return {
 		"ack_tick": ack_tick,
 		"pos": pos,
@@ -152,6 +158,8 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 		"seat_idx": seat_idx,
 		"knockback_seq": knockback_seq,
 		"buffs": buffs,
+		"weapon_slot": weapon_slot,
+		"forced_weapon_seq": forced_weapon_seq,
 	}
 
 

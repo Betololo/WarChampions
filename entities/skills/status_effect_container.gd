@@ -540,6 +540,8 @@ static func _hero_has_sixth_sense_active(h: HeroCharacter) -> bool:
 		return false
 	if (h.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0:
 		return true
+	if (h.active_buffs & NetSerializer.BUFF_SIXTH_SENSE) != 0:
+		return true
 	return h.status_effects != null and h.status_effects.sixth_sense_timer > 0.0
 
 

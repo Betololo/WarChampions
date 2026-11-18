@@ -377,8 +377,11 @@ func _detonate() -> void:
 						var ray_to: Vector3 = h.global_position + Vector3(0.0, 1.25, 0.0)
 						var occ_q := PhysicsRayQueryParameters3D.create(ray_from, ray_to, 1)
 						var occ_hit: Dictionary = occ_space.intersect_ray(occ_q)
-						if not occ_hit.is_empty() and absf((occ_hit.get("normal", Vector3.UP) as Vector3).y) < 0.45:
-							continue
+						if not occ_hit.is_empty():
+							var occ_normal: Vector3 = occ_hit.get("normal", Vector3.UP)
+							var is_curb_or_ground: bool = occ_normal.y >= 0.45 and absf(h.global_position.y - global_position.y) < 1.8
+							if not is_curb_or_ground:
+								continue
 				var falloff: float = clampf(1.0 - (eff_dist / splash_radius) * 0.55, 0.45, 1.0)
 				var horiz_vec := Vector3(h.global_position.x - global_position.x, 0.0, h.global_position.z - global_position.z)
 				var horiz_dir: Vector3 = horiz_vec.normalized() if horiz_vec.length_squared() > 0.001 else Vector3.FORWARD

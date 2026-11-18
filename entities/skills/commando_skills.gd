@@ -114,9 +114,7 @@ func _execute_class_skill(slot_idx: int, rank: int, cmd: InputCmd, context: Dict
 			if owner_hero.status_effects != null:
 				owner_hero.status_effects.activate_poisoned_blade(10.0 + float(rank) * 3.0, 8.0 + float(rank))
 				if owner_hero.weapons.size() > 1 and (owner_hero.weapons[1] as WeaponBase).weapon_kind == WeaponBase.WeaponKind.KNIFE:
-					owner_hero.switch_weapon_slot(1)
-					if cmd != null:
-						cmd.selected_weapon_slot = 1
+					owner_hero.force_server_weapon_slot(1, cmd.tick if cmd != null else -1)
 				return true
 			return false
 

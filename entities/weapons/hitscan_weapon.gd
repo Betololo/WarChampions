@@ -126,6 +126,8 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var max_cleave_dist: float = max_range_m + 0.55
 			var best_melee_dist: float = max_cleave_dist + 0.01
 			var best_melee_enemy: HeroCharacter = null
+			var cleave_space: PhysicsDirectSpaceState3D = owner_hero.get_world_3d().direct_space_state if owner_hero.is_inside_tree() and owner_hero.get_world_3d() != null else null
+			var cleave_exclude: Array[RID] = [owner_hero.get_rid()]
 			for hid_key in heroes_by_id.keys():
 				var cand: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
 				if cand == null or not is_instance_valid(cand) or cand.is_defeated:
@@ -141,6 +143,16 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 				var to_cand_xz := Vector3(cand_pos.x - owner_pos.x, 0.0, cand_pos.z - owner_pos.z)
 				if to_cand_xz.length_squared() > 0.0001 and to_cand_xz.normalized().dot(shot_xz) < 0.45:
 					continue
+				if cleave_space != null and owner_pos.distance_squared_to(cand_pos) > 0.001:
+					var wall_q := PhysicsRayQueryParameters3D.create(
+						owner_pos + Vector3(0.0, 1.15, 0.0),
+						cand_pos + Vector3(0.0, 1.15, 0.0),
+						1,
+						cleave_exclude
+					)
+					var wall_hit: Dictionary = cleave_space.intersect_ray(wall_q)
+					if not wall_hit.is_empty():
+						continue
 				if d < best_melee_dist:
 					best_melee_dist = d
 					best_melee_enemy = cand
@@ -254,9 +266,13 @@ func _apply_hero_hit(
 			var init_pdmg: int = maxi(1, int(roundf(owner_hero.status_effects.get_poison_dps() * 0.5)))
 			var p_dealt: int = victim.apply_damage_server(init_pdmg, owner_hero.entity_id, false, false, true)
 			dealt += p_dealt
-			dmg += init_pdmg
+			if p_dealt > 0:
+				dmg += p_dealt
 			var v_pos: Vector3 = victim.global_position if victim.is_inside_tree() else victim.position
-			StatusEffectsVFX.spawn_cartoon_burst(owner_hero.get_parent(), v_pos + Vector3(0.0, 1.1, 0.0), "heal", 0.85)
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": v_pos + Vector3(0.0, 1.1, 0.0),
+				"kind": "heal",
+			})
 
 	# Frenzy Fire: Every 4th accurate MG hit heals Gunner
 	if weapon_kind == WeaponKind.MG and owner_hero.status_effects != null and owner_hero.status_effects.has_method("has_frenzy_fire") and owner_hero.status_effects.has_frenzy_fire():

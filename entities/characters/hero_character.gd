@@ -56,6 +56,11 @@ var aim_yaw: float = 0.0
 var aim_pitch: float = 0.0
 var selected_weapon_slot: int = 0
 var _last_weapon_slot: int = 1
+var forced_weapon_seq: int = 0
+var _last_forced_weapon_seq: int = 0
+var _pending_forced_slot: int = -1
+var _pending_forced_from_slot: int = -1
+var _pending_forced_cmd_tick: int = -1
 var _prev_seat_keys: int = 0
 var current_vehicle_id: int = -1
 var current_seat_index: int = -1
@@ -774,7 +779,11 @@ func _animate_character(delta: float) -> void:
 		_hips_pivot.rotation.x = 0.0
 		if current_seat_pose == "hidden":
 			return
-		var can_shoot_seat: bool = current_seat_can_shoot or current_seat_index > 0
+		var veh: VehicleBase = _resolve_current_vehicle()
+		var cur_seat: VehicleBase.SeatSlot = veh.get_seat(current_seat_index) if veh != null else null
+		var can_shoot_seat: bool = cur_seat.can_shoot if cur_seat != null else (current_seat_can_shoot or current_seat_index > 0)
+		if cur_seat != null and cur_seat.follow_turret:
+			can_shoot_seat = false
 		if _held_weapon_root != null:
 			_held_weapon_root.visible = can_shoot_seat
 		if current_seat_pose == "sit":
@@ -797,7 +806,6 @@ func _animate_character(delta: float) -> void:
 			_head_pivot.rotation.y = 0.0
 			_pose_held_weapon_and_arms(0.0, fire_blend, kick, reloading)
 		else:
-			var veh: VehicleBase = _resolve_current_vehicle()
 			if veh != null:
 				var veh_fwd: Vector3 = -veh.global_transform.basis.z
 				var veh_yaw: float = atan2(-veh_fwd.x, -veh_fwd.z)
@@ -1248,6 +1256,36 @@ func switch_weapon_slot(new_slot: int) -> void:
 	selected_weapon_slot = clamped
 
 
+## Forces a server-authoritative weapon switch (e.g. Poisoned Blade) and holds it against stale in-flight client inputs.
+func force_server_weapon_slot(target_slot: int, cmd_tick: int = -1) -> void:
+	var max_slot: int = maxi(0, weapons.size() - 1)
+	var clamped: int = clampi(target_slot, 0, max_slot)
+	var prev_slot: int = selected_weapon_slot
+	switch_weapon_slot(clamped)
+	forced_weapon_seq = (forced_weapon_seq + 1) & 0xFF
+	if forced_weapon_seq == 0:
+		forced_weapon_seq = 1
+	_pending_forced_slot = clamped
+	_pending_forced_from_slot = prev_slot
+	_pending_forced_cmd_tick = cmd_tick
+
+
+## Returns true if the incoming client weapon slot should overwrite selected_weapon_slot.
+func should_apply_client_weapon_slot(incoming_slot: int, cmd_tick: int) -> bool:
+	if _pending_forced_slot < 0:
+		return true
+	if incoming_slot == _pending_forced_slot:
+		_pending_forced_slot = -1
+		return true
+	if _pending_forced_cmd_tick >= 0 and cmd_tick > _pending_forced_cmd_tick + 45:
+		_pending_forced_slot = -1
+		return true
+	if _pending_forced_cmd_tick >= 0 and cmd_tick > _pending_forced_cmd_tick and incoming_slot != _pending_forced_from_slot:
+		_pending_forced_slot = -1
+		return true
+	return false
+
+
 func quick_switch_last_weapon() -> void:
 	var w_count: int = weapons.size()
 	if w_count <= 1:
@@ -1284,7 +1322,8 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 
 	aim_yaw = cmd.aim_yaw
 	aim_pitch = cmd.aim_pitch
-	selected_weapon_slot = cmd.selected_weapon_slot
+	if should_apply_client_weapon_slot(cmd.selected_weapon_slot, cmd.tick):
+		selected_weapon_slot = clampi(cmd.selected_weapon_slot, 0, weapons.size() - 1) if not weapons.is_empty() else cmd.selected_weapon_slot
 
 	_knockback_stun_timer = maxf(0.0, _knockback_stun_timer - delta)
 	if _knockback_stun_timer > 0.0 or velocity.y > 0.5:
@@ -1390,8 +1429,17 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	elif cmd.move_dir.length_squared() > 0.05 or not grounded:
 		is_emoting = false
 
-	# Update flags bitmask
-	active_flags = 0
+	# Update flags bitmask while preserving server-synced status bits
+	const PRESERVED_STATUS_FLAGS: int = (
+		NetSerializer.SNAP_BURNING
+		| NetSerializer.SNAP_POISONED
+		| NetSerializer.SNAP_SPEED_BOOST
+		| NetSerializer.SNAP_SIXTH_SENSE
+		| NetSerializer.SNAP_EAT_GRENADES
+		| NetSerializer.SNAP_MARKED_TARGET
+		| NetSerializer.SNAP_KEG_CONCUSSED
+	)
+	active_flags &= PRESERVED_STATUS_FLAGS
 	if is_on_floor():
 		active_flags |= NetSerializer.SNAP_GROUNDED
 	if is_parachuting:
@@ -1606,6 +1654,26 @@ func reconcile_with_server(state: Dictionary) -> void:
 	var auth_vel: Vector3 = state.get("vel", velocity)
 	var auth_flags: int = int(state.get("flags", 0))
 	active_buffs = int(state.get("buffs", active_buffs))
+	const AUTH_STATUS_MASK: int = (
+		NetSerializer.SNAP_STEALTHED
+		| NetSerializer.SNAP_SHIELDED
+		| NetSerializer.SNAP_BURNING
+		| NetSerializer.SNAP_POISONED
+		| NetSerializer.SNAP_SPEED_BOOST
+		| NetSerializer.SNAP_SIXTH_SENSE
+		| NetSerializer.SNAP_EAT_GRENADES
+		| NetSerializer.SNAP_MARKED_TARGET
+		| NetSerializer.SNAP_KEG_CONCUSSED
+	)
+	active_flags = (active_flags & ~AUTH_STATUS_MASK) | (auth_flags & AUTH_STATUS_MASK)
+	is_stealthed = (auth_flags & NetSerializer.SNAP_STEALTHED) != 0
+	var auth_weapon_slot: int = int(state.get("weapon_slot", -1))
+	var auth_forced_seq: int = int(state.get("forced_weapon_seq", 0))
+	var forced_weapon_applied: bool = false
+	if auth_forced_seq != _last_forced_weapon_seq and auth_weapon_slot >= 0:
+		_last_forced_weapon_seq = auth_forced_seq
+		switch_weapon_slot(auth_weapon_slot)
+		forced_weapon_applied = true
 	hp = int(state.get("hp", hp))
 	shield = int(state.get("shield", shield))
 	var prev_vid: int = current_vehicle_id
@@ -1686,6 +1754,8 @@ func reconcile_with_server(state: Dictionary) -> void:
 			is_on_floor(),
 			entry.prev_jump_held
 		)
+	if forced_weapon_applied and auth_weapon_slot >= 0:
+		selected_weapon_slot = clampi(auth_weapon_slot, 0, maxi(0, weapons.size() - 1))
 
 	if err_dist <= 4.0:
 		var new_delta: Vector3 = old_visual_pos - global_position
@@ -1828,6 +1898,7 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	is_defeated = false
 	collision_layer = 2
 	reset_weapons_full()
+	_pending_forced_slot = -1
 	_defeat_elapsed = 0.0
 	_airborne_fall_time = 0.0
 	_knockback_stun_timer = 0.0

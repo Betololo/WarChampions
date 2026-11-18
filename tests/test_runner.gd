@@ -5043,6 +5043,7 @@ func _test_phase9_all_9_fixes() -> void:
 
 
 func _test_phase10_all_8_items() -> void:
+	NetworkManager.shutdown_network()
 	var arena := Node3D.new()
 	add_child(arena)
 
@@ -5125,26 +5126,93 @@ func _test_phase10_all_8_items() -> void:
 	sniper_h.global_position = Vector3(0.0, 0.0, 0.0)
 	sniper_h.switch_weapon_slot(0)
 	var pb_cmd := InputCmd.new()
+	pb_cmd.tick = 200
 	pb_cmd.aim_yaw = 0.0
 	pb_cmd.aim_pitch = 0.0
 	pb_cmd.selected_weapon_slot = 0
-	var pb_exec_ok: bool = sniper_h.skill_manager._execute_class_skill(2, 5, pb_cmd, p10_ctx)
-	var auto_knife_ok: bool = (sniper_h.selected_weapon_slot == 1 and pb_cmd.selected_weapon_slot == 1)
+	pb_cmd.set_button(InputCmd.BTN_SKILL_3, true)
+	sniper_h.latest_server_input = pb_cmd
+	var pb_heal_vfx_seen: Array[bool] = [false]
+	var pb_vfx_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "hit_vfx" and str(payload.get("kind", "")) == "heal":
+			pb_heal_vfx_seen[0] = true
+	NetworkManager.game_event_received.connect(pb_vfx_cb)
+	sniper_h.skill_manager.step_server(1.0 / 60.0, sniper_h.latest_server_input, p10_ctx)
+	var pb_exec_ok: bool = sniper_h.status_effects.has_poisoned_blade()
+	var incoming_same_tick: int = clampi(sniper_h.latest_server_input.selected_weapon_slot, 0, sniper_h.weapons.size() - 1)
+	if sniper_h.should_apply_client_weapon_slot(incoming_same_tick, sniper_h.latest_server_input.tick):
+		sniper_h.selected_weapon_slot = incoming_same_tick
+	var auto_knife_ok: bool = (sniper_h.selected_weapon_slot == 1 and pb_cmd.selected_weapon_slot == 0)
 	var hp_before_cleave: int = target_s.hp
 	var knife_w: WeaponBase = sniper_h.weapons[1] as WeaponBase
 	knife_w.fire_server(pb_cmd, p10_ctx)
+	NetworkManager.game_event_received.disconnect(pb_vfx_cb)
 	var hp_after_cleave: int = target_s.hp
 	var immediate_poison_ok: bool = (
 		hp_after_cleave <= hp_before_cleave - 50
 		and target_s.status_effects.is_poisoned()
 		and (target_s.active_flags & NetSerializer.SNAP_POISONED) != 0
+		and pb_heal_vfx_seen[0]
 	)
 	for _pt in range(40):
 		target_s.status_effects._physics_process(0.016)
-	var dot_tick_ok: bool = target_s.hp < hp_after_cleave
+	var hp_after_dot: int = target_s.hp
+	var dot_tick_ok: bool = hp_after_dot < hp_after_cleave
+
+	# Verify remote ENet client Poisoned Blade weapon_slot sync & stale InputCmd protection
+	var stale_cmd := InputCmd.new()
+	stale_cmd.tick = 201
+	stale_cmd.selected_weapon_slot = 0
+	sniper_h.latest_server_input = stale_cmd
+	var incoming_next_tick: int = clampi(sniper_h.latest_server_input.selected_weapon_slot, 0, sniper_h.weapons.size() - 1)
+	if sniper_h.should_apply_client_weapon_slot(incoming_next_tick, sniper_h.latest_server_input.tick):
+		sniper_h.selected_weapon_slot = incoming_next_tick
+	sniper_h.simulate_movement(stale_cmd, 1.0 / 60.0)
+	var server_holds_knife_ok: bool = (sniper_h.selected_weapon_slot == 1)
+	var auth_pb_bytes: PackedByteArray = NetSerializer.pack_authoritative_state(
+		200, sniper_h.global_position, Vector3.ZERO, sniper_h.active_flags,
+		sniper_h.hp, sniper_h.shield, -1, -1, 0, sniper_h.active_buffs,
+		sniper_h.selected_weapon_slot, sniper_h.forced_weapon_seq
+	)
+	var auth_pb_dec: Dictionary = NetSerializer.unpack_authoritative_state(auth_pb_bytes)
+	var remote_com := HeroCharacter.new()
+	remote_com.setup_identity(10009, "RemoteCom", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	arena.add_child(remote_com)
+	remote_com.switch_weapon_slot(0)
+	remote_com.reconcile_with_server(auth_pb_dec)
+	var remote_synced_knife_ok: bool = (remote_com.selected_weapon_slot == 1)
+	var ack_cmd := InputCmd.new()
+	ack_cmd.tick = 202
+	ack_cmd.selected_weapon_slot = 1
+	sniper_h.simulate_movement(ack_cmd, 1.0 / 60.0)
+	var back_cmd := InputCmd.new()
+	back_cmd.tick = 203
+	back_cmd.selected_weapon_slot = 0
+	sniper_h.simulate_movement(back_cmd, 1.0 / 60.0)
+	var manual_switch_back_ok: bool = (sniper_h.selected_weapon_slot == 0)
+	remote_com.queue_free()
+
+	# Verify Layer-1 wall blocks melee cleave cone fallback
+	var melee_wall := StaticBody3D.new()
+	melee_wall.collision_layer = 1
+	var mw_col := CollisionShape3D.new()
+	var mw_box := BoxShape3D.new()
+	mw_box.size = Vector3(4.0, 3.0, 0.3)
+	mw_col.shape = mw_box
+	mw_col.position = Vector3(0.35, 1.5, -1.0)
+	melee_wall.add_child(mw_col)
+	arena.add_child(melee_wall)
+	target_s.respawn_at(Vector3(0.70, 0.0, -1.95), 0.0)
+	await get_tree().physics_frame
+	var hp_before_walled_cleave: int = target_s.hp
+	knife_w.fire_server(pb_cmd, p10_ctx)
+	var melee_wall_blocked_ok: bool = (target_s.hp == hp_before_walled_cleave)
+	melee_wall.queue_free()
+
 	_assert(
-		pb_exec_ok and auto_knife_ok and immediate_poison_ok and dot_tick_ok,
-		"Phase 10.2: Poisoned Blade auto-equips Knife, melee cleave cone hits off-axis target (%d->%d->%d), and applies immediate + DoT SNAP_POISONED" % [hp_before_cleave, hp_after_cleave, target_s.hp]
+		pb_exec_ok and auto_knife_ok and immediate_poison_ok and dot_tick_ok
+		and server_holds_knife_ok and remote_synced_knife_ok and manual_switch_back_ok and melee_wall_blocked_ok,
+		"Phase 10.2: Poisoned Blade auto-equips Knife (syncs remote client), broadcasts heal VFX, melee cleave hits (%d->%d->%d), and Layer-1 wall blocks cleave" % [hp_before_cleave, hp_after_cleave, hp_after_dot]
 	)
 
 	# 3. Commando Stealth 10m detection radius, enemy reveal cloak_val <= 0.15, and local Commando uncloak within 10m
@@ -5273,6 +5341,17 @@ func _test_phase10_all_8_items() -> void:
 		apc.step_vehicle_server(1.0 / 60.0, apc_heroes, apc_ctx)
 		apc._process(1.0 / 60.0)
 	var apc_mg_dealt: int = victim_hp_before - apc_victim.hp
+	apc_gun._animate_character(1.0 / 60.0)
+	var apc_gunner_hides_personal_wep: bool = (apc_gun._held_weapon_root == null or not apc_gun._held_weapon_root.visible)
+
+	var apc_drv_enclosed_while_seated: bool = (apc.get_driver_hero(apc_heroes) == apc_drv and VehicleBase.is_hero_enclosed(apc_drv, {911: apc}))
+
+	# Solo gunner without driver must step cleanly without null errors and still fire turret MG
+	apc.exit_hero(apc_drv)
+	apc._driver_fire_cd = 0.0
+	var victim_hp_before_solo: int = apc_victim.hp
+	apc.step_vehicle_server(1.0 / 60.0, apc_heroes, apc_ctx)
+	var solo_gunner_mg_ok: bool = (apc.get_driver_hero(apc_heroes) == null and apc_victim.hp < victim_hp_before_solo)
 
 	var apc_mis: Array[MeshInstance3D] = []
 	_collect_mesh_instances(apc._visual_root, apc_mis)
@@ -5287,17 +5366,18 @@ func _test_phase10_all_8_items() -> void:
 
 	_assert(
 		apc.seats.size() == 2 and apc_s0 == 0 and apc_s1 == 1
-		and apc.get_driver_hero(apc_heroes) == apc_drv and apc.get_gunner_hero(apc_heroes) == apc_gun
-		and VehicleBase.is_hero_enclosed(apc_drv, {911: apc}) and not VehicleBase.is_hero_enclosed(apc_gun, {911: apc})
+		and apc_drv_enclosed_while_seated
+		and apc.get_gunner_hero(apc_heroes) == apc_gun
+		and not VehicleBase.is_hero_enclosed(apc_drv, {911: apc}) and not VehicleBase.is_hero_enclosed(apc_gun, {911: apc})
 		and apc.seats[1].follow_turret and absf(apc.turret_yaw - (-PI * 0.5)) < 0.02
 		and apc._turret_node != null and absf(apc._turret_node.rotation.y - apc._effective_turret_local_yaw()) < 0.05
 		and apc._barrel_pivot != null and apc._wheels.size() == 4
 		and apc_mg_dealt >= VehicleAPC.MG_HERO_DMG
+		and apc_gunner_hides_personal_wep and solo_gunner_mg_ok
 		and apc_bad_vol == 0 and apc_bad_alpha == 0
 		and HUDController.get_vehicle_display_name(VehicleBase.VehicleType.APC) == "BLINDADO",
-		"Phase 10.5: VehicleAPC enclosed driver + 360-deg turret gunner fires mounted MG (dealt=%d dmg), sculpted turret/wheels, and HUD BLINDADO" % apc_mg_dealt
+		"Phase 10.5: VehicleAPC enclosed driver + 360-deg turret gunner fires mounted MG (dealt=%d dmg), hides personal weapon, supports solo gunner, and HUD BLINDADO" % apc_mg_dealt
 	)
-	apc.exit_hero(apc_drv)
 	apc.exit_hero(apc_gun)
 
 	# 6. Ground vehicles (Jeep, Tank, Motorcycle, APC) stall & destroy in water (y <= -0.75) while Boat floats normally
@@ -5393,9 +5473,32 @@ func _test_phase10_all_8_items() -> void:
 	for mk in hud10._marker_pool:
 		if mk.visible:
 			mate_markers += 1
+
+	# Remote ENet Soldier with only active_buffs = BUFF_SIXTH_SENSE (no local timer, active_flags = 0)
+	var ss_remote_sol := HeroCharacter.new()
+	ss_remote_sol.setup_identity(10024, "P10RemoteSol", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(ss_remote_sol)
+	ss_remote_sol.global_position = Vector3(0.0, 0.1, 0.0)
+	ss_remote_sol.active_flags = 0
+	ss_remote_sol.active_buffs = NetSerializer.BUFF_SIXTH_SENSE
+	ss_remote_sol.status_effects.sixth_sense_timer = 0.0
+	var remote_buff_ss_ok: bool = (
+		StatusEffectContainer._hero_has_sixth_sense_active(ss_remote_sol)
+		and StatusEffectContainer.is_enemy_sensed_by_team(ss_stealth_enemy, NetworkManager.TEAM_ROYAL, {10024: ss_remote_sol, 10022: ss_stealth_enemy}, ss_remote_sol)
+	)
+	ss_remote_sol.reconcile_with_server({
+		"ack_tick": 1, "pos": ss_remote_sol.global_position, "vel": Vector3.ZERO,
+		"flags": NetSerializer.SNAP_SIXTH_SENSE, "hp": 110, "shield": 0,
+		"vehicle_id": -1, "seat_idx": -1, "knockback_seq": 0, "buffs": NetSerializer.BUFF_SIXTH_SENSE,
+	})
+	ss_remote_sol.simulate_movement(InputCmd.new(), 1.0 / 60.0)
+	var remote_flags_preserved_ok: bool = ((ss_remote_sol.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0 and (ss_remote_sol.active_buffs & NetSerializer.BUFF_SIXTH_SENSE) != 0)
+	ss_remote_sol.queue_free()
+
 	_assert(
-		sensed_near_ok and sensed_far_ignored and distant_xray_ok and mate_markers == 1,
-		"Phase 10.7: Soldier Sixth Sense reveals 45m Stealthed Commando to 350m-distant teammate with HUD marker & X-Ray overlay (markers=%d)" % mate_markers
+		sensed_near_ok and sensed_far_ignored and distant_xray_ok and mate_markers == 1
+		and remote_buff_ss_ok and remote_flags_preserved_ok,
+		"Phase 10.7: Soldier Sixth Sense reveals 45m Stealthed Commando to 350m-distant teammate & remote Soldier via BUFF_SIXTH_SENSE (markers=%d)" % mate_markers
 	)
 
 	# 8. Explosives (BAZOOKA_ROCKET 8.0m, TNT_SATCHEL 9.0m, FRAG_GRENADE 7.5m) hit full splash radius without curb self-occlusion & launch upward (vy >= 9.0)
@@ -5441,9 +5544,26 @@ func _test_phase10_all_8_items() -> void:
 		if exp_enemy.hp >= exp_enemy.max_hp or exp_enemy.velocity.y < 9.0:
 			all_exp_ok = false
 
+	# Horizontal ceiling/floor slab between stories (y_diff >= 2.0m) MUST occlude splash
+	var ceiling_body := StaticBody3D.new()
+	ceiling_body.collision_layer = 1
+	var ceiling_col := CollisionShape3D.new()
+	var ceiling_box := BoxShape3D.new()
+	ceiling_box.size = Vector3(8.0, 0.3, 8.0)
+	ceiling_col.shape = ceiling_box
+	ceiling_col.position = Vector3(70.0, 2.0, -3.0)
+	ceiling_body.add_child(ceiling_col)
+	arena.add_child(ceiling_body)
+	exp_enemy.respawn_at(Vector3(70.0, 2.5, -3.0), 0.0)
+	await get_tree().physics_frame
+	var ceil_proj := ProjectileEntity.spawn_server_projectile(ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET, 10030, NetworkManager.TEAM_ROYAL, Vector3(70.0, 0.08, 0.0), Vector3.ZERO, exp_ctx, -1.0, arena)
+	ceil_proj._detonate()
+	var ceiling_occluded_ok: bool = (exp_enemy.hp == exp_enemy.max_hp and exp_enemy.velocity.length() < 0.01)
+	ceiling_body.queue_free()
+
 	_assert(
-		all_exp_ok,
-		"Phase 10.8: Bazooka (8.0m), TNT (9.0m), and Frag (7.5m) hit outer-radius targets across low curb without self-occlusion and launch upward (vy=%s)" % str(exp_vy_log)
+		all_exp_ok and ceiling_occluded_ok,
+		"Phase 10.8: Bazooka (8.0m), TNT (9.0m), and Frag (7.5m) cross low curb (vy=%s), while horizontal ceiling slab occludes upstairs target" % str(exp_vy_log)
 	)
 
 	arena.queue_free()
