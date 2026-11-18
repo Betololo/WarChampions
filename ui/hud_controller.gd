@@ -1995,6 +1995,9 @@ func _process(delta: float) -> void:
 			_minimap.queue_redraw()
 		return
 
+	if _mortar_targeting_active and (_local_hero.is_defeated or _local_hero.current_vehicle_id >= 0):
+		set_mortar_targeting_mode(false)
+
 	if _poison_tint_rect != null:
 		var is_poisoned: bool = (_local_hero.active_flags & NetSerializer.SNAP_POISONED) != 0 and not _local_hero.is_defeated
 		_poison_tint_rect.visible = is_poisoned
@@ -2009,7 +2012,7 @@ func _process(delta: float) -> void:
 
 	# Update Portrait sprite
 	var t_prefix: String = "royal" if _local_hero.team == NetworkManager.TEAM_ROYAL else "national"
-	var p_key: String = "portrait_%s_%d" % [t_prefix, clampi(_local_hero.class_id, 0, 3)]
+	var p_key: String = "portrait_%s_%d" % [t_prefix, clampi(_local_hero.class_id, 0, 4)]
 	if p_key != _last_portrait_key:
 		_last_portrait_key = p_key
 		_portrait_tex.texture = CartoonAssets.get_texture(p_key)

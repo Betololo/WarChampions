@@ -26,8 +26,8 @@ const ALL_TEXTURE_KEYS: Array[String] = [
 	"veh_olive", "veh_panzer", "veh_steel", "veh_track", "veh_tire",
 	"veh_wood_deck", "veh_plane_royal", "veh_plane_national", "veh_sandbag",
 	"flag_royal", "flag_national", "icon_hp", "icon_ammo",
-	"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3",
-	"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3",
+	"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3", "portrait_royal_4",
+	"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3", "portrait_national_4",
 ]
 
 const SHADER_PATHS: Array[String] = [
@@ -64,11 +64,11 @@ static func warm_textures() -> void:
 		return
 	for k in ALL_TEXTURE_KEYS:
 		CartoonAssets.get_texture(k)
-	for wk in range(11):
+	for wk in range(14):
 		CartoonAssets.get_texture("icon_weapon_%d" % wk)
 		for arch in range(3):
 			CartoonAssets.get_texture("icon_weapon_%d_%d" % [wk, arch])
-	for cls in range(4):
+	for cls in range(5):
 		var sk_count: int = 6 if cls == NetworkManager.CLASS_COMMANDO else 5
 		for sk in range(sk_count):
 			CartoonAssets.get_texture("icon_skill_%d_%d" % [cls, sk])

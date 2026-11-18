@@ -8607,11 +8607,12 @@ func _test_phase12_task4_field_engineer() -> void:
 	enemy_hero.position = Vector3(4.0, 0.0, -2.2)
 	arena.add_child(enemy_hero)
 	var veh_arr_t: Array[VehicleBase] = [ally_jeep]
+	var veh_by_id_t: Dictionary = {61: ally_jeep}
 	var heroes_dict_t: Dictionary = {401: eng, 403: enemy_hero}
 	var ctx_t: Dictionary = {
-		"heroes": heroes_dict_t,
 		"heroes_by_id": heroes_dict_t,
 		"vehicles": veh_arr_t,
+		"vehicles_by_id": veh_by_id_t,
 		"projectiles_root": arena,
 		"vehicles_root": arena,
 	}
@@ -8716,12 +8717,14 @@ func _test_phase12_task4_field_engineer() -> void:
 	# Skill 3: Morteiro via Minimapa (0 CD until target chosen -> 1.5s timer -> 80 max AoE dmg)
 	enemy_hero.hp = enemy_hero.max_hp
 	enemy_hero.position = Vector3(16.0, 0.0, -16.0)
+	var bot_mortar_target: Vector3 = sm._pick_bot_mortar_target(ctx_t)
+	var bot_mortar_target_ok: bool = bot_mortar_target != Vector3.INF and bot_mortar_target.distance_to(enemy_hero.position) < 0.1
 	sk_cmd.buttons = InputCmd.BTN_SKILL_4
 	sm.step_server(0.05, sk_cmd, ctx_t)
-	var mortar_deferred_ok: bool = is_equal_approx(sm.skill_cooldowns[3], 0.0)
+	var mortar_deferred_ok: bool = is_equal_approx(sm.skill_cooldowns[3], 0.0) and sm._mortar_pending_hero_aim and sm.blocks_weapon_fire()
 	sk_cmd.buttons = 0
 	var fired_m: bool = sm.fire_mortar_at(enemy_hero.position, ctx_t)
-	var mortar_cd_started_ok: bool = fired_m and sm.skill_cooldowns[3] > 17.0
+	var mortar_cd_started_ok: bool = fired_m and sm.skill_cooldowns[3] > 17.0 and not sm.blocks_weapon_fire()
 	for _i in range(17):
 		eng.status_effects._physics_process(0.1)
 		sm.step_server(0.1, sk_cmd, ctx_t)
@@ -8743,11 +8746,133 @@ func _test_phase12_task4_field_engineer() -> void:
 	_assert(
 		build_blocks_ok and trench_ok and trench_cd_ok
 		and turret_ok and shield_blocks_ok and shield_dmg_blocked_ok and turret_cd_ok
-		and armor_ok and mortar_deferred_ok and mortar_cd_started_ok and mortar_hit_ok and invuln_ok,
-		"Phase 12.4d: 5 Skills (blk=%s tr=%s trcd=%s tur=%s shb=%s shd=%s tcd=%s arm=%s md=%s mcd=%s mh=%s inv=%s)" % [
+		and armor_ok and bot_mortar_target_ok and mortar_deferred_ok and mortar_cd_started_ok and mortar_hit_ok and invuln_ok,
+		"Phase 12.4d: 5 Skills (blk=%s tr=%s trcd=%s tur=%s shb=%s shd=%s tcd=%s arm=%s bmt=%s md=%s mcd=%s mh=%s inv=%s)" % [
 			str(build_blocks_ok), str(trench_ok), str(trench_cd_ok), str(turret_ok),
 			str(shield_blocks_ok), str(shield_dmg_blocked_ok), str(turret_cd_ok), str(armor_ok),
-			str(mortar_deferred_ok), str(mortar_cd_started_ok), str(mortar_hit_ok), str(invuln_ok)
+			str(bot_mortar_target_ok), str(mortar_deferred_ok), str(mortar_cd_started_ok), str(mortar_hit_ok), str(invuln_ok)
+		]
+	)
+
+	# 5. Regression checks for Phase 12.4 review fixes
+	# 5a. Client TrenchEntity keeps solid collision_layer=1 + CollisionShape3Ds & clears on disable_collision()
+	var vis_trench := EngineerSkills.TrenchEntity.new()
+	vis_trench._is_visual_only = true
+	vis_trench.trench_id = 999
+	arena.add_child(vis_trench)
+	var vis_col_count: int = 0
+	for ch in vis_trench.get_children():
+		if ch is CollisionShape3D:
+			vis_col_count += 1
+	var vis_trench_ok: bool = (
+		vis_trench.collision_layer == 1
+		and vis_trench.is_in_group("client_trenches")
+		and not vis_trench.is_in_group("destructible")
+		and vis_col_count >= 5
+	)
+	vis_trench.disable_collision()
+	var vis_trench_clean_ok: bool = (vis_trench.collision_layer == 0 and not vis_trench.is_in_group("client_trenches"))
+
+	# 5b. Defeat & vehicle entry clear active build channel & mortar targeting + broadcast mortar_mode=false
+	sm.skill_cooldowns[0] = 0.0
+	sm.skill_cooldowns[1] = 0.0
+	sm.skill_cooldowns[3] = 0.0
+	var mortar_events: Array[Dictionary] = []
+	var ev_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "mortar_mode":
+			mortar_events.append(payload)
+	NetworkManager.game_event_received.connect(ev_cb)
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	var mortar_armed_ok: bool = sm._mortar_pending_hero_aim and sm.blocks_weapon_fire()
+	eng.apply_damage_server(999, 403, false)
+	var defeat_cleared_mortar_ok: bool = (
+		not sm._mortar_pending_hero_aim
+		and not sm.blocks_weapon_fire()
+		and not mortar_events.is_empty()
+		and mortar_events[mortar_events.size() - 1].get("active", true) == false
+	)
+	eng.respawn_at(Vector3.ZERO, 0.0)
+	sk_cmd.buttons = InputCmd.BTN_SKILL_1
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	var build_started_ok: bool = sm.is_building()
+	eng.apply_damage_server(999, 403, false)
+	var defeat_cleared_build_ok: bool = not sm.is_building() and not sm.blocks_weapon_fire()
+	eng.respawn_at(Vector3.ZERO, 0.0)
+	sm.skill_cooldowns[3] = 0.0
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	ally_jeep.try_enter_hero(eng)
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	var vehicle_cleared_mortar_ok: bool = not sm._mortar_pending_hero_aim and not sm.blocks_weapon_fire()
+	ally_jeep.exit_hero(eng)
+	NetworkManager.game_event_received.disconnect(ev_cb)
+
+	# 5c. Turret vehicle ID allocator does not collide at cap 250
+	var cap_jeep := VehicleJeep.new()
+	cap_jeep.id = 250
+	arena.add_child(cap_jeep)
+	veh_arr_t.append(cap_jeep)
+	veh_by_id_t[250] = cap_jeep
+	sm._active_turret = null
+	sm.skill_cooldowns[1] = 0.0
+	sk_cmd.buttons = InputCmd.BTN_SKILL_2
+	sm.step_server(0.05, sk_cmd, ctx_t)
+	sk_cmd.buttons = 0
+	for _i in range(22):
+		sm.step_server(0.1, sk_cmd, ctx_t)
+	var turret_id_ok: bool = (
+		sm._active_turret != null
+		and is_instance_valid(sm._active_turret)
+		and sm._active_turret.id >= 41
+		and sm._active_turret.id != 250
+		and veh_by_id_t.get(sm._active_turret.id, null) == sm._active_turret
+		and veh_by_id_t.get(250, null) == cap_jeep
+	)
+
+	# 5d. HUD portrait_royal_4 & mortar targeting auto-cancel on defeat
+	var eng_hud := HUDController.new()
+	arena.add_child(eng_hud)
+	eng_hud.set_local_hero(eng)
+	eng_hud.set_mortar_targeting_mode(true, func(_p: Vector3) -> void: pass)
+	eng_hud._process(0.016)
+	var hud_portrait_ok: bool = (
+		eng_hud._last_portrait_key == "portrait_royal_4"
+		and eng_hud._portrait_tex.texture == CartoonAssets.get_texture("portrait_royal_4")
+		and eng_hud.is_mortar_targeting_active()
+	)
+	eng.apply_damage_server(999, 403, false)
+	eng_hud._process(0.016)
+	var hud_mortar_cancel_ok: bool = not eng_hud.is_mortar_targeting_active()
+
+	# 5e. GameCache.warm_textures() warms Engineer portrait, weapons 11..13 & skills 4_0..4_4
+	CartoonAssets._cache.clear()
+	GameCache.clear_all()
+	GameCache.warm_textures()
+	var cache_warm_ok: bool = (
+		GameCache.ALL_TEXTURE_KEYS.has("portrait_royal_4")
+		and GameCache.ALL_TEXTURE_KEYS.has("portrait_national_4")
+		and CartoonAssets._cache.has("portrait_royal_4")
+		and CartoonAssets._cache.has("portrait_national_4")
+		and CartoonAssets._cache.has("icon_weapon_11_0")
+		and CartoonAssets._cache.has("icon_weapon_12_0")
+		and CartoonAssets._cache.has("icon_weapon_13_0")
+		and CartoonAssets._cache.has("icon_skill_4_0")
+		and CartoonAssets._cache.has("icon_skill_4_4")
+	)
+
+	_assert(
+		vis_trench_ok and vis_trench_clean_ok
+		and mortar_armed_ok and defeat_cleared_mortar_ok and build_started_ok and defeat_cleared_build_ok and vehicle_cleared_mortar_ok
+		and turret_id_ok and hud_portrait_ok and hud_mortar_cancel_ok and cache_warm_ok,
+		"Phase 12.4e: Review fixes (vt=%s vtc=%s ma=%s dcm=%s bs=%s dcb=%s vcm=%s tid=%s hp=%s hmc=%s cw=%s)" % [
+			str(vis_trench_ok), str(vis_trench_clean_ok), str(mortar_armed_ok),
+			str(defeat_cleared_mortar_ok), str(build_started_ok), str(defeat_cleared_build_ok),
+			str(vehicle_cleared_mortar_ok), str(turret_id_ok), str(hud_portrait_ok),
+			str(hud_mortar_cancel_ok), str(cache_warm_ok)
 		]
 	)
 

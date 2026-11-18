@@ -57,7 +57,7 @@ class TrenchEntity:
 
 	func _ready() -> void:
 		if _is_visual_only:
-			collision_layer = 0
+			collision_layer = 1
 			collision_mask = 0
 			add_to_group("client_trenches")
 		else:
@@ -74,7 +74,7 @@ class TrenchEntity:
 		mi.position = pos
 		mi.rotation.x = rot_x
 		add_child(mi)
-		if not _is_visual_only and add_box_col != Vector3.ZERO:
+		if add_box_col != Vector3.ZERO:
 			var col := CollisionShape3D.new()
 			var box := BoxShape3D.new()
 			box.size = add_box_col
@@ -149,15 +149,22 @@ class TrenchEntity:
 			var sz: float = 2.10 - float(step_i) * 0.45
 			_add_part(step_mesh, wood_mat, Vector3(0.0, sy, sz))
 
-		if not _is_visual_only:
-			# Smooth sloped collider spanning ground (z=2.34, y=0) up to firing deck (z=0.54, y=1.55)
-			var ramp_col := CollisionShape3D.new()
-			var ramp_box := BoxShape3D.new()
-			ramp_box.size = Vector3(2.50, 0.22, 2.38)
-			ramp_col.shape = ramp_box
-			ramp_col.position = Vector3(0.0, 0.72, 1.44)
-			ramp_col.rotation.x = atan2(1.55, 1.80)
-			add_child(ramp_col)
+		# Smooth sloped collider spanning ground (z=2.34, y=0) up to firing deck (z=0.54, y=1.55)
+		var ramp_col := CollisionShape3D.new()
+		var ramp_box := BoxShape3D.new()
+		ramp_box.size = Vector3(2.50, 0.22, 2.38)
+		ramp_col.shape = ramp_box
+		ramp_col.position = Vector3(0.0, 0.72, 1.44)
+		ramp_col.rotation.x = atan2(1.55, 1.80)
+		add_child(ramp_col)
+
+	func disable_collision() -> void:
+		is_destroyed = true
+		collision_layer = 0
+		collision_mask = 0
+		remove_from_group("destructible")
+		remove_from_group("trenches")
+		remove_from_group("client_trenches")
 
 	func apply_damage_server(
 		amount: int,
@@ -171,10 +178,7 @@ class TrenchEntity:
 		var dealt: int = mini(hp, amount)
 		hp = maxi(0, hp - amount)
 		if hp <= 0:
-			is_destroyed = true
-			collision_layer = 0
-			remove_from_group("destructible")
-			remove_from_group("trenches")
+			disable_collision()
 			if on_destroyed.is_valid():
 				on_destroyed.call(trench_id)
 			NetworkManager.broadcast_game_event("trench_destroyed", {
@@ -210,12 +214,21 @@ func _init() -> void:
 	skill_max_cooldowns = [18.0, 18.0, 20.0, 18.0, 18.0]
 
 
+func _ready() -> void:
+	super._ready()
+	if owner_hero != null:
+		if not owner_hero.defeated.is_connected(_on_owner_defeated):
+			owner_hero.defeated.connect(_on_owner_defeated)
+		if not owner_hero.respawned.is_connected(_on_owner_respawned):
+			owner_hero.respawned.connect(_on_owner_respawned)
+
+
 func _defers_cooldown_until_exit(slot_idx: int) -> bool:
 	return slot_idx in [0, 1, 2, 3]
 
 
 func blocks_weapon_fire() -> bool:
-	return _active_build_slot >= 0
+	return _active_build_slot >= 0 or _mortar_pending_hero_aim
 
 
 func is_building() -> bool:
@@ -228,10 +241,44 @@ func get_build_progress_fraction() -> float:
 	return clampf(1.0 - (_build_timer / _build_total), 0.0, 1.0)
 
 
+func _clear_mortar_targeting(broadcast: bool = true) -> void:
+	if not _mortar_pending_hero_aim:
+		return
+	_mortar_pending_hero_aim = false
+	if broadcast and owner_hero != null:
+		NetworkManager.broadcast_game_event("mortar_mode", {
+			"hero_id": owner_hero.entity_id,
+			"active": false,
+		})
+
+
+func _check_interrupt_states() -> void:
+	if owner_hero == null or owner_hero.is_defeated:
+		if _active_build_slot >= 0:
+			_cancel_build_channel()
+		_clear_mortar_targeting(true)
+		return
+	if owner_hero.current_vehicle_id >= 0:
+		if _active_build_slot >= 0 and (_active_build_slot != 2 or _build_started_on_foot):
+			_cancel_build_channel()
+		_clear_mortar_targeting(true)
+
+
+func _on_owner_defeated(_killer_id: int, _explosive: bool) -> void:
+	_cancel_build_channel()
+	_clear_mortar_targeting(true)
+
+
+func _on_owner_respawned() -> void:
+	_cancel_build_channel()
+	_clear_mortar_targeting(true)
+
+
 func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_skills: bool = true) -> void:
 	_last_context = context
 	_mortar_stepped_frame = Engine.get_physics_frames()
 	_step_pending_mortars(delta, context)
+	_check_interrupt_states()
 	_step_active_build(delta, context)
 
 	# Keep deployed references clear if freed or queued for deletion
@@ -244,6 +291,7 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_s
 
 
 func _physics_process(delta: float) -> void:
+	_check_interrupt_states()
 	if Engine.get_physics_frames() != _mortar_stepped_frame and not _pending_mortars.is_empty():
 		_step_pending_mortars(delta, _last_context)
 
@@ -319,6 +367,8 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 			return true
 
 		3: # Morteiro via Minimapa
+			if owner_hero.current_vehicle_id >= 0:
+				return false
 			var is_bot: bool = bool(NetworkManager.players_info.get(owner_hero.entity_id, {}).get("is_bot", false))
 			if is_bot:
 				var bot_target: Vector3 = _pick_bot_mortar_target(context)
@@ -373,7 +423,7 @@ func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 	_pending_mortars.append({
 		"pos": strike_pos,
 		"timer": MORTAR_DELAY,
-		"heroes": context.get("heroes", {}),
+		"heroes": context.get("heroes_by_id", context.get("heroes", {})),
 		"vehicles": context.get("vehicles", []),
 		"root": context.get("projectiles_root", owner_hero.get_parent()),
 	})
@@ -391,7 +441,7 @@ func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 func _pick_bot_mortar_target(context: Dictionary) -> Vector3:
 	if owner_hero == null:
 		return Vector3.INF
-	var heroes: Dictionary = context.get("heroes", {})
+	var heroes: Dictionary = context.get("heroes_by_id", context.get("heroes", {}))
 	var best_pos: Vector3 = Vector3.INF
 	var best_dist: float = 95.0
 	var my_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
@@ -426,7 +476,7 @@ func _detonate_mortar(strike: Dictionary, context: Dictionary) -> void:
 	var attacker_id: int = owner_hero.entity_id if owner_hero != null else -1
 	var attacker_team: int = owner_hero.team if owner_hero != null else 0
 
-	var heroes_dict: Dictionary = context.get("heroes", strike.get("heroes", {}))
+	var heroes_dict: Dictionary = context.get("heroes_by_id", context.get("heroes", strike.get("heroes", {})))
 	for hid in heroes_dict.keys():
 		var h: HeroCharacter = heroes_dict[hid] as HeroCharacter
 		if h == null or not is_instance_valid(h) or h.is_defeated:
@@ -542,11 +592,18 @@ func _complete_turret_spawn(context: Dictionary) -> void:
 	var yaw: float = float(deploy["yaw"])
 
 	var vehicles_arr: Array = context.get("vehicles", [])
-	var max_vid: int = 40
+	var vehicles_by_id: Dictionary = context.get("vehicles_by_id", {})
+	var used_ids: Dictionary = {}
+	for k in vehicles_by_id.keys():
+		var kv: Variant = vehicles_by_id[k]
+		if kv is VehicleBase and is_instance_valid(kv) and not (kv as VehicleBase).is_queued_for_deletion():
+			used_ids[int(k)] = true
 	for existing in vehicles_arr:
-		if existing is VehicleBase and is_instance_valid(existing):
-			max_vid = maxi(max_vid, (existing as VehicleBase).id)
-	var turret_vid: int = clampi(max_vid + 1, 1, 250)
+		if existing is VehicleBase and is_instance_valid(existing) and not (existing as VehicleBase).is_queued_for_deletion():
+			used_ids[(existing as VehicleBase).id] = true
+	var turret_vid: int = 41
+	while used_ids.has(turret_vid):
+		turret_vid += 1
 
 	var turret := VehicleShieldedMGScript.new() as VehicleShieldedMG
 	turret.id = turret_vid
@@ -569,6 +626,8 @@ func _complete_turret_spawn(context: Dictionary) -> void:
 	_active_turret = turret
 	if not vehicles_arr.has(turret):
 		vehicles_arr.append(turret)
+	if context.has("vehicles_by_id"):
+		vehicles_by_id[turret_vid] = turret
 
 	NetworkManager.broadcast_game_event("eng_turret_spawn", {
 		"vehicle_id": turret.id,

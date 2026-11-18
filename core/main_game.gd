@@ -458,8 +458,12 @@ func _clear_match_entities() -> void:
 		if vb == null or not is_instance_valid(vb):
 			remove_vids.append(int(vid_key))
 			continue
-		if vb.vehicle_type == VehicleBase.VehicleType.MOUNTED_MG:
+		if vb.is_deployable or vb.vehicle_type == VehicleBase.VehicleType.MOUNTED_MG:
 			remove_vids.append(int(vid_key))
+			if vb.has_method("disable_shield_collision"):
+				vb.disable_shield_collision()
+			if map_instance != null and map_instance.spawned_vehicles.has(vb):
+				map_instance.spawned_vehicles.erase(vb)
 			vb.queue_free()
 			continue
 		if not reset_vehs.has(vb):
@@ -467,12 +471,22 @@ func _clear_match_entities() -> void:
 	for rvid in remove_vids:
 		vehicles_by_id.erase(rvid)
 	if is_inside_tree():
-		for t_node in get_tree().get_nodes_in_group("trenches"):
-			if is_instance_valid(t_node):
-				t_node.queue_free()
+		for grp in ["trenches", "client_trenches", "mortar_rings", "deployed_turrets"]:
+			for g_node in get_tree().get_nodes_in_group(grp):
+				if is_instance_valid(g_node):
+					if g_node is VehicleBase:
+						var g_vb := g_node as VehicleBase
+						vehicles_by_id.erase(g_vb.id)
+						if map_instance != null and map_instance.spawned_vehicles.has(g_vb):
+							map_instance.spawned_vehicles.erase(g_vb)
+						if g_vb.has_method("disable_shield_collision"):
+							g_vb.disable_shield_collision()
+					elif g_node.has_method("disable_collision"):
+						g_node.disable_collision()
+					g_node.queue_free()
 	if map_instance != null:
 		for mv in map_instance.spawned_vehicles:
-			if mv != null and is_instance_valid(mv) and not reset_vehs.has(mv):
+			if mv != null and is_instance_valid(mv) and not mv.is_deployable and not mv.is_queued_for_deletion() and not reset_vehs.has(mv):
 				reset_vehs.append(mv)
 		for ch in map_instance.get_children():
 			if ch is DestructibleProp:
@@ -919,7 +933,12 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			var v_id_dead: int = int(payload.get("vehicle_id", -1))
 			var v_type: int = int(payload.get("vehicle_type", 0))
 			if v_type == VehicleBase.VehicleType.MOUNTED_MG and v_id_dead >= 0:
+				var dead_v := vehicles_by_id.get(v_id_dead, null) as VehicleBase
 				vehicles_by_id.erase(v_id_dead)
+				if dead_v != null and is_instance_valid(dead_v) and not dead_v.is_queued_for_deletion():
+					if dead_v.has_method("disable_shield_collision"):
+						dead_v.disable_shield_collision()
+					dead_v.queue_free()
 				_refresh_combat_context()
 				_sync_hud_vehicles()
 			var attacker_id: int = int(payload.get("attacker_id", -1))
@@ -1080,6 +1099,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				if not NetworkManager.is_server_authority():
 					for ch in projectiles_root.get_children():
 						if ch is EngineerSkillsScript.TrenchEntity and (ch as EngineerSkillsScript.TrenchEntity).trench_id == td_id:
+							(ch as EngineerSkillsScript.TrenchEntity).disable_collision()
 							ch.queue_free()
 			SoundSynthesizer.play_sfx("explosion", 0.0, false, td_pos)
 		"eng_turret_spawn":
