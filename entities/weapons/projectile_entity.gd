@@ -43,6 +43,9 @@ var _mesh: Node3D
 var _context: Dictionary = {}
 var _trail_timer: float = 0.0
 
+static var _next_proj_uid: int = 1
+var proj_uid: int = 0
+
 
 static func spawn_server_projectile(
 	p_kind: int,
@@ -55,6 +58,8 @@ static func spawn_server_projectile(
 	fallback_parent: Node = null
 ) -> ProjectileEntity:
 	var proj := ProjectileEntity.new()
+	proj.proj_uid = _next_proj_uid
+	_next_proj_uid += 1
 	proj.setup(p_kind, p_owner_id, p_team, p_pos, p_vel, p_context)
 	if damage_override >= 0.0:
 		proj.base_damage = damage_override
@@ -69,7 +74,9 @@ static func spawn_server_projectile(
 	if parent_node != null:
 		parent_node.add_child(proj)
 	NetworkManager.broadcast_game_event("proj_vfx", {
+		"uid": proj.proj_uid,
 		"kind": p_kind,
+		"team": p_team,
 		"pos": p_pos,
 		"vel": p_vel,
 		"gravity_scale": proj.gravity_scale,
@@ -77,6 +84,24 @@ static func spawn_server_projectile(
 		"damage_override": damage_override,
 	})
 	return proj
+
+
+func setup_visual(payload: Dictionary) -> void:
+	set_meta("visual_only", true)
+	proj_uid = int(payload.get("uid", 0))
+	setup(
+		int(payload.get("kind", 0)),
+		-1,
+		int(payload.get("team", -1)),
+		payload.get("pos", Vector3.ZERO),
+		payload.get("vel", Vector3.ZERO),
+		{}
+	)
+	if payload.has("gravity_scale"):
+		gravity_scale = float(payload["gravity_scale"])
+	if payload.has("lifetime"):
+		lifetime = float(payload["lifetime"])
+	add_to_group("client_proj_vfx")
 
 
 func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vector3, p_context: Dictionary) -> void:
@@ -181,7 +206,9 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 
 
 func _ready() -> void:
-	if not bool(get_meta("visual_only", false)):
+	if bool(get_meta("visual_only", false)):
+		add_to_group("client_proj_vfx")
+	else:
 		if kind == ProjectileKind.TRAPPER_STICKY:
 			add_to_group("destructible_stickies")
 		else:
@@ -337,11 +364,14 @@ func destroy_by_enemy(emit_vfx: bool = true) -> void:
 		return
 	_exploded = true
 	remove_from_group("destructible_stickies")
-	if emit_vfx and is_inside_tree() and not bool(get_meta("visual_only", false)) and NetworkManager.is_server_authority():
-		NetworkManager.broadcast_game_event("hit_vfx", {
-			"pos": global_position,
-			"kind": "spark",
-		})
+	if not bool(get_meta("visual_only", false)) and NetworkManager.is_server_authority():
+		if proj_uid > 0:
+			NetworkManager.broadcast_game_event("proj_destroy", {"uid": proj_uid})
+		if emit_vfx and is_inside_tree():
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": global_position,
+				"kind": "spark",
+			})
 	queue_free()
 
 
@@ -490,6 +520,8 @@ func _detonate() -> void:
 		return
 	_exploded = true
 	remove_from_group("destructible_stickies")
+	if proj_uid > 0:
+		NetworkManager.broadcast_game_event("proj_destroy", {"uid": proj_uid})
 
 	var heroes_by_id: Dictionary = _context.get("heroes_by_id", {})
 	var eaten_by_gunner: bool = false
@@ -503,8 +535,11 @@ func _detonate() -> void:
 	# Check Gunner's "I Eat Grenades" absorption BEFORE dealing splash damage (skip for Fireball)
 	if kind != ProjectileKind.FIREBALL:
 		for id_key in heroes_by_id.keys():
-			var h: HeroCharacter = heroes_by_id[id_key]
-			if h == null or h.is_defeated:
+			var h_var: Variant = heroes_by_id[id_key]
+			if not is_instance_valid(h_var) or not (h_var is HeroCharacter):
+				continue
+			var h: HeroCharacter = h_var as HeroCharacter
+			if h.is_defeated:
 				continue
 			if h.global_position.distance_to(global_position) <= splash_radius + 1.5:
 				if h.status_effects != null and h.status_effects.has_method("can_eat_grenades") and h.status_effects.can_eat_grenades():
@@ -519,10 +554,14 @@ func _detonate() -> void:
 					break
 
 	if not eaten_by_gunner:
-		var attacker_h: HeroCharacter = heroes_by_id.get(owner_id, null) as HeroCharacter
+		var attacker_var: Variant = heroes_by_id.get(owner_id, null)
+		var attacker_h: HeroCharacter = attacker_var as HeroCharacter if is_instance_valid(attacker_var) else null
 		for id_key in heroes_by_id.keys():
-			var h: HeroCharacter = heroes_by_id[id_key]
-			if h == null or h.is_defeated:
+			var h_var: Variant = heroes_by_id[id_key]
+			if not is_instance_valid(h_var) or not (h_var is HeroCharacter):
+				continue
+			var h: HeroCharacter = h_var as HeroCharacter
+			if h.is_defeated:
 				continue
 			# ZERO friendly fire: teammates take 0 damage and 0 knockback
 			if h.team == owner_team and h.entity_id != owner_id:

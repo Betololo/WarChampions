@@ -48,6 +48,7 @@ func _ready() -> void:
 	await _test_phase11_task4_demolisher()
 	await _test_phase11_task5_demolisher_weapons()
 	await _test_phase11_task6_ui_bots_and_full_matrix()
+	await _test_phase11_final_fix_wave()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -7243,4 +7244,270 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	NetworkManager.local_peer_id = prev_peer_id
 	game6.queue_free()
 	arena6.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_final_fix_wave() -> void:
+	# 1. Remote ENet client TRAPPER_STICKY team color + uid + proj_destroy ghost cleanup
+	var prev_peer_id: int = NetworkManager.local_peer_id
+	var game_fw := MainGame.new()
+	add_child(game_fw)
+	game_fw._start_bots_sync(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER)
+	await get_tree().physics_frame
+
+	var captured_vfx: Array[Dictionary] = []
+	var captured_destroy: Array[Dictionary] = []
+	var on_fw_evt := func(ev_t: String, pl: Dictionary) -> void:
+		if ev_t == "proj_vfx":
+			captured_vfx.append(pl)
+		elif ev_t == "proj_destroy":
+			captured_destroy.append(pl)
+	NetworkManager.game_event_received.connect(on_fw_evt)
+
+	var srv_ctx: Dictionary = game_fw._cached_combat_ctx
+	var st_royal := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.TRAPPER_STICKY,
+		1, NetworkManager.TEAM_ROYAL,
+		Vector3(-42.0, 1.0, -42.0), Vector3.ZERO, srv_ctx, 40.0, game_fw.projectiles_root
+	)
+	var st_nat := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.TRAPPER_STICKY,
+		2, NetworkManager.TEAM_NATIONAL,
+		Vector3(42.0, 1.0, 42.0), Vector3.ZERO, srv_ctx, 40.0, game_fw.projectiles_root
+	)
+	var royal_payload: Dictionary = captured_vfx[0] if captured_vfx.size() >= 1 else {}
+	var nat_payload: Dictionary = captured_vfx[1] if captured_vfx.size() >= 2 else {}
+	var vfx_payload_ok: bool = (
+		int(royal_payload.get("uid", 0)) == st_royal.proj_uid
+		and st_royal.proj_uid > 0
+		and int(royal_payload.get("team", -1)) == NetworkManager.TEAM_ROYAL
+		and int(nat_payload.get("uid", 0)) == st_nat.proj_uid
+		and int(nat_payload.get("team", -1)) == NetworkManager.TEAM_NATIONAL
+	)
+
+	# Simulate ENet client receiving proj_vfx
+	NetworkManager.join_server("127.0.0.1", 7819)
+	game_fw._on_game_event("proj_vfx", royal_payload)
+	game_fw._on_game_event("proj_vfx", nat_payload)
+	var client_royal_vp: ProjectileEntity = null
+	var client_nat_vp: ProjectileEntity = null
+	for gnode in get_tree().get_nodes_in_group("client_proj_vfx"):
+		if gnode is ProjectileEntity:
+			var p_ent := gnode as ProjectileEntity
+			if p_ent.proj_uid == st_royal.proj_uid:
+				client_royal_vp = p_ent
+			elif p_ent.proj_uid == st_nat.proj_uid:
+				client_nat_vp = p_ent
+
+	var royal_blue_ok: bool = false
+	var nat_red_ok: bool = false
+	if client_royal_vp != null and client_royal_vp._mesh != null and client_royal_vp._mesh.get_child_count() > 0:
+		var r_mi := client_royal_vp._mesh.get_child(0) as MeshInstance3D
+		var r_mat := r_mi.material_override as StandardMaterial3D if r_mi != null else null
+		royal_blue_ok = (r_mat != null and r_mat.albedo_color.b > r_mat.albedo_color.r and client_royal_vp.owner_team == NetworkManager.TEAM_ROYAL)
+	if client_nat_vp != null and client_nat_vp._mesh != null and client_nat_vp._mesh.get_child_count() > 0:
+		var n_mi := client_nat_vp._mesh.get_child(0) as MeshInstance3D
+		var n_mat := n_mi.material_override as StandardMaterial3D if n_mi != null else null
+		nat_red_ok = (n_mat != null and n_mat.albedo_color.r > n_mat.albedo_color.b and client_nat_vp.owner_team == NetworkManager.TEAM_NATIONAL)
+
+	# Switch back to server to detonate royal & destroy national silently, then deliver proj_destroy to client
+	NetworkManager.shutdown_network()
+	captured_destroy.clear()
+	st_royal._detonate()
+	st_nat.destroy_by_enemy(false)
+	var destroy_emitted_ok: bool = (
+		captured_destroy.size() == 2
+		and int(captured_destroy[0].get("uid", 0)) == st_royal.proj_uid
+		and int(captured_destroy[1].get("uid", 0)) == st_nat.proj_uid
+	)
+	NetworkManager.join_server("127.0.0.1", 7819)
+	for d_pl in captured_destroy:
+		game_fw._on_game_event("proj_destroy", d_pl)
+	var client_cleanup_ok: bool = (
+		client_royal_vp != null and client_royal_vp.is_queued_for_deletion()
+		and client_nat_vp != null and client_nat_vp.is_queued_for_deletion()
+	)
+	NetworkManager.game_event_received.disconnect(on_fw_evt)
+	NetworkManager.shutdown_network()
+
+	# Also verify FirePatch is_queued_for_deletion() guard
+	var fp_del := DemolisherSkills.FirePatchEntity.new()
+	fp_del.set_meta("visual_only", true)
+	fp_del.owner_id = 888
+	fp_del.position = Vector3(16.0, 0.0, 16.0)
+	fp_del._lifetime_elapsed = 4.5
+	game_fw.projectiles_root.add_child(fp_del)
+	fp_del.queue_free()
+	game_fw._on_game_event("fire_patch_vfx", {"pos": Vector3(16.0, 0.0, 16.0), "owner_id": 888, "radius": 2.6})
+	var fp_del_guard_ok: bool = is_equal_approx(fp_del._lifetime_elapsed, 4.5)
+
+	_assert(
+		vfx_payload_ok and royal_blue_ok and nat_red_ok and destroy_emitted_ok and client_cleanup_ok and fp_del_guard_ok,
+		"Phase 11.7a: Client TRAPPER_STICKY carries uid+team colors (royal=%s, nat=%s), proj_destroy cleanup=%s, FirePatch del guard=%s" % [
+			str(royal_blue_ok), str(nat_red_ok), str(client_cleanup_ok), str(fp_del_guard_ok)
+		]
+	)
+
+	# 2. Vehicle seat skill single-step (no driver/gunner bypass, no 2x decay) + Boat Seat 2 Trapper sticky detonation
+	game_fw.queue_free()
+	await _flush_deferred()
+
+	var game_v := MainGame.new()
+	add_child(game_v)
+	game_v._start_bots_sync(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER)
+	await get_tree().physics_frame
+
+	# Freeze all other bots as defeated so they don't interfere, and place a clean VehicleBoat + 2 Royal heroes + 1 National target
+	for h_val in game_v.heroes_by_id.values():
+		var hh := h_val as HeroCharacter
+		if hh != null:
+			hh.is_defeated = true
+			hh.defeat_timer = 99.0
+
+	var boat_v: VehicleBoat = null
+	for v_val in game_v.vehicles_by_id.values():
+		if v_val is VehicleBoat:
+			boat_v = v_val as VehicleBoat
+			break
+	var h_drv: HeroCharacter = game_v.heroes_by_id.get(NetworkManager.local_peer_id, null)
+	var h_pass: HeroCharacter = null
+	var h_enemy: HeroCharacter = null
+	for h_val in game_v.heroes_by_id.values():
+		var hh := h_val as HeroCharacter
+		if hh == null or hh == h_drv:
+			continue
+		if hh.team == NetworkManager.TEAM_ROYAL and h_pass == null:
+			h_pass = hh
+		elif hh.team == NetworkManager.TEAM_NATIONAL and h_enemy == null:
+			h_enemy = hh
+
+	var seat_skill_ok: bool = false
+	var seat_det_ok: bool = false
+	var boat_cushions_removed_ok: bool = false
+	if boat_v != null and h_drv != null and h_pass != null and h_enemy != null:
+		# Check boat mesh has NO legacy front cushions at z ~ -1.25 (Seat Cushion nodes sit inside Boat visual root only on rear or nowhere)
+		var front_cushions: int = 0
+		for mi_node in boat_v.get_cached_visual_meshes():
+			if absf(mi_node.position.z - (-1.25)) < 0.1 and absf(mi_node.position.x) > 0.5:
+				front_cushions += 1
+		boat_cushions_removed_ok = (front_cushions == 0)
+
+		h_drv.respawn_at(boat_v.global_position, 0.0)
+		h_drv.is_local_player = false
+		game_v.bot_brains.erase(h_drv.entity_id)
+		h_pass.respawn_at(boat_v.global_position, 0.0)
+		h_pass.is_bot = false
+		game_v.bot_brains.erase(h_pass.entity_id)
+		game_v.bot_brains.erase(h_enemy.entity_id)
+		# Ensure h_pass is Demolisher with Trapper in slot 1
+		h_pass.setup_identity(h_pass.entity_id, "BoatPassDemo", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 1, false, false)
+		h_pass.skill_manager.skill_cooldowns[1] = 10.0
+
+		# Put Driver in Seat 0 (can_use_skills=false), Passenger in Seat 2 (can_use_skills=true, can_shoot=true)
+		boat_v.seats[0].occupant_id = h_drv.entity_id
+		h_drv.current_vehicle_id = boat_v.id
+		h_drv.current_seat_index = 0
+		boat_v.seats[2].occupant_id = h_pass.entity_id
+		h_pass.current_vehicle_id = boat_v.id
+		h_pass.current_seat_index = 2
+
+		# Driver attempts BTN_SKILL_1 & cooldown starts at 10.0; Passenger has cooldown 10.0
+		h_drv.skill_manager.skill_cooldowns[1] = 10.0
+		var drv_cmd := InputCmd.new()
+		drv_cmd.set_button(InputCmd.BTN_SKILL_1, true)
+		h_drv.latest_server_input = drv_cmd
+		var pass_cmd := InputCmd.new()
+		pass_cmd.selected_weapon_slot = 1 # Trapper
+		h_pass.latest_server_input = pass_cmd
+
+		game_v._physics_process(0.5)
+		var drv_blocked_ok: bool = (
+			is_equal_approx(h_drv.skill_manager.skill_cooldowns[0], 0.0)
+			and is_equal_approx(h_drv.skill_manager.skill_cooldowns[1], 10.0)
+		)
+		var pass_single_tick_ok: bool = is_equal_approx(h_pass.skill_manager.skill_cooldowns[1], 9.5)
+		seat_skill_ok = drv_blocked_ok and pass_single_tick_ok
+
+		# Now Seat 2 passenger fires TRAPPER_STICKY, waits 0.55s, and right-click detonates near h_enemy
+		var pass_fire_cmd := InputCmd.new()
+		pass_fire_cmd.selected_weapon_slot = 1
+		pass_fire_cmd.set_button(InputCmd.BTN_FIRE, true)
+		h_pass.latest_server_input = pass_fire_cmd
+		game_v._physics_process(0.02)
+
+		var pass_sticky: ProjectileEntity = null
+		for sn in get_tree().get_nodes_in_group("destructible_stickies"):
+			if sn is ProjectileEntity and (sn as ProjectileEntity).owner_id == h_pass.entity_id:
+				pass_sticky = sn as ProjectileEntity
+				break
+
+		if pass_sticky != null:
+			h_pass.latest_server_input = pass_cmd
+			pass_sticky._physics_process(0.55)
+			pass_sticky.global_position = Vector3(45.0, 1.0, 45.0)
+			pass_sticky._stuck = true
+			pass_sticky._is_stuck = true
+			h_enemy.respawn_at(Vector3(45.0, 0.0, 45.0), 0.0)
+			await get_tree().physics_frame
+			var hp_pre_det: int = h_enemy.hp
+
+			# While tnt_rope_active is true, right-click detonation must be blocked
+			h_pass.status_effects.activate_tnt_rope()
+			var pass_det_cmd := InputCmd.new()
+			pass_det_cmd.selected_weapon_slot = 1
+			pass_det_cmd.set_button(InputCmd.BTN_AIM, true)
+			h_pass.latest_server_input = pass_det_cmd
+			game_v._physics_process(0.02)
+			var rope_blocked_det_ok: bool = (not pass_sticky._exploded and h_enemy.hp == hp_pre_det)
+
+			# Release BTN_AIM, clear tnt_rope_active, press BTN_AIM again -> Boat Seat 2 passenger detonates sticky!
+			h_pass.status_effects.clear_tnt_rope()
+			h_pass.latest_server_input = pass_cmd
+			game_v._physics_process(0.02)
+			h_pass.latest_server_input = pass_det_cmd
+			game_v._physics_process(0.02)
+			seat_det_ok = (rope_blocked_det_ok and pass_sticky._exploded and h_enemy.hp < hp_pre_det)
+
+	_assert(
+		seat_skill_ok and seat_det_ok and boat_cushions_removed_ok,
+		"Phase 11.7b: Vehicle seat skill single-step=%s, Boat Seat 2 Trapper detonate=%s, Boat front cushions removed=%s" % [
+			str(seat_skill_ok), str(seat_det_ok), str(boat_cushions_removed_ok)
+		]
+	)
+
+	# 3. HUDController skill/widget slot mouse_filter == Control.MOUSE_FILTER_PASS + Map budgets & INPUT_CMD_BYTES == 15
+	var hud_fw := HUDController.new()
+	add_child(hud_fw)
+	var skill_mf_ok: bool = (hud_fw._skill_slot_bgs.size() == 6)
+	for sbg in hud_fw._skill_slot_bgs:
+		if sbg.mouse_filter != Control.MOUSE_FILTER_PASS:
+			skill_mf_ok = false
+	var widget_mf_ok: bool = (hud_fw._widget_slot_bgs.size() == 4)
+	for wbg in hud_fw._widget_slot_bgs:
+		if wbg.mouse_filter != Control.MOUSE_FILTER_PASS:
+			widget_mf_ok = false
+	hud_fw.queue_free()
+
+	var mc2: int = 0
+	var um2: Dictionary = {}
+	var umat2: Dictionary = {}
+	for node in game_v.map_instance.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		mc2 += 1
+		if mi.mesh != null:
+			um2[mi.mesh.get_instance_id()] = true
+		if mi.material_override != null:
+			umat2[mi.material_override.get_instance_id()] = true
+	var budgets_fw_ok: bool = (mc2 <= 900 and um2.size() <= 350 and umat2.size() <= 200)
+
+	_assert(
+		skill_mf_ok and widget_mf_ok and budgets_fw_ok and NetSerializer.INPUT_CMD_BYTES == 15,
+		"Phase 11.7c: HUD tooltip mouse_filter=PASS (skills=%s, widgets=%s), map budgets (%d/%d/%d), INPUT_CMD=15B" % [
+			str(skill_mf_ok), str(widget_mf_ok), mc2, um2.size(), umat2.size()
+		]
+	)
+
+	NetworkManager.shutdown_network()
+	NetworkManager.local_peer_id = prev_peer_id
+	game_v.queue_free()
 	await _flush_deferred()

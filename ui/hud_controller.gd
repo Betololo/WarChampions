@@ -737,7 +737,7 @@ func _build_hud() -> void:
 		var bg := PanelContainer.new()
 		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bg.mouse_filter = Control.MOUSE_FILTER_PASS
 		sv.add_child(bg)
 
 		var icon := TextureRect.new()
@@ -779,7 +779,7 @@ func _build_hud() -> void:
 		var bg := PanelContainer.new()
 		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
-		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bg.mouse_filter = Control.MOUSE_FILTER_PASS
 		var w_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_widget_%d" % wj)
 		if not w_entry.is_empty():
 			bg.tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [

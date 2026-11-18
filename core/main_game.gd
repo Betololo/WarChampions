@@ -536,7 +536,7 @@ func _physics_process(delta: float) -> void:
 				hero.latest_server_input.aim_pitch = hero.hero_camera.pitch
 				hero.latest_server_input.view_interp_tick_delta = 0
 
-			if hero.skill_manager != null and hero.skill_manager.has_method("step_server"):
+			if hero.current_vehicle_id < 0 and hero.skill_manager != null and hero.skill_manager.has_method("step_server"):
 				hero.skill_manager.step_server(delta, hero.latest_server_input, combat_ctx)
 
 			if hero.current_vehicle_id < 0 and not hero.weapons.is_empty():
@@ -853,20 +853,20 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 		"proj_vfx":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
 				var vp := ProjectileEntity.new()
-				vp.set_meta("visual_only", true)
-				vp.setup(
-					int(payload.get("kind", 0)),
-					-1,
-					-1,
-					payload.get("pos", Vector3.ZERO),
-					payload.get("vel", Vector3.ZERO),
-					{}
-				)
-				if payload.has("gravity_scale"):
-					vp.gravity_scale = float(payload["gravity_scale"])
-				if payload.has("lifetime"):
-					vp.lifetime = float(payload["lifetime"])
+				vp.setup_visual(payload)
 				projectiles_root.add_child(vp)
+		"proj_destroy":
+			if not NetworkManager.is_server_authority():
+				var target_uid: int = int(payload.get("uid", 0))
+				if target_uid > 0:
+					if is_inside_tree():
+						for node in get_tree().get_nodes_in_group("client_proj_vfx"):
+							if node is ProjectileEntity and (node as ProjectileEntity).proj_uid == target_uid and not node.is_queued_for_deletion():
+								node.queue_free()
+					if projectiles_root != null:
+						for ch in projectiles_root.get_children():
+							if ch is ProjectileEntity and (ch as ProjectileEntity).proj_uid == target_uid and bool(ch.get_meta("visual_only", false)) and not ch.is_queued_for_deletion():
+								ch.queue_free()
 		"hit_vfx":
 			var hit_pos: Vector3 = payload.get("pos", Vector3.ZERO)
 			var hit_kind: String = str(payload.get("kind", "dust"))
@@ -943,7 +943,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				var spawn_owner: int = int(payload.get("owner_id", -1))
 				var refreshed: bool = false
 				for ch in projectiles_root.get_children():
-					if ch is DemolisherSkills.FirePatchEntity:
+					if ch is DemolisherSkills.FirePatchEntity and not ch.is_queued_for_deletion():
 						var fp_old := ch as DemolisherSkills.FirePatchEntity
 						if fp_old.owner_id == spawn_owner and fp_old.position.distance_to(spawn_pos) <= 0.5:
 							fp_old._lifetime_elapsed = 0.0
@@ -971,7 +971,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, fp_pos, "fire", 1.1)
 				var fp_owner: int = int(payload.get("owner_id", -1))
 				for ch in projectiles_root.get_children():
-					if ch is DemolisherSkills.FirePatchEntity:
+					if ch is DemolisherSkills.FirePatchEntity and not ch.is_queued_for_deletion():
 						var fp_node := ch as DemolisherSkills.FirePatchEntity
 						if bool(fp_node.get_meta("visual_only", false)) and (fp_owner < 0 or fp_node.owner_id == fp_owner) and fp_node.position.distance_to(fp_pos) <= 2.0:
 							fp_node._lifetime_elapsed = 0.0

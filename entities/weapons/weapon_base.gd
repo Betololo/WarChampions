@@ -433,7 +433,6 @@ func step_timers(delta: float, cmd: InputCmd) -> void:
 func start_reload() -> void:
 	if is_melee or is_reloading or ammo_in_mag >= mag_size:
 		return
-	var _reload_mult: float = _get_haste_reload_mult()
 	is_reloading = true
 	reload_timer = reload_duration
 	_burst_bloom = 0.0

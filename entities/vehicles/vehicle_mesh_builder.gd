@@ -573,7 +573,6 @@ static func build_boat_visuals(root: Node3D, team: int) -> Dictionary:
 		add_part(root, buoy_mesh, Vector3(sx * 0.97, 1.18, 0.36), Vector3(0.0, 0.0, PI * 0.5), buoy_red, "Lifebuoy")
 		_add_box(root, Vector3(0.06, 0.12, 0.12), Vector3(sx * 0.98, 1.38, 0.36), Vector3.ZERO, buoy_white)
 		_add_box(root, Vector3(0.06, 0.12, 0.12), Vector3(sx * 0.98, 0.98, 0.36), Vector3.ZERO, buoy_white)
-		_add_seat_cushion(root, Vector3(sx * 0.72, 0.72, -1.25), 0.58, pal["leather_mat"])
 		_add_box(root, Vector3(0.46, 0.24, 1.25), Vector3(sx * 0.92, 0.84, 1.92), Vector3.ZERO, wood_mat, "RearBench")
 
 	# Mounted twin bow MG behind sloped steel gun shield (rotating turret + elevating barrels)

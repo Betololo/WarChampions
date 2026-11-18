@@ -352,16 +352,19 @@ func sync_occupants(heroes_by_id: Dictionary, delta: float, context: Dictionary)
 		h.aim_pitch = h.latest_server_input.aim_pitch
 		if s.can_shoot or s.can_use_skills:
 			# Passengers & Wing-Riders freely fire weapons, use skills, and repair with Wrench
-			if s.can_shoot and not h.weapons.is_empty():
-				var slot: int = clampi(h.latest_server_input.selected_weapon_slot, 0, h.weapons.size() - 1)
-				h.selected_weapon_slot = slot
-				var w: WeaponBase = h.weapons[slot] as WeaponBase
-				if w != null:
-					w.step_timers(delta, h.latest_server_input)
-					if w.try_consume_fire(h.latest_server_input):
-						w.fire_server(h.latest_server_input, context)
 			if s.can_use_skills and h.skill_manager != null and h.skill_manager.has_method("step_server"):
 				h.skill_manager.step_server(delta, h.latest_server_input, context)
+			if s.can_shoot and not h.weapons.is_empty():
+				var slot: int = clampi(h.latest_server_input.selected_weapon_slot, 0, h.weapons.size() - 1)
+				if h.should_apply_client_weapon_slot(slot, h.latest_server_input.tick):
+					h.selected_weapon_slot = slot
+				var w: WeaponBase = h.weapons[h.selected_weapon_slot] as WeaponBase
+				if w != null:
+					w.step_timers(delta, h.latest_server_input)
+					if w is ProjectileWeapon and not h.is_defeated:
+						(w as ProjectileWeapon).try_detonate_stickies(h.latest_server_input)
+					if w.try_consume_fire(h.latest_server_input):
+						w.fire_server(h.latest_server_input, context)
 
 
 ## Calculates directional armor damage multiplier: rear hits deal 2.0x damage!
