@@ -557,7 +557,7 @@ static func build_town_house(parent: Node3D, origin: Vector3, yaw: float, style_
 		var gable_h: float = 3.4
 		_add_box(body, Vector3(w + 0.38, plinth_h, d + 0.38), Vector3(0.0, plinth_h * 0.5, 0.0), Vector3.ZERO, mats["stone"], "Plinth")
 		_add_box(body, Vector3(w, wall_h, d), Vector3(0.0, plinth_h + wall_h * 0.5, 0.0), Vector3.ZERO, mats["ochre"], "Walls")
-		_add_box_col(body, Vector3(w + 0.38, plinth_h + wall_h + gable_h * 0.45, d + 0.38), Vector3(0.0, (plinth_h + wall_h + gable_h * 0.45) * 0.5, 0.0))
+		_add_box_col(body, Vector3(w, plinth_h + wall_h, d), Vector3(0.0, (plinth_h + wall_h) * 0.5, 0.0))
 		_add_timber_frame(body, w, wall_h, d, plinth_h, mats["timber_dark"], mats["stone_trim"])
 		_build_pitched_roof(body, body, w, d, plinth_h + wall_h, gable_h, mats["ochre"], mats["roof"], mats["timber_dark"])
 		_add_chimney(body, Vector3(-w * 0.30, plinth_h + wall_h + 1.4, -d * 0.22), 2.8, mats)
@@ -583,7 +583,7 @@ static func build_town_house(parent: Node3D, origin: Vector3, yaw: float, style_
 		var wall_mat: Material = mats["terracotta_wall"] if (style_idx % 2 == 1) else mats["cream"]
 		_add_box(body, Vector3(w + 0.40, plinth_h, d + 0.40), Vector3(0.0, plinth_h * 0.5, 0.0), Vector3.ZERO, mats["stone"], "Plinth")
 		_add_box(body, Vector3(w, wall_h, d), Vector3(0.0, plinth_h + wall_h * 0.5, 0.0), Vector3.ZERO, wall_mat, "Walls")
-		_add_box_col(body, Vector3(w + 0.40, plinth_h + wall_h + gable_h * 0.45, d + 0.40), Vector3(0.0, (plinth_h + wall_h + gable_h * 0.45) * 0.5, 0.0))
+		_add_box_col(body, Vector3(w, plinth_h + wall_h, d), Vector3(0.0, (plinth_h + wall_h) * 0.5, 0.0))
 		_add_timber_frame(body, w, wall_h * 0.52, d, plinth_h, mats["timber_dark"], mats["stone_trim"])
 		_add_timber_frame(body, w + 0.08, wall_h * 0.48, d + 0.08, plinth_h + wall_h * 0.52, mats["timber_dark"], mats["timber_dark"])
 		_build_pitched_roof(body, body, w, d, plinth_h + wall_h, gable_h, wall_mat, mats["roof"], mats["timber_dark"])
@@ -629,7 +629,7 @@ static func build_town_house(parent: Node3D, origin: Vector3, yaw: float, style_
 		var gable_h: float = 3.5
 		_add_box(body, Vector3(w + 0.38, plinth_h, d + 0.38), Vector3(0.0, plinth_h * 0.5, 0.0), Vector3.ZERO, mats["stone"], "Plinth")
 		_add_box(body, Vector3(w, wall_h, d), Vector3(0.0, plinth_h + wall_h * 0.5, 0.0), Vector3.ZERO, mats["cream"], "Walls")
-		_add_box_col(body, Vector3(w + 0.38, plinth_h + wall_h + gable_h * 0.45, d + 0.38), Vector3(0.0, (plinth_h + wall_h + gable_h * 0.45) * 0.5, 0.0))
+		_add_box_col(body, Vector3(w, plinth_h + wall_h, d), Vector3(0.0, (plinth_h + wall_h) * 0.5, 0.0))
 		_add_timber_frame(body, w, wall_h, d, plinth_h, mats["timber_dark"], mats["stone_trim"])
 		_build_pitched_roof(body, body, w, d, plinth_h + wall_h, gable_h, mats["cream"], mats["roof"], mats["timber_dark"])
 		_add_chimney(body, Vector3(-w * 0.28, plinth_h + wall_h + 1.5, 0.0), 2.8, mats)
@@ -661,7 +661,7 @@ static func build_church_chapel(parent: Node3D, origin: Vector3, yaw: float = 0.
 
 	_add_box(body, Vector3(nave_w + 0.6, plinth_h, nave_d + 0.6), Vector3(0.0, plinth_h * 0.5, 0.0), Vector3.ZERO, mats["stone"], "NavePlinth")
 	_add_box(body, Vector3(nave_w, nave_h, nave_d), Vector3(0.0, plinth_h + nave_h * 0.5, 0.0), Vector3.ZERO, mats["cream"], "NaveWalls")
-	_add_box_col(body, Vector3(nave_w + 0.6, plinth_h + nave_h + 2.2, nave_d + 0.6), Vector3(0.0, (plinth_h + nave_h + 2.2) * 0.5, 0.0))
+	_add_box_col(body, Vector3(nave_w, plinth_h + nave_h, nave_d), Vector3(0.0, (plinth_h + nave_h) * 0.5, 0.0))
 	_build_pitched_roof(body, body, nave_w, nave_d, plinth_h + nave_h, gable_h, mats["cream"], mats["roof"], mats["timber_dark"])
 
 	# Side buttresses & tall arched stained nave windows

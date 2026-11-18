@@ -88,8 +88,18 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var lag_comp: LagCompensator = context.get("lag_compensator", null)
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
 	var aim: Dictionary = get_aim_origin_and_dir(cmd, space_state, lag_comp, heroes_by_id)
+	var aim_origin: Vector3 = aim["origin"] as Vector3
 	var dir: Vector3 = apply_spread(aim["dir"] as Vector3)
-	var origin: Vector3 = (aim["origin"] as Vector3) + dir * 0.9
+	var origin: Vector3 = aim_origin + dir * 0.55
+	if space_state != null:
+		var spawn_q := PhysicsRayQueryParameters3D.create(aim_origin, aim_origin + dir * 0.75, 1)
+		spawn_q.exclude = [owner_hero.get_rid()]
+		var spawn_hit: Dictionary = space_state.intersect_ray(spawn_q)
+		if not spawn_hit.is_empty():
+			var hit_p: Vector3 = spawn_hit["position"]
+			var dist_to_hit: float = aim_origin.distance_to(hit_p)
+			if dist_to_hit <= 0.63:
+				origin = aim_origin + dir * maxf(0.05, dist_to_hit - 0.08)
 	var pkind: int = ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET
 	var dmg_override: float = -1.0
 	var launch_vel: Vector3 = dir * projectile_speed
@@ -99,16 +109,17 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		launch_vel += Vector3(0.0, 4.5, 0.0)
 	elif weapon_kind == WeaponKind.GRENADE_LAUNCHER:
 		var g_arch: int = clampi(archetype, 0, 2)
+		var lob_scale: float = clampf(1.0 - maxf(0.0, -dir.y), 0.15, 1.0)
 		dmg_override = damage_max
 		match g_arch:
 			1:
 				pkind = ProjectileEntity.ProjectileKind.TRAPPER_STICKY
-				launch_vel += Vector3(0.0, 2.8, 0.0)
+				launch_vel += Vector3(0.0, 2.2 * lob_scale, 0.0)
 			2:
 				pkind = ProjectileEntity.ProjectileKind.CANNON_BALL
 			_:
 				pkind = ProjectileEntity.ProjectileKind.BOUNCE_GRENADE
-				launch_vel += Vector3(0.0, 3.2, 0.0)
+				launch_vel += Vector3(0.0, 2.4 * lob_scale, 0.0)
 
 	var spawned: ProjectileEntity = ProjectileEntity.spawn_server_projectile(pkind, owner_hero.entity_id, owner_hero.team, origin, launch_vel, context, dmg_override, owner_hero.get_parent())
 	if pkind == ProjectileEntity.ProjectileKind.TRAPPER_STICKY and spawned != null:

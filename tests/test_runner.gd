@@ -50,6 +50,7 @@ func _ready() -> void:
 	await _test_phase11_task6_ui_bots_and_full_matrix()
 	await _test_phase11_final_fix_wave()
 	await _test_phase11_polish_task7()
+	await _test_phase11_polish_task8()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -7658,6 +7659,129 @@ func _test_phase11_polish_task7() -> void:
 		fb_expire_ok and fb_sweep_ok,
 		"Phase 11.T7c: Fire Breath expires <=0.72s (%.2fs, %.1fm<=35m) and capsule sweep hits 0.45m lateral enemy (%d->%d, burning=%s)" % [
 			elapsed_fb, fb_travel, enemy_hp0, enemy.hp, str(enemy.status_effects.is_burning())
+		]
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_polish_task8() -> void:
+	print("--- Phase 11 Polish Task 8: Cowboy Lasso TNT Rope, Trapper Rooftop Precision & 40mm Pill Grenade ---")
+
+	var arena := Node3D.new()
+	add_child(arena)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_shape := BoxShape3D.new()
+	floor_shape.size = Vector3(200.0, 1.0, 200.0)
+	floor_col.shape = floor_shape
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var cottage := BuildingMeshBuilder.build_town_house(arena, Vector3.ZERO, 0.0, 0)
+	await get_tree().physics_frame
+
+	# 1. Cowboy Lasso Overhead Spinning TNT Rope pose + radial bundle offset >= 0.50m
+	var demo := HeroCharacter.new()
+	demo.setup_identity(11801, "T8Demo", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 1, true, false)
+	arena.add_child(demo)
+	demo.global_position = Vector3(0.0, 0.0, 20.0)
+	await get_tree().physics_frame
+
+	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
+	var ctx: Dictionary = {"heroes_by_id": {11801: demo}, "projectiles_root": arena}
+	dsm.try_activate_skill(2, InputCmd.new(), ctx)
+	demo._animate_character(0.08)
+	var tnt_bundle := demo._held_weapon_root.get_node_or_null("TntRope") as Node3D
+	var max_stick_dist: float = 0.0
+	var stick_count: int = 0
+	if tnt_bundle != null:
+		for ch in tnt_bundle.get_children():
+			if ch is MeshInstance3D and String(ch.name).begins_with("DynamiteStick"):
+				stick_count += 1
+				max_stick_dist = maxf(max_stick_dist, (ch as MeshInstance3D).position.length())
+	var cowboy_pose_ok: bool = (
+		demo._held_weapon_root.position.x >= 0.35
+		and demo._held_weapon_root.position.y >= 0.60
+		and tnt_bundle != null
+		and is_equal_approx(tnt_bundle.rotation.x, 0.0)
+		and is_equal_approx(tnt_bundle.rotation.z, 0.0)
+		and stick_count == 4
+		and max_stick_dist >= 0.50
+	)
+	_assert(
+		cowboy_pose_ok,
+		"Phase 11.T8a: Cowboy TNT Rope lifts weapon root (%.2f, %.2f), spins around Y, and mounts 4 sticks at %.2fm >= 0.50m" % [
+			demo._held_weapon_root.position.x, demo._held_weapon_root.position.y, max_stick_dist
+		]
+	)
+	dsm.throw_tnt_rope(InputCmd.new(), ctx)
+	demo.status_effects.clear_tnt_rope()
+
+	# 2. Cottage collider roof eave has no phantom +1.0m slab above plinth_h + wall_h (5.3m) + downward Trapper shot clears + hit_radius <= 0.40
+	var space_state: PhysicsDirectSpaceState3D = demo.get_world_3d().direct_space_state
+	var eave_ray_q := PhysicsRayQueryParameters3D.create(Vector3(7.5, 6.30, 2.0), Vector3(5.2, 6.30, 2.0), 1)
+	var eave_ray_hit: Dictionary = space_state.intersect_ray(eave_ray_q)
+	var no_phantom_eave_slab: bool = eave_ray_hit.is_empty()
+
+	demo.global_position = Vector3(5.6, 5.45, 0.0)
+	demo.is_crouching = false
+	await get_tree().physics_frame
+	var gl1: ProjectileWeapon = demo.weapons[1] as ProjectileWeapon
+	var down_cmd := InputCmd.new()
+	down_cmd.aim_yaw = -PI * 0.5
+	down_cmd.aim_pitch = -1.10
+	gl1.fire_server(down_cmd, ctx)
+	var fired_sticky: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.TRAPPER_STICKY:
+			fired_sticky = ch as ProjectileEntity
+	var sticky_radius_ok: bool = (fired_sticky != null and fired_sticky.hit_radius <= 0.40)
+	var sticky_vel_down_ok: bool = (fired_sticky != null and fired_sticky.velocity.y < -15.0)
+	if fired_sticky != null:
+		for _step in range(15):
+			fired_sticky._physics_process(0.02)
+			if fired_sticky._stuck:
+				break
+	var sticky_cleared_roof: bool = (fired_sticky != null and fired_sticky._stuck and fired_sticky.global_position.y <= 0.10)
+	_assert(
+		no_phantom_eave_slab and sticky_radius_ok and sticky_vel_down_ok and sticky_cleared_roof and cottage != null,
+		"Phase 11.T8b: Cottage eave clear at +1.0m (%s), Trapper downward shot clears roof to street (%s, y=%.2f, vy=%.1f), hit_radius=%.2f" % [
+			str(no_phantom_eave_slab), str(sticky_cleared_roof),
+			fired_sticky.global_position.y if fired_sticky != null else -1.0,
+			fired_sticky.velocity.y if fired_sticky != null else 0.0,
+			fired_sticky.hit_radius if fired_sticky != null else -1.0
+		]
+	)
+
+	# 3. 40mm Oblong Pill Grenade visual (CapsuleMesh) + bounce_restitution <= 0.26 + low floor bounce <= 4.2
+	var bg_proj := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BOUNCE_GRENADE,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 0.4, 28.0),
+		Vector3(0.0, -16.0, -12.0),
+		ctx, 60.0, arena
+	)
+	var capsule_ok: bool = false
+	if bg_proj._mesh != null:
+		for ch in bg_proj._mesh.get_children():
+			if ch is MeshInstance3D and (ch as MeshInstance3D).mesh is CapsuleMesh:
+				var cap_m := (ch as MeshInstance3D).mesh as CapsuleMesh
+				if cap_m.height > cap_m.radius * 2.4:
+					capsule_ok = true
+	var rest_ok: bool = (bg_proj.bounce_restitution <= 0.26)
+	for _bstep in range(6):
+		bg_proj._physics_process(0.02)
+		if bg_proj._bounce_fuse_started:
+			break
+	var low_bounce_ok: bool = (bg_proj._bounce_fuse_started and bg_proj.velocity.y >= 0.0 and bg_proj.velocity.y <= 4.2)
+	_assert(
+		capsule_ok and rest_ok and low_bounce_ok,
+		"Phase 11.T8c: BOUNCE_GRENADE uses CapsuleMesh (%s), restitution=%.2f <= 0.26, -16m/s floor impact rebounds low (vy=%.2f <= 4.2)" % [
+			str(capsule_ok), bg_proj.bounce_restitution, bg_proj.velocity.y
 		]
 	)
 

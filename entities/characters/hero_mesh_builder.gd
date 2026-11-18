@@ -1784,28 +1784,52 @@ static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
 
 	var red_dyn_mat := make_sculpted_mat(Color(0.86, 0.16, 0.14), "", 0.60)
 	var rope_mat := make_sculpted_mat(Color(0.74, 0.56, 0.28), "", 0.78)
+	var wood_mat := make_sculpted_mat(Color.WHITE, "hero_gun_wood", 0.65)
 	var brass_mat := make_sculpted_mat(Color(0.78, 0.62, 0.24), "", 0.35, 0.55)
 	var spark_mat := make_sculpted_mat(Color(1.0, 0.85, 0.22), "", 0.20)
 	var dummy: Array[MeshInstance3D] = []
 
+	# Lasso handle grip at Vector3.ZERO (hand hold) + taut 0.72m radial rope extending along -Z
+	var handle := _add_cyl_part(bundle, 0.024, 0.026, 0.14, Vector3.ZERO, Vector3.ZERO, wood_mat, 10, dummy, "LassoHandle")
+	handle.visibility_range_end = 220.0
+	var grip_knot := _add_cyl_part(bundle, 0.032, 0.032, 0.036, Vector3(0.0, 0.04, 0.0), Vector3.ZERO, rope_mat, 10, dummy, "LassoKnot")
+	grip_knot.visibility_range_end = 220.0
+	var radial_rope := _add_cyl_part(bundle, 0.014, 0.014, 0.72, Vector3(0.0, 0.0, -0.36), Vector3(PI * 0.5, 0.0, 0.0), rope_mat, 8, dummy, "RadialRope")
+	radial_rope.visibility_range_end = 220.0
+
+	var torus_key := "torus|0.0850,0.1080|14,8"
+	var lasso_loop: TorusMesh = _prim_cache.get(torus_key)
+	if lasso_loop == null:
+		lasso_loop = TorusMesh.new()
+		lasso_loop.inner_radius = 0.085
+		lasso_loop.outer_radius = 0.108
+		lasso_loop.rings = 14
+		lasso_loop.ring_segments = 8
+		_prim_cache[torus_key] = lasso_loop
+	var hand_loop := add_part(bundle, lasso_loop, Vector3(0.0, -0.02, -0.04), Vector3(0.18, 0.0, 0.0), rope_mat, dummy, "LassoLoop")
+	hand_loop.visibility_range_end = 220.0
+
+	# 4-stick dynamite bundle mounted at the OUTER TIP of the rope (z = -0.68)
+	var stick_idx: int = 0
 	for dx in [-0.044, 0.044]:
 		for dy in [-0.044, 0.044]:
-			var stick := _add_cyl_part(bundle, 0.036, 0.036, 0.24, Vector3(dx, dy, -0.02), Vector3(PI * 0.5, 0.0, 0.0), red_dyn_mat, 10, dummy)
+			var stick := _add_cyl_part(bundle, 0.036, 0.036, 0.24, Vector3(dx, dy, -0.68), Vector3(PI * 0.5, 0.0, 0.0), red_dyn_mat, 10, dummy, "DynamiteStick_%d" % stick_idx)
 			stick.visibility_range_end = 220.0
-	var strap_a := _add_box_part(bundle, Vector3(0.18, 0.18, 0.032), Vector3(0.0, 0.0, 0.04), Vector3.ZERO, rope_mat, dummy)
+			stick_idx += 1
+	var strap_a := _add_box_part(bundle, Vector3(0.18, 0.18, 0.032), Vector3(0.0, 0.0, -0.62), Vector3.ZERO, rope_mat, dummy)
 	strap_a.visibility_range_end = 220.0
-	var strap_b := _add_box_part(bundle, Vector3(0.18, 0.18, 0.032), Vector3(0.0, 0.0, -0.08), Vector3.ZERO, rope_mat, dummy)
+	var strap_b := _add_box_part(bundle, Vector3(0.18, 0.18, 0.032), Vector3(0.0, 0.0, -0.74), Vector3.ZERO, rope_mat, dummy)
 	strap_b.visibility_range_end = 220.0
-	var cap := _add_cyl_part(bundle, 0.024, 0.024, 0.06, Vector3(0.0, 0.095, -0.02), Vector3.ZERO, brass_mat, 10, dummy)
+	var cap := _add_cyl_part(bundle, 0.024, 0.024, 0.06, Vector3(0.0, 0.095, -0.68), Vector3.ZERO, brass_mat, 10, dummy)
 	cap.visibility_range_end = 220.0
-	var spark := _add_box_part(bundle, Vector3(0.036, 0.036, 0.036), Vector3(0.02, 0.14, -0.02), Vector3(0.4, 0.5, 0.2), spark_mat, dummy)
+	var spark := _add_box_part(bundle, Vector3(0.036, 0.036, 0.036), Vector3(0.02, 0.14, -0.68), Vector3(0.4, 0.5, 0.2), spark_mat, dummy)
 	spark.visibility_range_end = 220.0
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	return {
 		"bundle": bundle,
-		"grip": Vector3(0.0, -0.02, 0.02),
+		"grip": Vector3.ZERO,
 		"foregrip": Vector3.ZERO,
-		"muzzle": Vector3(0.0, 0.0, -0.18),
+		"muzzle": Vector3(0.0, 0.0, -0.78),
 		"two_handed": false,
 	}

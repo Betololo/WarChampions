@@ -177,7 +177,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			base_damage = 60.0
 			knockback_force = 15.0
 			lifetime = 6.0
-			bounce_restitution = 0.52
+			bounce_restitution = 0.24
 			explode_on_impact = false
 		ProjectileKind.CANNON_BALL:
 			gravity_scale = 0.42
@@ -193,7 +193,7 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			knockback_force = 14.0
 			lifetime = 45.0
 			explode_on_impact = false
-			hit_radius = 0.65
+			hit_radius = 0.36
 			if not bool(get_meta("visual_only", false)):
 				add_to_group("destructible_stickies")
 		ProjectileKind.TNT_ROPE_CLUSTER:
@@ -310,13 +310,20 @@ func _build_visual() -> void:
 			fb.height = 0.48
 			_add_visual_part(fb, Vector3.ZERO, Vector3.ZERO, Color(1.0, 0.48, 0.08), true)
 		ProjectileKind.BOUNCE_GRENADE:
-			var bg := SphereMesh.new()
-			bg.radius = 0.17
-			bg.height = 0.34
-			_add_visual_part(bg, Vector3.ZERO, Vector3.ZERO, Color(0.24, 0.30, 0.20))
-			var band_bg := BoxMesh.new()
-			band_bg.size = Vector3(0.22, 0.08, 0.22)
-			_add_visual_part(band_bg, Vector3.ZERO, Vector3.ZERO, Color(0.92, 0.46, 0.10))
+			var bg := CapsuleMesh.new()
+			bg.radius = 0.115
+			bg.height = 0.36
+			_add_visual_part(bg, Vector3.ZERO, Vector3(PI * 0.5, 0.0, 0.0), Color(0.24, 0.30, 0.20))
+			var brass_rim := CylinderMesh.new()
+			brass_rim.top_radius = 0.12
+			brass_rim.bottom_radius = 0.12
+			brass_rim.height = 0.055
+			brass_rim.radial_segments = 12
+			_add_visual_part(brass_rim, Vector3(0.0, 0.0, 0.10), Vector3(PI * 0.5, 0.0, 0.0), Color(0.78, 0.62, 0.24))
+			var fuse_tip := SphereMesh.new()
+			fuse_tip.radius = 0.088
+			fuse_tip.height = 0.15
+			_add_visual_part(fuse_tip, Vector3(0.0, 0.0, -0.13), Vector3.ZERO, Color(0.92, 0.46, 0.10))
 		ProjectileKind.CANNON_BALL:
 			var cb := SphereMesh.new()
 			cb.radius = 0.24
@@ -346,13 +353,15 @@ func _build_visual() -> void:
 func _align_mesh_to_velocity() -> void:
 	if _mesh == null or not is_inside_tree():
 		return
-	if kind != ProjectileKind.BAZOOKA_ROCKET and kind != ProjectileKind.TANK_SHELL:
+	if kind != ProjectileKind.BAZOOKA_ROCKET and kind != ProjectileKind.TANK_SHELL and kind != ProjectileKind.BOUNCE_GRENADE:
 		return
 	if velocity.length_squared() <= 0.25:
 		return
 	var vel_dir: Vector3 = velocity.normalized()
 	if absf(vel_dir.dot(Vector3.UP)) < 0.99:
 		_mesh.look_at(global_position + vel_dir, Vector3.UP)
+	else:
+		_mesh.look_at(global_position + vel_dir, Vector3.FORWARD)
 
 
 func can_detonate() -> bool:
@@ -541,11 +550,20 @@ func _physics_process(delta: float) -> void:
 					return
 				else:
 					# Bounce / roll (Grenades, Keg)
-					if kind == ProjectileKind.BOUNCE_GRENADE and not _bounce_fuse_started and not (collider is HeroCharacter):
-						_bounce_fuse_started = true
-						lifetime = minf(lifetime, 2.0)
-					global_position = hit_pos + hit_normal * 0.15
-					velocity = velocity.bounce(hit_normal) * bounce_restitution
+					if kind == ProjectileKind.BOUNCE_GRENADE:
+						if not _bounce_fuse_started and not (collider is HeroCharacter):
+							_bounce_fuse_started = true
+							lifetime = minf(lifetime, 2.0)
+						global_position = hit_pos + hit_normal * 0.06
+						velocity = velocity.bounce(hit_normal) * bounce_restitution
+						if hit_normal.y >= 0.45:
+							velocity.y = minf(velocity.y, 4.0)
+							velocity.x *= 0.72
+							velocity.z *= 0.72
+					else:
+						global_position = hit_pos + hit_normal * 0.15
+						velocity = velocity.bounce(hit_normal) * bounce_restitution
+					_align_mesh_to_velocity()
 					return
 
 	global_position = next_pos
@@ -567,7 +585,7 @@ func _stick_to_surface(hit_pos: Vector3, hit_normal: Vector3, collider: Object) 
 	_stuck = true
 	velocity = Vector3.ZERO
 	gravity_scale = 0.0
-	var stuck_world_pos: Vector3 = hit_pos + hit_normal * 0.08
+	var stuck_world_pos: Vector3 = hit_pos + hit_normal * 0.04
 	global_position = stuck_world_pos
 	if collider is Node3D:
 		var c_node: Node3D = collider as Node3D

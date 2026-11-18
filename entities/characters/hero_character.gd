@@ -1305,11 +1305,16 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 				var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.5 - throw_phase * 0.9, 0.20, 0.0)
-			-99: # TNT Rope bundle spinning in hand while active
-				_held_weapon_root.position = Vector3(0.25, 0.36, -0.22)
-				_held_weapon_root.rotation = Vector3(aim_pitch * 0.5, 0.20, 0.0)
+			-99: # Cowboy overhead lasso TNT Rope spinning beside right shoulder/head
+				_held_weapon_root.position = Vector3(0.44, 0.72, -0.04)
+				_held_weapon_root.rotation = Vector3(0.12 * cos(_tnt_spin_angle), 0.0, -0.22 + 0.12 * sin(_tnt_spin_angle))
 				if _tnt_rope_bundle != null and is_instance_valid(_tnt_rope_bundle):
-					_tnt_rope_bundle.rotation = Vector3(_tnt_spin_angle * 0.4, _tnt_spin_angle, 0.25)
+					_tnt_rope_bundle.rotation = Vector3(0.0, _tnt_spin_angle, 0.0)
+				right_target = _held_weapon_root.transform * Vector3.ZERO
+				custom_right_target = true
+				right_pole = Vector3(0.85, 0.25, 0.35)
+				left_target = Vector3(-0.26, 0.18, -0.14)
+				custom_left_target = true
 			_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
 				var r_tilt: float = 0.52 if reloading else 0.0
 				var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
