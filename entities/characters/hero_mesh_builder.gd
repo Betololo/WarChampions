@@ -1769,3 +1769,43 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 	_weapon_cache[cache_key] = {"info": info.duplicate(), "parts": cached_parts}
 	info["parts_by_name"] = parts_by_name
 	return info
+
+
+## Builds the spinning bundled TNT Rope ("TntRope") held in hand when Demolisher Skill 2 is active.
+static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
+	for c in root.get_children():
+		root.remove_child(c)
+		c.queue_free()
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var bundle := Node3D.new()
+	bundle.name = "TntRope"
+	root.add_child(bundle)
+
+	var red_dyn_mat := make_sculpted_mat(Color(0.86, 0.16, 0.14), "", 0.60)
+	var rope_mat := make_sculpted_mat(Color(0.74, 0.56, 0.28), "", 0.78)
+	var brass_mat := make_sculpted_mat(Color(0.78, 0.62, 0.24), "", 0.35, 0.55)
+	var spark_mat := make_sculpted_mat(Color(1.0, 0.85, 0.22), "", 0.20)
+	var dummy: Array[MeshInstance3D] = []
+
+	for dx in [-0.044, 0.044]:
+		for dy in [-0.044, 0.044]:
+			var stick := _add_cyl_part(bundle, 0.036, 0.036, 0.24, Vector3(dx, dy, -0.02), Vector3(PI * 0.5, 0.0, 0.0), red_dyn_mat, 10, dummy)
+			stick.visibility_range_end = 220.0
+	var strap_a := _add_box_part(bundle, Vector3(0.18, 0.18, 0.032), Vector3(0.0, 0.0, 0.04), Vector3.ZERO, rope_mat, dummy)
+	strap_a.visibility_range_end = 220.0
+	var strap_b := _add_box_part(bundle, Vector3(0.18, 0.18, 0.032), Vector3(0.0, 0.0, -0.08), Vector3.ZERO, rope_mat, dummy)
+	strap_b.visibility_range_end = 220.0
+	var cap := _add_cyl_part(bundle, 0.024, 0.024, 0.06, Vector3(0.0, 0.095, -0.02), Vector3.ZERO, brass_mat, 10, dummy)
+	cap.visibility_range_end = 220.0
+	var spark := _add_box_part(bundle, Vector3(0.036, 0.036, 0.036), Vector3(0.02, 0.14, -0.02), Vector3(0.4, 0.5, 0.2), spark_mat, dummy)
+	spark.visibility_range_end = 220.0
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return {
+		"bundle": bundle,
+		"grip": Vector3(0.0, -0.02, 0.02),
+		"foregrip": Vector3.ZERO,
+		"muzzle": Vector3(0.0, 0.0, -0.18),
+		"two_handed": false,
+	}

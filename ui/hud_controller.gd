@@ -141,6 +141,7 @@ var _skill_slot_cd_lbls: Array[Label] = []
 var _skill_slot_keys: Array[Label] = []
 var _upgrade_buttons: Array[Button] = []
 
+var _widget_slot_bgs: Array[PanelContainer] = []
 var _widget_slot_icons: Array[TextureRect] = []
 var _widget_slot_cd_lbls: Array[Label] = []
 var _widget_slot_keys: Array[Label] = []
@@ -767,7 +768,8 @@ func _build_hud() -> void:
 		_skill_slot_cd_lbls.append(cd_lbl)
 		_skill_slot_keys.append(kl)
 
-	# 4 Widget slots (Bandages, Wrench, Fireproof, Antidote)
+	# 4 Widget slots (Bandages, Wrench, Água, Antidote)
+	_widget_slot_bgs.clear()
 	for wj in range(4):
 		var wv := VBoxContainer.new()
 		wv.alignment = BoxContainer.ALIGNMENT_END
@@ -778,6 +780,17 @@ func _build_hud() -> void:
 		bg.custom_minimum_size = Vector2(38, 38)
 		bg.add_theme_stylebox_override("panel", _make_slot_style(false))
 		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var w_entry: Dictionary = SkillCatalog.get_entry_by_key("icon_widget_%d" % wj)
+		if not w_entry.is_empty():
+			bg.tooltip_text = "%s (%s) — %s\nRecarga: %s | Duração: %s | Área: %s\n%s" % [
+				str(w_entry.get("name", "")),
+				str(w_entry.get("category", "")),
+				str(w_entry.get("effect_stats", "")),
+				str(w_entry.get("cooldown", "")),
+				str(w_entry.get("duration", "")),
+				str(w_entry.get("area", "")),
+				str(w_entry.get("description", "")),
+			]
 		wv.add_child(bg)
 
 		var icon := TextureRect.new()
@@ -802,6 +815,7 @@ func _build_hud() -> void:
 		wv.add_child(kl)
 
 		_hotbar_hbox.add_child(wv)
+		_widget_slot_bgs.append(bg)
 		_widget_slot_icons.append(icon)
 		_widget_slot_cd_lbls.append(cd_lbl)
 		_widget_slot_keys.append(kl)
@@ -1251,7 +1265,7 @@ func _process(delta: float) -> void:
 
 	# Update Portrait sprite
 	var t_prefix: String = "royal" if _local_hero.team == NetworkManager.TEAM_ROYAL else "national"
-	var p_key: String = "portrait_%s_%d" % [t_prefix, clampi(_local_hero.class_id, 0, 2)]
+	var p_key: String = "portrait_%s_%d" % [t_prefix, clampi(_local_hero.class_id, 0, 3)]
 	if p_key != _last_portrait_key:
 		_last_portrait_key = p_key
 		_portrait_tex.texture = CartoonAssets.get_texture(p_key)
@@ -1317,7 +1331,10 @@ func _process(delta: float) -> void:
 				_last_ammo_key = ammo_key
 				if w.is_melee:
 					_ammo_value_lbl.text = "∞"
-					_weapon_name_lbl.text = "%s (Faca)" % w.weapon_name
+					var melee_tag: String = "Faca"
+					if w.weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE:
+						melee_tag = "Corpo a Corpo" if w.caber_spent else "Explosivo"
+					_weapon_name_lbl.text = "%s (%s)" % [w.weapon_name, melee_tag]
 				elif w.is_reloading:
 					_ammo_value_lbl.text = "..."
 					_weapon_name_lbl.text = "%s | RECARREGANDO" % w.weapon_name

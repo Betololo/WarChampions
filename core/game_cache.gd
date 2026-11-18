@@ -26,8 +26,8 @@ const ALL_TEXTURE_KEYS: Array[String] = [
 	"veh_olive", "veh_panzer", "veh_steel", "veh_track", "veh_tire",
 	"veh_wood_deck", "veh_plane_royal", "veh_plane_national", "veh_sandbag",
 	"flag_royal", "flag_national", "icon_hp", "icon_ammo",
-	"portrait_royal_0", "portrait_royal_1", "portrait_royal_2",
-	"portrait_national_0", "portrait_national_1", "portrait_national_2",
+	"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3",
+	"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3",
 ]
 
 const SHADER_PATHS: Array[String] = [
@@ -64,12 +64,13 @@ static func warm_textures() -> void:
 		return
 	for k in ALL_TEXTURE_KEYS:
 		CartoonAssets.get_texture(k)
-	for wk in range(9):
+	for wk in range(11):
 		CartoonAssets.get_texture("icon_weapon_%d" % wk)
 		for arch in range(3):
 			CartoonAssets.get_texture("icon_weapon_%d_%d" % [wk, arch])
-	for cls in range(3):
-		for sk in range(6):
+	for cls in range(4):
+		var sk_count: int = 6 if cls == NetworkManager.CLASS_COMMANDO else 5
+		for sk in range(sk_count):
 			CartoonAssets.get_texture("icon_skill_%d_%d" % [cls, sk])
 	for wi in range(4):
 		CartoonAssets.get_texture("icon_widget_%d" % wi)
@@ -108,33 +109,39 @@ static func warm_meshes() -> void:
 	HeroMeshBuilder.build_fedora_mesh()
 	HeroMeshBuilder.build_helmet_mesh(true)
 	HeroMeshBuilder.build_helmet_mesh(false)
+	HeroMeshBuilder.build_visor_helmet_mesh(true)
+	HeroMeshBuilder.build_visor_helmet_mesh(false)
 	HeroMeshBuilder.build_epaulet_mesh(true)
 	HeroMeshBuilder.build_epaulet_mesh(false)
 	for bs in range(3):
 		HeroMeshBuilder.build_beard_mesh(bs)
 
-	for cls in range(3):
+	for cls in range(4):
 		HeroMeshBuilder.build_torso_mesh(cls)
 		HeroMeshBuilder.build_collar_lapels_mesh(cls)
 		HeroMeshBuilder.build_backpack_mesh(cls)
 		HeroMeshBuilder.build_waist_belt_mesh(cls)
 		HeroMeshBuilder.build_bandolier_mesh(cls)
 
-	var arm_r_scales: Array[float] = [1.0, 1.18, 0.94]
-	var thigh_radii: Array[float] = [0.095, 0.114, 0.088]
-	for i in range(3):
+	var arm_r_scales: Array[float] = [1.0, 1.22, 0.96, 1.12]
+	var arm_len_scales: Array[float] = [1.0, 1.12, 1.0, 1.05]
+	var thigh_radii: Array[float] = [0.095, 0.115, 0.090, 0.106]
+	for i in range(4):
 		var ars: float = arm_r_scales[i]
-		HeroMeshBuilder.build_arm_segment_mesh(0.088 * ars, 0.072 * ars, 0.30, true)
-		HeroMeshBuilder.build_arm_segment_mesh(0.068 * ars, 0.056 * ars, 0.28, false)
+		var als: float = arm_len_scales[i]
+		HeroMeshBuilder.build_arm_segment_mesh(0.088 * ars, 0.072 * ars, 0.30 * als, true)
+		HeroMeshBuilder.build_arm_segment_mesh(0.068 * ars, 0.056 * ars, 0.28 * als, false)
 		HeroMeshBuilder.build_hand_mesh(ars)
 		HeroMeshBuilder.build_rolled_sleeve_cap_mesh(0.088 * ars)
 		HeroMeshBuilder.build_cuff_mesh(0.062 * ars)
-		HeroMeshBuilder.build_leg_mesh(thigh_radii[i])
+		HeroMeshBuilder.build_thigh_mesh(thigh_radii[i])
+		HeroMeshBuilder.build_calf_mesh(thigh_radii[i])
 
 	var tmp_w := Node3D.new()
-	for wk in range(9):
+	for wk in range(11):
 		for arch in range(3):
 			HeroMeshBuilder.populate_weapon_root(tmp_w, wk, arch)
+	HeroMeshBuilder.populate_tnt_rope_root(tmp_w)
 	tmp_w.free()
 	StatusEffectsVFX.warm_shared_meshes()
 	_meshes_warmed = true

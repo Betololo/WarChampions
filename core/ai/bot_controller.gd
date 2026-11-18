@@ -115,13 +115,23 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 	# Heal or cleanse status effects if injured/burning/poisoned
 	if bot_hero.hp < int(float(bot_hero.max_hp) * 0.5):
 		cmd.set_button(InputCmd.BTN_WIDGET_1, true)
-		if bot_hero.class_id == NetworkManager.CLASS_SOLDIER or bot_hero.class_id == NetworkManager.CLASS_GUNNER:
+		if bot_hero.class_id == NetworkManager.CLASS_SOLDIER or bot_hero.class_id == NetworkManager.CLASS_GUNNER or bot_hero.class_id == NetworkManager.CLASS_DEMOLISHER:
 			cmd.set_button(InputCmd.BTN_SKILL_1, true)
 	if bot_hero.status_effects != null:
 		if bot_hero.status_effects.is_burning():
 			cmd.set_button(InputCmd.BTN_WIDGET_3, true)
 		if bot_hero.status_effects.is_poisoned():
 			cmd.set_button(InputCmd.BTN_WIDGET_4, true)
+
+	var bot_pos_for_veh: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
+	var near_enemy_veh: bool = false
+	if bot_hero.class_id == NetworkManager.CLASS_DEMOLISHER:
+		for v in vehicles:
+			if v != null and not v.is_destroyed and v.team >= 0 and v.team != bot_hero.team:
+				var v_pos: Vector3 = v.global_position if v.is_inside_tree() else v.position
+				if v_pos.distance_to(bot_pos_for_veh) <= 45.0:
+					near_enemy_veh = true
+					break
 
 	if target_enemy != null:
 		if target_enemy.entity_id != _engaged_target_id:
@@ -144,10 +154,35 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 		var tgt_pos: Vector3 = target_enemy.global_position if target_enemy.is_inside_tree() else target_enemy.position
 		var to_enemy: Vector3 = (tgt_pos + Vector3(0.0, 1.18, 0.0)) - (bot_pos + Vector3(0.0, LOS_EYE_HEIGHT, 0.0))
 		var dist: float = to_enemy.length()
+
+		var max_fire_dist: float = MAX_FIRE_RANGE
+		var preferred_engage_dist: float = 18.0
+		var arc_pitch_bias: float = 0.0
+		if bot_hero.class_id == NetworkManager.CLASS_DEMOLISHER and not bot_hero.weapons.is_empty():
+			var flam_w: WeaponBase = bot_hero.weapons[0] as WeaponBase
+			var flam_arch: int = flam_w.archetype if flam_w != null else 0
+			if dist < 14.0:
+				cmd.selected_weapon_slot = 0
+				max_fire_dist = 14.0
+				preferred_engage_dist = 8.0
+			elif dist < 40.0 and bot_hero.weapons.size() > 1:
+				cmd.selected_weapon_slot = 1
+				max_fire_dist = 40.0
+				preferred_engage_dist = 12.0
+				arc_pitch_bias = clampf(dist * 0.008, 0.0, 0.28)
+			elif flam_arch == 2 and dist < 52.0:
+				cmd.selected_weapon_slot = 0
+				max_fire_dist = 52.0
+				preferred_engage_dist = 14.0
+			elif bot_hero.weapons.size() > 1:
+				cmd.selected_weapon_slot = 1
+				max_fire_dist = 40.0
+				preferred_engage_dist = 12.0
+
 		var flat_dir := Vector3(to_enemy.x, 0.0, to_enemy.z)
 		if flat_dir.length_squared() > 0.001:
 			var base_yaw: float = atan2(-flat_dir.x, -flat_dir.z)
-			var base_pitch: float = clampf(atan2(to_enemy.y, flat_dir.length()), -1.1, 1.1)
+			var base_pitch: float = clampf(atan2(to_enemy.y, flat_dir.length()) + arc_pitch_bias, -1.1, 1.1)
 			_aim_time += delta
 			var speed_factor: float = clampf(target_enemy.velocity.length() / 10.0, 0.0, 1.0)
 			var dist_factor: float = clampf(dist / 65.0, 0.0, 1.0)
@@ -157,21 +192,38 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			cmd.aim_yaw = base_yaw + sway_yaw
 			cmd.aim_pitch = clampf(base_pitch + sway_pitch, -1.1, 1.1)
 
-		var can_fire: bool = (_reaction_timer <= 0.0) and _burst_firing and (dist < MAX_FIRE_RANGE)
-		cmd.set_button(InputCmd.BTN_FIRE, can_fire)
-		cmd.set_button(InputCmd.BTN_SKILL_2, can_fire and (_ai_tick % 180) == 0)
-		cmd.set_button(InputCmd.BTN_SKILL_3, can_fire and (_ai_tick % 240) == 0)
-		cmd.set_button(InputCmd.BTN_SKILL_4, can_fire and (_ai_tick % 300) == 0)
-		cmd.set_button(InputCmd.BTN_SKILL_5, can_fire and (_ai_tick % 360) == 0)
-		cmd.set_button(InputCmd.BTN_SKILL_6, can_fire and bot_hero.class_id == NetworkManager.CLASS_COMMANDO and (_ai_tick % 420) == 0)
+		var can_fire: bool = (_reaction_timer <= 0.0) and _burst_firing and (dist < max_fire_dist)
+		var tnt_rope_ready: bool = bot_hero.status_effects != null and bot_hero.status_effects.has_method("is_tnt_rope_active") and bool(bot_hero.status_effects.is_tnt_rope_active())
+		if tnt_rope_ready:
+			cmd.set_button(InputCmd.BTN_FIRE, (_ai_tick % 2) == 0)
+		else:
+			cmd.set_button(InputCmd.BTN_FIRE, can_fire)
 
-		if dist > 18.0:
+		if bot_hero.class_id == NetworkManager.CLASS_DEMOLISHER:
+			if can_fire and dist < 28.0 and (_ai_tick % 120) == 0:
+				cmd.set_button(InputCmd.BTN_SKILL_1, true) # Riot Shield
+			cmd.set_button(InputCmd.BTN_SKILL_2, (can_fire or dist < 24.0) and (_ai_tick % 90) == 0) # Haste
+			cmd.set_button(InputCmd.BTN_SKILL_3, can_fire and dist < 22.0 and (_ai_tick % 240) == 0) # TNT Rope
+			cmd.set_button(InputCmd.BTN_SKILL_4, can_fire and (_ai_tick % 150) == 0) # Shield Drain
+			cmd.set_button(InputCmd.BTN_SKILL_5, near_enemy_veh or (can_fire and (_ai_tick % 300) == 0)) # Vehicle Buster
+			if cmd.selected_weapon_slot == 1 and (_ai_tick % 36) == 0:
+				cmd.set_button(InputCmd.BTN_AIM, true) # Detonate Trapper stickies when armed
+		else:
+			cmd.set_button(InputCmd.BTN_SKILL_2, can_fire and (_ai_tick % 180) == 0)
+			cmd.set_button(InputCmd.BTN_SKILL_3, can_fire and (_ai_tick % 240) == 0)
+			cmd.set_button(InputCmd.BTN_SKILL_4, can_fire and (_ai_tick % 300) == 0)
+			cmd.set_button(InputCmd.BTN_SKILL_5, can_fire and (_ai_tick % 360) == 0)
+			cmd.set_button(InputCmd.BTN_SKILL_6, can_fire and bot_hero.class_id == NetworkManager.CLASS_COMMANDO and (_ai_tick % 420) == 0)
+
+		if dist > preferred_engage_dist:
 			cmd.move_dir = Vector2(_strafe_dir * 0.4, -0.9)
 		else:
 			cmd.move_dir = Vector2(_strafe_dir * 0.85, 0.15)
 	else:
 		# Target occluded or none visible: never fire or aim through walls!
 		cmd.set_button(InputCmd.BTN_FIRE, false)
+		if near_enemy_veh and bot_hero.class_id == NetworkManager.CLASS_DEMOLISHER:
+			cmd.set_button(InputCmd.BTN_SKILL_5, true)
 		var move_target: Vector3 = desired_pos
 		if _engaged_target_id >= 0 and _memory_timer > 0.0:
 			_memory_timer = maxf(0.0, _memory_timer - delta)

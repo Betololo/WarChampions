@@ -332,12 +332,12 @@ func can_detonate() -> bool:
 	return age_sec >= 0.5 and not _exploded and not is_queued_for_deletion()
 
 
-func destroy_by_enemy() -> void:
+func destroy_by_enemy(emit_vfx: bool = true) -> void:
 	if _exploded:
 		return
 	_exploded = true
 	remove_from_group("destructible_stickies")
-	if is_inside_tree() and not bool(get_meta("visual_only", false)) and NetworkManager.is_server_authority():
+	if emit_vfx and is_inside_tree() and not bool(get_meta("visual_only", false)) and NetworkManager.is_server_authority():
 		NetworkManager.broadcast_game_event("hit_vfx", {
 			"pos": global_position,
 			"kind": "spark",
@@ -419,9 +419,9 @@ func _physics_process(delta: float) -> void:
 			var mask: int = (1 | 8 | 64) if is_visual_only else (1 | 2 | 8 | 64)
 			var query := PhysicsRayQueryParameters3D.create(global_position, next_pos, mask)
 			var heroes_map: Dictionary = _context.get("heroes_by_id", {})
-			var shooter_node: HeroCharacter = heroes_map.get(owner_id, null) as HeroCharacter
-			if shooter_node != null and is_instance_valid(shooter_node):
-				query.exclude = [shooter_node.get_rid()]
+			var shooter_var: Variant = heroes_map.get(owner_id, null)
+			if shooter_var != null and is_instance_valid(shooter_var) and shooter_var is HeroCharacter:
+				query.exclude = [(shooter_var as HeroCharacter).get_rid()]
 			var res: Dictionary = space.intersect_ray(query)
 			if not res.is_empty():
 				var hit_pos: Vector3 = res["position"]
@@ -444,7 +444,7 @@ func _physics_process(delta: float) -> void:
 					return
 				else:
 					# Bounce / roll (Grenades, Keg)
-					if kind == ProjectileKind.BOUNCE_GRENADE and not _bounce_fuse_started:
+					if kind == ProjectileKind.BOUNCE_GRENADE and not _bounce_fuse_started and not (collider is HeroCharacter):
 						_bounce_fuse_started = true
 						lifetime = minf(lifetime, 2.0)
 					global_position = hit_pos + hit_normal * 0.15

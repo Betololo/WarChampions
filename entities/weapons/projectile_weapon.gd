@@ -49,6 +49,8 @@ func try_detonate_stickies(cmd: InputCmd) -> bool:
 		return false
 	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("is_tnt_rope_active") and owner_hero.status_effects.is_tnt_rope_active():
 		return false
+	if owner_hero.skill_manager != null and owner_hero.skill_manager.has_method("blocks_weapon_fire") and bool(owner_hero.skill_manager.blocks_weapon_fire()):
+		return false
 
 	_prune_stickies()
 	var candidates: Array[ProjectileEntity] = []
@@ -115,7 +117,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		while _active_stickies.size() > 6:
 			var oldest: ProjectileEntity = _active_stickies.pop_front()
 			if is_instance_valid(oldest) and not oldest.is_queued_for_deletion():
-				oldest.destroy_by_enemy()
+				oldest.destroy_by_enemy(false)
 
 	var end_pos: Vector3 = origin + dir * 20.0
 	fired.emit(weapon_kind, origin, end_pos)

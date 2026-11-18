@@ -47,6 +47,7 @@ func _ready() -> void:
 	await _test_phase11_task3_crosshair_and_animations()
 	await _test_phase11_task4_demolisher()
 	await _test_phase11_task5_demolisher_weapons()
+	await _test_phase11_task6_ui_bots_and_full_matrix()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -4282,7 +4283,7 @@ func _test_phase8_task1_skill_icons_and_guide() -> void:
 			found_combat_med = true
 			break
 
-	menu.select_skills_tab(3)
+	menu.select_skills_tab(4)
 	var widget_tab_count: int = menu._skills_grid.get_child_count()
 
 	menu._skills_back_btn.pressed.emit()
@@ -6113,6 +6114,7 @@ func _test_phase11_task3_crosshair_and_animations() -> void:
 	)
 
 	# Verify kill_event on MainGame flashes white hitmarker for local killer
+	var prev_local_id: int = NetworkManager.local_peer_id
 	var game := MainGame.new()
 	add_child(game)
 	NetworkManager.local_peer_id = 42
@@ -6122,6 +6124,7 @@ func _test_phase11_task3_crosshair_and_animations() -> void:
 		and game.hud._hitmarker_container.modulate == Color.WHITE
 		and game.hud._hitmarker_timer > 0.20
 	)
+	NetworkManager.local_peer_id = prev_local_id
 	game.queue_free()
 	hud.queue_free()
 
@@ -6939,4 +6942,305 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	)
 
 	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
+	print("--- Phase 11 Task 6: 4-Class UI, HUD, Bot AI, GameCache & Full Verification ---")
+
+	# 1. ClassSelectMenu: 4 class cards fitting inside 980x620 panel, Demolisher slots/variants, 5-tab Skills guide
+	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys_p11t6.cfg"
+	add_child(menu)
+	await _flush_deferred()
+
+	menu.show_screen("armory")
+	var cards_ok: bool = (menu._class_cards.size() == 4 and menu._class_buttons.size() == 4)
+	var cards_fit_ok: bool = true
+	if menu._class_cards.size() == 4:
+		var cls_row_node := menu._class_cards[0].get_parent() as Control
+		if cls_row_node != null and cls_row_node.get_combined_minimum_size().x > 932.0:
+			cards_fit_ok = false
+	var demo_slots: Array[int] = ClassSelectMenu.get_class_weapon_slots(NetworkManager.CLASS_DEMOLISHER)
+	var slots_ok: bool = (
+		demo_slots.size() == 3
+		and demo_slots[0] == WeaponBase.WeaponKind.FLAMETHROWER
+		and demo_slots[1] == WeaponBase.WeaponKind.GRENADE_LAUNCHER
+		and demo_slots[2] == WeaponBase.WeaponKind.STICK_GRENADE
+	)
+
+	menu.select_team(NetworkManager.TEAM_ROYAL)
+	menu.select_class(NetworkManager.CLASS_DEMOLISHER)
+	await _flush_deferred()
+	var royal_demo_sel_ok: bool = (
+		menu.selected_class == NetworkManager.CLASS_DEMOLISHER
+		and menu._preview_portrait.texture == CartoonAssets.get_texture("portrait_royal_3")
+		and menu._summary_lbl.text.contains("Demolisher")
+		and menu._weapon_variant_selectors.size() == 3
+		and menu._weapon_variant_selectors[0].item_count == 3
+		and menu._weapon_variant_selectors[1].item_count == 3
+		and menu._weapon_variant_selectors[2].item_count == 1
+		and menu._weapon_variant_selectors[2].get_item_text(0) == "Granada de Cabo"
+	)
+	menu.select_team(NetworkManager.TEAM_NATIONAL)
+	var nat_demo_sel_ok: bool = (menu._preview_portrait.texture == CartoonAssets.get_texture("portrait_national_3"))
+
+	menu._armory_skills_btn.pressed.emit()
+	await _flush_deferred()
+	var skills_tabs_ok: bool = (
+		menu.current_screen == "skills"
+		and menu._skills_tab_buttons.size() == 5
+		and menu._skills_tab_class == NetworkManager.CLASS_DEMOLISHER
+		and menu._skills_grid.get_child_count() == 5
+	)
+	var found_shield_skill: bool = false
+	var found_buster_skill: bool = false
+	for lbl_n in menu._skills_grid.find_children("*", "Label", true, false):
+		var txt: String = (lbl_n as Label).text
+		if txt.contains("Escudo Balístico"):
+			found_shield_skill = true
+		if txt.contains("Quebra-Tanques"):
+			found_buster_skill = true
+
+	menu.select_skills_tab(4)
+	await _flush_deferred()
+	var found_agua: bool = false
+	var found_cueca: bool = false
+	for lbl_w in menu._skills_grid.find_children("*", "Label", true, false):
+		var txt_w: String = (lbl_w as Label).text
+		if txt_w.contains("Água"):
+			found_agua = true
+		if txt_w.contains("Cueca"):
+			found_cueca = true
+	var widgets_tab_ok: bool = (menu._skills_grid.get_child_count() == 4 and found_agua and not found_cueca)
+	menu.queue_free()
+
+	_assert(
+		cards_ok and cards_fit_ok and slots_ok and royal_demo_sel_ok and nat_demo_sel_ok
+		and skills_tabs_ok and found_shield_skill and found_buster_skill and widgets_tab_ok,
+		"Phase 11.6a: ClassSelectMenu 4-class cards fit 980x620, Demolisher slots/variants, 5-tab Skills guide, and Água widget"
+	)
+
+	# 2. HUDController Demolisher portraits, 5 skill icons/tooltips, Água widget tooltip, and Caber label
+	var hud := HUDController.new()
+	add_child(hud)
+	var h_demo_r := HeroCharacter.new()
+	h_demo_r.setup_identity(11601, "HudDemoR", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, true, false)
+	var h_demo_n := HeroCharacter.new()
+	h_demo_n.setup_identity(11602, "HudDemoN", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_DEMOLISHER, 0, true, false)
+	add_child(h_demo_r)
+	add_child(h_demo_n)
+
+	hud.set_local_hero(h_demo_r)
+	hud._process(0.016)
+	var hud_royal_ok: bool = (
+		hud._portrait_tex.texture == CartoonAssets.get_texture("portrait_royal_3")
+		and hud._skill_slot_icons[0].texture == CartoonAssets.get_texture("icon_skill_3_0")
+		and hud._skill_slot_icons[4].texture == CartoonAssets.get_texture("icon_skill_3_4")
+		and hud._skill_slot_bgs[0].tooltip_text.contains("Escudo Balístico")
+		and hud._skill_slot_bgs[4].tooltip_text.contains("Quebra-Tanques")
+		and not hud._skill_slot_boxes[5].visible
+		and hud._widget_slot_bgs.size() == 4
+		and hud._widget_slot_bgs[2].tooltip_text.contains("Água")
+	)
+	h_demo_r.selected_weapon_slot = 2
+	hud._process(0.016)
+	var caber_lbl_ok: bool = hud._weapon_name_lbl.text.contains("Granada de Cabo") and not hud._weapon_name_lbl.text.contains("Faca")
+
+	hud.set_local_hero(h_demo_n)
+	hud._process(0.016)
+	var hud_nat_ok: bool = (hud._portrait_tex.texture == CartoonAssets.get_texture("portrait_national_3"))
+	_assert(
+		hud_royal_ok and caber_lbl_ok and hud_nat_ok,
+		"Phase 11.6b: HUDController displays Demolisher Royal/National portraits, 5 skill icons/tooltips, Água widget tooltip, and Caber label"
+	)
+
+	# 3. HeroCharacter TNT Rope replaces held rifle with spinning TntRope bundle & restores weapon cleanly
+	h_demo_r.selected_weapon_slot = 0
+	h_demo_r._animate_character(0.016)
+	var tnt_before: Node = h_demo_r._held_weapon_root.get_node_or_null("TntRope")
+	var dsm: DemolisherSkills = h_demo_r.skill_manager as DemolisherSkills
+	var d_ctx: Dictionary = {"heroes_by_id": {11601: h_demo_r}, "projectiles_root": self}
+	dsm.try_activate_skill(2, InputCmd.new(), d_ctx)
+	h_demo_r._animate_character(0.05)
+	var tnt_bundle := h_demo_r._held_weapon_root.get_node_or_null("TntRope") as Node3D
+	var rot_a: Vector3 = tnt_bundle.rotation if tnt_bundle != null else Vector3.ZERO
+	h_demo_r._animate_character(0.10)
+	var rot_b: Vector3 = tnt_bundle.rotation if tnt_bundle != null else Vector3.ZERO
+	var tnt_spinning_ok: bool = (
+		tnt_before == null
+		and tnt_bundle != null
+		and h_demo_r._held_weapon_root.get_child_count() == 1
+		and rot_a.distance_to(rot_b) > 0.1
+	)
+	dsm.throw_tnt_rope(InputCmd.new(), d_ctx)
+	h_demo_r._animate_character(0.016)
+	var tnt_restored_ok: bool = (
+		h_demo_r._held_weapon_root.get_node_or_null("TntRope") == null
+		and h_demo_r._shown_weapon_kind == WeaponBase.WeaponKind.FLAMETHROWER
+	)
+	_assert(tnt_spinning_ok and tnt_restored_ok, "Phase 11.6c: TNT Rope replaces held rifle with spinning TntRope bundle and restores weapon after throw")
+	hud.queue_free()
+	h_demo_r.queue_free()
+	h_demo_n.queue_free()
+
+	# 4. BotController Demolisher AI distances (Flamethrower <14m, Grenade Launcher <40m), Vehicle Buster, and Riot Shield
+	var arena6 := Node3D.new()
+	add_child(arena6)
+	var bot_demo := HeroCharacter.new()
+	bot_demo.setup_identity(11610, "DemoBot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, false, true)
+	arena6.add_child(bot_demo)
+	var enemy_b := HeroCharacter.new()
+	enemy_b.setup_identity(11611, "EnemyB", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena6.add_child(enemy_b)
+	var enemy_tank := VehicleTank.new()
+	enemy_tank.id = 11690
+	enemy_tank.team = NetworkManager.TEAM_NATIONAL
+	arena6.add_child(enemy_tank)
+
+	var brain := BotController.new()
+	brain.setup(bot_demo)
+	arena6.add_child(brain)
+	var b_heroes: Dictionary = {11610: bot_demo, 11611: enemy_b}
+	var b_vehs: Array[VehicleBase] = [enemy_tank]
+
+	bot_demo.global_position = Vector3.ZERO
+	bot_demo.aim_yaw = 0.0
+	enemy_b.global_position = Vector3(0.0, 0.0, -8.0) # Close < 14m -> Flamethrower (slot 0)
+	enemy_tank.global_position = Vector3(15.0, 0.0, -25.0) # Clear of LOS between bot_demo and enemy_b, <= 45m
+	await get_tree().physics_frame
+	var cmd_close: InputCmd = brain.step_ai(0.016, [], b_heroes, b_vehs)
+	var close_ok: bool = (cmd_close.selected_weapon_slot == 0 and cmd_close.has_button(InputCmd.BTN_SKILL_5))
+
+	enemy_b.global_position = Vector3(0.0, 0.0, -26.0) # Medium 14..40m -> Grenade Launcher (slot 1)
+	brain._ai_tick = 5
+	var cmd_mid: InputCmd = brain.step_ai(0.016, [], b_heroes, b_vehs)
+	var mid_ok: bool = (cmd_mid.selected_weapon_slot == 1)
+
+	bot_demo.hp = 40 # Injured -> Riot Shield (BTN_SKILL_1)
+	brain._ai_tick = 11
+	var cmd_low: InputCmd = brain.step_ai(0.016, [], b_heroes, b_vehs)
+	var shield_ai_ok: bool = cmd_low.has_button(InputCmd.BTN_SKILL_1)
+	_assert(close_ok and mid_ok and shield_ai_ok, "Phase 11.6d: BotController Demolisher picks Flamethrower <14m (close=%s), Grenade Launcher <40m (mid=%s), Vehicle Buster & Riot Shield (sh=%s)" % [str(close_ok), str(mid_ok), str(shield_ai_ok)])
+
+	# 5. Carry-over Task 5 fixes: BOUNCE_GRENADE teammate non-fuse, 7th sticky silent eviction
+	var ally_b := HeroCharacter.new()
+	ally_b.setup_identity(11612, "AllyB", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena6.add_child(ally_b)
+	ally_b.global_position = Vector3(0.0, 0.0, -4.0)
+	await get_tree().physics_frame
+	var bg_ctx: Dictionary = {"heroes_by_id": {11610: bot_demo, 11611: enemy_b, 11612: ally_b}, "projectiles_root": arena6}
+	var bg_team := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BOUNCE_GRENADE,
+		bot_demo.entity_id, bot_demo.team,
+		Vector3(0.0, 1.0, -2.5), Vector3(0.0, 0.0, -30.0), bg_ctx, 60.0, arena6
+	)
+	for _t in range(6):
+		bg_team._physics_process(0.02)
+	var teammate_nofuse_ok: bool = (not bg_team._bounce_fuse_started and not bg_team._exploded)
+	bg_team.queue_free()
+
+	var hit_vfx_count: int = 0
+	var on_spark := func(ev_t: String, _pl: Dictionary) -> void:
+		if ev_t == "hit_vfx":
+			hit_vfx_count += 1
+	NetworkManager.game_event_received.connect(on_spark)
+	var gl_cap := ProjectileWeapon.new()
+	gl_cap.configure(bot_demo, WeaponBase.WeaponKind.GRENADE_LAUNCHER, 1)
+	bot_demo.add_child(gl_cap)
+	var cap_cmd := InputCmd.new()
+	for _s in range(7):
+		gl_cap.fire_server(cap_cmd, bg_ctx)
+	NetworkManager.game_event_received.disconnect(on_spark)
+	var silent_evict_ok: bool = (hit_vfx_count == 0)
+	gl_cap.queue_free()
+	_assert(teammate_nofuse_ok and silent_evict_ok, "Phase 11.6e: BOUNCE_GRENADE skips teammate bounce fuse and 7th sticky cap evicts silently (spark_vfx=%d)" % hit_vfx_count)
+
+	# 6. GameCache warm_textures() & warm_meshes() cover WeaponKind 0..10 and Classes 0..3 cleanly
+	GameCache.clear_all()
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
+	var cache_ok: bool = (
+		GameCache.is_textures_warmed()
+		and GameCache.is_meshes_warmed()
+		and CartoonAssets._cache.has("portrait_royal_3")
+		and CartoonAssets._cache.has("portrait_national_3")
+		and CartoonAssets._cache.has("icon_weapon_10_0")
+		and CartoonAssets._cache.has("icon_skill_3_4")
+		and HeroMeshBuilder._mesh_cache.has("torso_3")
+		and HeroMeshBuilder._weapon_cache.has("10_0")
+	)
+	_assert(cache_ok, "Phase 11.6f: GameCache warms Demolisher portraits, icons (0..10), skills (0..3), visor/torso meshes & TntRope")
+
+	# 7. MainGame 14v14 spawn includes Demolisher bots + single-path TNT Rope + FirePatch client refresh + Map budgets
+	var prev_peer_id: int = NetworkManager.local_peer_id
+	var game6 := MainGame.new()
+	add_child(game6)
+	game6._start_bots_sync(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER)
+	var demo_bot_count: int = 0
+	for h_val in game6.heroes_by_id.values():
+		var hh := h_val as HeroCharacter
+		if hh != null and hh.is_bot and hh.class_id == NetworkManager.CLASS_DEMOLISHER:
+			demo_bot_count += 1
+	var local_hero6: HeroCharacter = game6.heroes_by_id.get(NetworkManager.local_peer_id, null)
+	var w0_6: WeaponBase = local_hero6.weapons[0] as WeaponBase if local_hero6 != null else null
+	var dsm6: DemolisherSkills = local_hero6.skill_manager as DemolisherSkills if local_hero6 != null else null
+	var rope_flow_ok: bool = false
+	if local_hero6 != null and w0_6 != null and dsm6 != null:
+		local_hero6.is_local_player = false
+		var cmd_act := InputCmd.new()
+		cmd_act.set_button(InputCmd.BTN_SKILL_3, true)
+		local_hero6.latest_server_input = cmd_act
+		game6._physics_process(0.016)
+		var ammo_before_held_fire: int = w0_6.ammo_in_mag
+		var cmd_hold := InputCmd.new()
+		cmd_hold.set_button(InputCmd.BTN_FIRE, true)
+		local_hero6.latest_server_input = cmd_hold
+		game6._physics_process(0.016)
+		var ammo_after_throw_tick: int = w0_6.ammo_in_mag
+		var prev_held_synced: bool = w0_6._prev_fire_held
+		game6._physics_process(0.016)
+		var ammo_while_held: int = w0_6.ammo_in_mag
+		local_hero6.latest_server_input = InputCmd.new()
+		game6._physics_process(0.016)
+		rope_flow_ok = (
+			not local_hero6.status_effects.tnt_rope_active
+			and ammo_after_throw_tick == ammo_before_held_fire
+			and ammo_while_held == ammo_before_held_fire
+			and prev_held_synced
+			and not w0_6._prev_fire_held
+		)
+
+	var fp_client := DemolisherSkills.FirePatchEntity.new()
+	fp_client.set_meta("visual_only", true)
+	fp_client.owner_id = 777
+	fp_client.position = Vector3(12.0, 0.0, 12.0)
+	fp_client._lifetime_elapsed = 4.5
+	game6.projectiles_root.add_child(fp_client)
+	game6._on_game_event("fire_patch_vfx", {"pos": Vector3(12.0, 0.0, 12.0), "owner_id": 777, "radius": 2.6})
+	var fp_client_refresh_ok: bool = is_equal_approx(fp_client._lifetime_elapsed, 0.0)
+
+	var mesh_count: int = 0
+	var uniq_meshes: Dictionary = {}
+	var uniq_mats: Dictionary = {}
+	for node in game6.map_instance.find_children("*", "MeshInstance3D", true, false):
+		var mi := node as MeshInstance3D
+		mesh_count += 1
+		if mi.mesh != null:
+			uniq_meshes[mi.mesh.get_instance_id()] = true
+		if mi.material_override != null:
+			uniq_mats[mi.material_override.get_instance_id()] = true
+	var budgets_ok: bool = (mesh_count <= 900 and uniq_meshes.size() <= 350 and uniq_mats.size() <= 200)
+
+	_assert(
+		game6.heroes_by_id.size() == 28 and demo_bot_count >= 6 and rope_flow_ok and fp_client_refresh_ok and budgets_ok and NetSerializer.INPUT_CMD_BYTES == 15,
+		"Phase 11.6g: 14v14 spawns %d Demolisher bots, MainGame TNT Rope & FirePatch refresh, INPUT_CMD=15B, map budgets (%d/%d/%d)" % [
+			demo_bot_count, mesh_count, uniq_meshes.size(), uniq_mats.size()
+		]
+	)
+
+	NetworkManager.shutdown_network()
+	NetworkManager.local_peer_id = prev_peer_id
+	game6.queue_free()
+	arena6.queue_free()
 	await _flush_deferred()

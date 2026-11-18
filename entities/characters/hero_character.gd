@@ -128,6 +128,8 @@ var _weapon_cycle_progress: float = 0.0
 var _weapon_reload_progress: float = 0.0
 var _weapon_parts_by_name: Dictionary = {}
 var _caber_head_spent: bool = false
+var _tnt_rope_bundle: Node3D = null
+var _tnt_spin_angle: float = 0.0
 var _skill_anim_timer: float = 0.0
 var _skill_anim_duration: float = 0.55
 var _skill_anim_style: String = ""
@@ -648,8 +650,37 @@ func trim_mat_badge_mesh() -> Mesh:
 	return HeroMeshBuilder.build_badge_mesh()
 
 
+func _is_tnt_rope_held() -> bool:
+	if (active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0:
+		return true
+	if status_effects != null and status_effects.has_method("is_tnt_rope_active"):
+		return bool(status_effects.is_tnt_rope_active())
+	return false
+
+
 func _rebuild_held_weapon_mesh() -> void:
-	if _held_weapon_root == null or weapons.is_empty():
+	if _held_weapon_root == null:
+		return
+	if _is_tnt_rope_held():
+		if _shown_weapon_kind == -99 and _tnt_rope_bundle != null and is_instance_valid(_tnt_rope_bundle):
+			return
+		_shown_weapon_kind = -99
+		_shown_weapon_arch = 0
+		_cycle_anim_timer = 0.0
+		_cycle_anim_duration = 0.0
+		_weapon_cycle_progress = 0.0
+		_weapon_reload_progress = 0.0
+		_weapon_parts_by_name.clear()
+		var t_info: Dictionary = HeroMeshBuilder.populate_tnt_rope_root(_held_weapon_root)
+		_tnt_rope_bundle = t_info.get("bundle", null) as Node3D
+		_weapon_grip_local = t_info.get("grip", Vector3(0.0, -0.02, 0.02))
+		_weapon_foregrip_local = t_info.get("foregrip", Vector3.ZERO)
+		_weapon_muzzle_local = t_info.get("muzzle", Vector3(0.0, 0.0, -0.18))
+		_weapon_two_handed = false
+		return
+
+	_tnt_rope_bundle = null
+	if weapons.is_empty():
 		return
 	var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
 	var w: WeaponBase = weapons[slot] as WeaponBase
@@ -830,6 +861,11 @@ func _process(delta: float) -> void:
 func _animate_character(delta: float) -> void:
 	if _hips_pivot == null:
 		return
+	_rebuild_held_weapon_mesh()
+	if _is_tnt_rope_held():
+		_tnt_spin_angle = wrapf(_tnt_spin_angle + delta * 5.5, 0.0, TAU)
+	else:
+		_tnt_spin_angle = 0.0
 	if _parachute_rig != null:
 		_parachute_rig.visible = is_parachuting and not is_defeated
 	if _defeat_prop != null:
@@ -1269,6 +1305,11 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 				var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.5 - throw_phase * 0.9, 0.20, 0.0)
+			-99: # TNT Rope bundle spinning in hand while active
+				_held_weapon_root.position = Vector3(0.25, 0.36, -0.22)
+				_held_weapon_root.rotation = Vector3(aim_pitch * 0.5, 0.20, 0.0)
+				if _tnt_rope_bundle != null and is_instance_valid(_tnt_rope_bundle):
+					_tnt_rope_bundle.rotation = Vector3(_tnt_spin_angle * 0.4, _tnt_spin_angle, 0.25)
 			_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
 				var r_tilt: float = 0.52 if reloading else 0.0
 				var base_yaw: float = 0.66 if _shown_weapon_kind == WeaponBase.WeaponKind.SNIPER else 0.58
