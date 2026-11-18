@@ -1034,6 +1034,7 @@ func show_screen(screen_name: String) -> void:
 	if screen_name == "armory":
 		_refresh_summary()
 	elif screen_name == "settings":
+		_refresh_hotkey_buttons()
 		if _settings_back_btn != null:
 			_settings_back_btn.text = "<- Voltar ao Arsenal" if _settings_return_screen == "armory" else "<- Voltar ao Hub"
 	elif screen_name == "skills":
@@ -1209,13 +1210,17 @@ func assign_hotkey_from_ui(kind: String, slot_idx: int, keycode: int) -> void:
 
 
 func _refresh_hotkey_buttons() -> void:
+	var skill_order: Array[int] = InputCmd.get_active_skill_order(6)
 	for s_i in range(_skill_hotkey_buttons.size()):
+		var logical_s: int = skill_order[s_i] if s_i < skill_order.size() else s_i
 		var lbl: String = InputCmd.key_short_label(InputCmd.get_skill_key(s_i))
-		_skill_hotkey_buttons[s_i].text = "Skill %d: %s" % [s_i + 1, lbl]
+		_skill_hotkey_buttons[s_i].text = "Skill %d: %s" % [logical_s + 1, lbl]
 	var w_names: Array[String] = ["Bandagem", "Chave", "Água", "Antídoto"]
+	var widget_order: Array[int] = InputCmd.get_active_widget_order(4)
 	for w_i in range(_widget_hotkey_buttons.size()):
+		var logical_w: int = widget_order[w_i] if w_i < widget_order.size() else w_i
 		var wlbl: String = InputCmd.key_short_label(InputCmd.get_widget_key(w_i))
-		_widget_hotkey_buttons[w_i].text = "%s: %s" % [w_names[w_i], wlbl]
+		_widget_hotkey_buttons[w_i].text = "%s: %s" % [w_names[logical_w], wlbl]
 
 
 func _notify_hud_hotkeys_changed() -> void:
@@ -1270,7 +1275,16 @@ func show_menu() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
+func _is_mortar_targeting_active() -> bool:
+	if not is_inside_tree():
+		return false
+	for h in get_tree().get_nodes_in_group("hud_controllers"):
+		if h != null and h.has_method("is_mortar_targeting_active") and h.is_mortar_targeting_active():
+			return true
+	return false
+
+
 func hide_menu() -> void:
 	visible = false
-	if not DisplayServer.get_name().contains("headless") and not Input.is_key_pressed(KEY_ALT):
+	if not DisplayServer.get_name().contains("headless") and not Input.is_key_pressed(KEY_ALT) and not _is_mortar_targeting_active():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED

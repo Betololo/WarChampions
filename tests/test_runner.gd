@@ -8383,14 +8383,37 @@ func _test_phase12_task3_hotkeys_drag_minimap() -> void:
 	hud._alt_cursor_mode = false
 	var gui_drag_ok: bool = (InputCmd.widget_slot_order == [3, 2, 1, 0])
 
+	# Verify Settings menu reflects reordered skills & widgets, and Reset restores HUD icons/highlights
+	var menu_reordered := ClassSelectMenu.new()
+	menu_reordered.hotkeys_config_path = ""
+	add_child(menu_reordered)
+	await _flush_deferred()
+	menu_reordered.show_screen("settings")
+	var menu_reordered_ok: bool = (
+		menu_reordered._skill_hotkey_buttons[0].text.begins_with("Skill 5:")
+		and menu_reordered._widget_hotkey_buttons[0].text.begins_with("Antídoto:")
+	)
+	menu_reordered.queue_free()
+	await _flush_deferred()
+
+	sol.selected_weapon_slot = 0
+	InputCmd.reset_default_hotkeys()
+	hud.refresh_hotkey_labels()
+	var reset_restores_hud_ok: bool = (
+		hud._weapon_slot_icons[0].texture == w0_tex and hud._weapon_slot_icons[2].texture == w2_tex
+		and hud._skill_slot_icons[0].texture == s0_tex and hud._skill_slot_icons[4].texture == s4_tex
+		and hud._widget_slot_icons[0].texture == wd0_tex and hud._widget_slot_icons[3].texture == wd3_tex
+		and hud._weapon_slot_bgs[0].get_theme_stylebox("panel") == hud._make_slot_style(true)
+	)
+
 	_assert(
 		swap_w_ok and swap_s_ok and swap_wd_ok and icons_swapped_ok and order_persisted_ok
 		and key1_selects_w2_ok and key5_triggers_s4_ok and keyz_triggers_wd3_ok
-		and server_exec_swapped_ok and gui_drag_ok,
-		"Phase 12.3c: Hotbar swaps (w=%s,s=%s,wd=%s,icons=%s,pers=%s,k1=%s,k5=%s,kz=%s,srv=%s,drag=%s)" % [
+		and server_exec_swapped_ok and gui_drag_ok and menu_reordered_ok and reset_restores_hud_ok,
+		"Phase 12.3c: Hotbar swaps (w=%s,s=%s,wd=%s,icons=%s,pers=%s,k1=%s,k5=%s,kz=%s,srv=%s,drag=%s,menu=%s,rst=%s)" % [
 			str(swap_w_ok), str(swap_s_ok), str(swap_wd_ok), str(icons_swapped_ok), str(order_persisted_ok),
 			str(key1_selects_w2_ok), str(key5_triggers_s4_ok), str(keyz_triggers_wd3_ok),
-			str(server_exec_swapped_ok), str(gui_drag_ok)
+			str(server_exec_swapped_ok), str(gui_drag_ok), str(menu_reordered_ok), str(reset_restores_hud_ok)
 		]
 	)
 

@@ -311,7 +311,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k := event as InputEventKey
 		if (k.keycode == KEY_ESCAPE or k.keycode == KEY_P) and class_menu != null:
-			if k.keycode == KEY_ESCAPE and hud != null and hud.is_mortar_targeting_active():
+			if hud != null and hud.is_mortar_targeting_active():
 				hud.set_mortar_targeting_mode(false)
 				get_viewport().set_input_as_handled()
 				return

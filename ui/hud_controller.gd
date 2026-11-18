@@ -1513,11 +1513,22 @@ static func _format_widget_hotkey_label(slot_idx: int) -> String:
 	return InputCmd.key_short_label(InputCmd.get_widget_key(slot_idx))
 
 
-func refresh_hotkey_labels() -> void:
+func _update_hotkey_label_texts() -> void:
 	for i in range(mini(_skill_slot_keys.size(), 6)):
 		_skill_slot_keys[i].text = _format_skill_hotkey_label(i)
 	for j in range(mini(_widget_slot_keys.size(), 4)):
 		_widget_slot_keys[j].text = _format_widget_hotkey_label(j)
+
+
+func refresh_hotkey_labels() -> void:
+	_update_hotkey_label_texts()
+	_refresh_widget_hotbar_icons()
+	_last_highlighted_slot = -1
+	_last_ammo_key = ""
+	if _local_hero != null and is_instance_valid(_local_hero):
+		_refresh_hotbar_icons()
+		_refresh_slot_cooldowns_immediate()
+		_refresh_drag_slot_highlights()
 
 
 func _hide_local_hud_overlays() -> void:
@@ -1845,7 +1856,7 @@ func _refresh_slot_cooldowns_immediate() -> void:
 
 
 func _refresh_hotbar_icons() -> void:
-	refresh_hotkey_labels()
+	_update_hotkey_label_texts()
 	_refresh_widget_hotbar_icons()
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
