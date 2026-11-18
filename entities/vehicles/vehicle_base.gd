@@ -10,6 +10,8 @@ enum VehicleType {
 	PLANE,
 	BOAT,
 	AA_GUN,
+	MOTORCYCLE,
+	APC,
 }
 
 enum SeatType {
@@ -294,8 +296,22 @@ func get_seat(seat_idx: int) -> SeatSlot:
 
 
 func get_driver_hero(heroes_by_id: Dictionary) -> HeroCharacter:
+	var has_driver_seat: bool = false
 	for s in seats:
-		if (s.seat_type == SeatType.DRIVER or s.seat_type == SeatType.GUNNER) and s.occupant_id >= 0:
+		if s.seat_type == SeatType.DRIVER:
+			has_driver_seat = true
+			if s.occupant_id >= 0:
+				return heroes_by_id.get(s.occupant_id, null)
+	if not has_driver_seat:
+		for s in seats:
+			if s.seat_type == SeatType.GUNNER and s.occupant_id >= 0:
+				return heroes_by_id.get(s.occupant_id, null)
+	return null
+
+
+func get_gunner_hero(heroes_by_id: Dictionary) -> HeroCharacter:
+	for s in seats:
+		if s.seat_type == SeatType.GUNNER and s.occupant_id >= 0:
 			return heroes_by_id.get(s.occupant_id, null)
 	return null
 

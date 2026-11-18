@@ -85,6 +85,10 @@ static func warm_meshes() -> void:
 		BuildingMeshBuilder.get_cached_tree_mesh(tree_v)
 	VehicleMeshBuilder._make_palette(NetworkManager.TEAM_ROYAL)
 	VehicleMeshBuilder._make_palette(NetworkManager.TEAM_NATIONAL)
+	var tmp_v := Node3D.new()
+	VehicleMeshBuilder.build_motorcycle_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_apc_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	tmp_v.free()
 
 	# Warm common Hero meshes across Soldier (0), Gunner (1), Commando (2)
 	HeroMeshBuilder.build_head_mesh()

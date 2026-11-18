@@ -143,14 +143,18 @@ static func add_wheel(parent: Node3D, radius: float, width: float, pos: Vector3,
 	parent.add_child(wheel, true)
 
 	# Beveled cartoon tire loft (rings strictly ascending in local Y, rotated onto X axle)
-	var hw: float = width * 0.5
-	var tire_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
-		{"y": -hw, "rx": radius * 0.74, "rz": radius * 0.74, "p": 2.0, "col": Color(0.80, 0.80, 0.82)},
-		{"y": -hw * 0.76, "rx": radius * 0.98, "rz": radius * 0.98, "p": 2.0, "col": Color(0.95, 0.95, 0.96)},
-		{"y": 0.0, "rx": radius, "rz": radius, "p": 2.0, "col": Color.WHITE},
-		{"y": hw * 0.76, "rx": radius * 0.98, "rz": radius * 0.98, "p": 2.0, "col": Color(0.95, 0.95, 0.96)},
-		{"y": hw, "rx": radius * 0.74, "rz": radius * 0.74, "p": 2.0, "col": Color(0.80, 0.80, 0.82)},
-	], 18)
+	var tire_key := "tire|%.4f,%.4f" % [radius, width]
+	var tire_mesh: ArrayMesh = _prim_cache.get(tire_key) as ArrayMesh
+	if tire_mesh == null:
+		var hw: float = width * 0.5
+		tire_mesh = HeroMeshBuilder.make_loft([
+			{"y": -hw, "rx": radius * 0.74, "rz": radius * 0.74, "p": 2.0, "col": Color(0.80, 0.80, 0.82)},
+			{"y": -hw * 0.76, "rx": radius * 0.98, "rz": radius * 0.98, "p": 2.0, "col": Color(0.95, 0.95, 0.96)},
+			{"y": 0.0, "rx": radius, "rz": radius, "p": 2.0, "col": Color.WHITE},
+			{"y": hw * 0.76, "rx": radius * 0.98, "rz": radius * 0.98, "p": 2.0, "col": Color(0.95, 0.95, 0.96)},
+			{"y": hw, "rx": radius * 0.74, "rz": radius * 0.74, "p": 2.0, "col": Color(0.80, 0.80, 0.82)},
+		], 18)
+		_prim_cache[tire_key] = tire_mesh
 	add_part(wheel, tire_mesh, Vector3.ZERO, Vector3(0.0, 0.0, PI * 0.5), tire_mat, "Tire")
 
 	# Painted rim dish, center hubcap & visible cross spoke rib so rolling rotation reads clearly
@@ -644,3 +648,113 @@ static func build_aa_visuals(root: Node3D, team: int) -> Dictionary:
 		_add_cyl(barrel_piv, 0.22, 0.22, 0.16, Vector3(sx * 0.42, 0.08, 0.02), Vector3(0.0, 0.0, PI * 0.5), trim_mat, 14, "AmmoDrum")
 
 	return {"turret": turret, "barrel": barrel_piv}
+
+
+static func build_motorcycle_visuals(root: Node3D, team: int) -> Dictionary:
+	var pal: Dictionary = _make_palette(team)
+	var armor_mat: Material = pal["armor_mat"]
+	var armor_hi: Material = pal["armor_hi"]
+	var trim_mat: Material = pal["trim_mat"]
+	var steel_mat: Material = pal["steel_mat"]
+	var dark_mat: Material = pal["dark_metal"]
+	var tire_mat: Material = pal["tire_mat"]
+	var leather_mat: Material = pal["leather_mat"]
+
+	# Frame backbone, engine block & twin chrome exhaust pipes
+	_add_box(root, Vector3(0.40, 0.32, 0.54), Vector3(0.0, 0.44, -0.10), Vector3.ZERO, dark_mat, "EngineBlock")
+	_add_box(root, Vector3(0.16, 0.14, 1.54), Vector3(0.0, 0.62, 0.02), Vector3.ZERO, armor_mat, "FrameSpine")
+	for sx in [-1.0, 1.0]:
+		_add_cyl(root, 0.040, 0.046, 1.22, Vector3(sx * 0.24, 0.34, 0.36), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 8, "ExhaustPipe")
+		_add_cyl(root, 0.034, 0.034, 0.76, Vector3(sx * 0.13, 0.72, -0.72), Vector3(-0.36, 0.0, 0.0), steel_mat, 8, "FrontFork")
+		_add_box(root, Vector3(0.18, 0.34, 0.44), Vector3(sx * 0.28, 0.58, 0.74), Vector3.ZERO, leather_mat, "Saddlebag")
+
+	# Mudguards, handlebars & headlight
+	_add_box(root, Vector3(0.24, 0.06, 0.52), Vector3(0.0, 0.80, -0.88), Vector3(-0.22, 0.0, 0.0), armor_hi, "FrontFender")
+	_add_box(root, Vector3(0.26, 0.07, 0.66), Vector3(0.0, 0.78, 0.88), Vector3(0.18, 0.0, 0.0), armor_hi, "RearFender")
+	_add_cyl(root, 0.024, 0.024, 0.76, Vector3(0.0, 1.06, -0.54), Vector3(0.0, 0.0, PI * 0.5), steel_mat, 8, "Handlebars")
+	_add_headlight_pod(root, Vector3(0.0, 0.94, -0.78), 0.11, steel_mat, pal["headlight_mat"])
+
+	# Sculpted teardrop fuel tank & team trim stripe
+	var tank_mesh: ArrayMesh = _prim_cache.get("moto_tank") as ArrayMesh
+	if tank_mesh == null:
+		tank_mesh = HeroMeshBuilder.make_loft([
+			{"y": -0.34, "rx": 0.14, "rz": 0.12, "p": 2.2, "col": Color(0.88, 0.88, 0.90)},
+			{"y": -0.05, "rx": 0.22, "rz": 0.17, "p": 2.4, "col": Color.WHITE, "side_ao": 0.08},
+			{"y": 0.22, "rx": 0.20, "rz": 0.15, "p": 2.3, "col": Color.WHITE, "side_ao": 0.08},
+			{"y": 0.34, "rx": 0.11, "rz": 0.10, "p": 2.1, "col": Color(0.90, 0.90, 0.92)},
+		], 14)
+		_prim_cache["moto_tank"] = tank_mesh
+	add_part(root, tank_mesh, Vector3(0.0, 0.82, -0.36), Vector3(-PI * 0.5, 0.0, 0.0), armor_hi, "FuelTank")
+	_add_box(root, Vector3(0.10, 0.035, 0.48), Vector3(0.0, 0.98, -0.36), Vector3.ZERO, trim_mat, "TankStripe")
+
+	# Driver & rear passenger saddles
+	_add_box(root, Vector3(0.34, 0.10, 0.46), Vector3(0.0, 0.66, -0.10), Vector3.ZERO, leather_mat, "DriverSaddle")
+	_add_box(root, Vector3(0.32, 0.10, 0.42), Vector3(0.0, 0.74, 0.68), Vector3.ZERO, leather_mat, "PassengerSaddle")
+
+	var wheels: Array[Node3D] = []
+	wheels.append(add_wheel(root, 0.38, 0.22, Vector3(0.0, 0.38, -0.88), tire_mat, armor_hi))
+	wheels.append(add_wheel(root, 0.38, 0.24, Vector3(0.0, 0.38, 0.88), tire_mat, armor_hi))
+	return {"wheels": wheels}
+
+
+static func build_apc_visuals(root: Node3D, team: int) -> Dictionary:
+	var pal: Dictionary = _make_palette(team)
+	var armor_mat: Material = pal["armor_mat"]
+	var armor_hi: Material = pal["armor_hi"]
+	var trim_mat: Material = pal["trim_mat"]
+	var steel_mat: Material = pal["steel_mat"]
+	var dark_mat: Material = pal["dark_metal"]
+	var tire_mat: Material = pal["tire_mat"]
+
+	# Sculpted sloped armored carrier hull & chassis belly
+	_add_box(root, Vector3(1.86, 0.22, 4.26), Vector3(0.0, 0.62, 0.0), Vector3.ZERO, dark_mat, "ChassisTub")
+	var hull_mesh: ArrayMesh = _prim_cache.get("apc_hull") as ArrayMesh
+	if hull_mesh == null:
+		hull_mesh = HeroMeshBuilder.make_loft([
+			{"y": -2.30, "z": 0.00, "rx": 1.18, "rz": 0.46, "p": 3.4, "col": Color(0.86, 0.86, 0.88), "side_ao": 0.10},
+			{"y": -1.40, "z": 0.02, "rx": 1.24, "rz": 0.50, "p": 3.6, "col": Color(0.96, 0.96, 0.98), "side_ao": 0.10},
+			{"y": 0.90, "z": 0.04, "rx": 1.26, "rz": 0.52, "p": 3.6, "col": Color.WHITE, "side_ao": 0.10},
+			{"y": 1.90, "z": -0.06, "rx": 1.18, "rz": 0.38, "p": 3.2, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.08},
+			{"y": 2.35, "z": -0.16, "rx": 1.02, "rz": 0.22, "p": 3.0, "col": Color(0.88, 0.88, 0.90)},
+		], 16)
+		_prim_cache["apc_hull"] = hull_mesh
+	add_part(root, hull_mesh, Vector3(0.0, 1.14, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), armor_mat, "ArmoredHull")
+
+	# Armored driver visor, bumpers, rear ramp hatch, headlights & team trim skirts
+	_add_box(root, Vector3(1.10, 0.18, 0.22), Vector3(0.0, 1.46, -1.56), Vector3(-0.24, 0.0, 0.0), dark_mat, "DriverVisor")
+	_add_box(root, Vector3(2.36, 0.18, 0.22), Vector3(0.0, 0.66, -2.36), Vector3.ZERO, steel_mat, "FrontBumper")
+	_add_box(root, Vector3(1.40, 0.72, 0.14), Vector3(0.0, 1.14, 2.28), Vector3.ZERO, armor_hi, "RearHatch")
+	for sx in [-1.0, 1.0]:
+		_add_headlight_pod(root, Vector3(sx * 0.74, 1.18, -2.18), 0.12, steel_mat, pal["headlight_mat"])
+		_add_box(root, Vector3(0.10, 0.36, 4.10), Vector3(sx * 1.26, 0.96, 0.0), Vector3.ZERO, armor_hi, "SideArmor")
+		_add_box(root, Vector3(0.11, 0.10, 1.80), Vector3(sx * 1.27, 1.14, -0.20), Vector3.ZERO, trim_mat, "SideStripe")
+
+	_add_cyl(root, 0.72, 0.80, 0.14, Vector3(0.0, 1.66, 0.0), Vector3.ZERO, steel_mat, 16, "TurretRing")
+
+	var wheels: Array[Node3D] = []
+	for wx in [-1.12, 1.12]:
+		for wz in [-1.65, 1.65]:
+			wheels.append(add_wheel(root, 0.46, 0.36, Vector3(wx, 0.46, wz), tire_mat, armor_hi))
+
+	# 360-degree rotating MG turret & elevating heavy MG barrel pivot
+	var turret := Node3D.new()
+	turret.name = "Turret"
+	turret.position = Vector3(0.0, 1.70, 0.0)
+	root.add_child(turret)
+
+	_add_cyl(turret, 0.62, 0.66, 0.16, Vector3(0.0, 0.08, 0.0), Vector3.ZERO, armor_hi, 14, "TurretCoaming")
+	_add_box(turret, Vector3(0.86, 0.54, 0.08), Vector3(0.0, 0.46, -0.44), Vector3(0.18, 0.0, 0.0), armor_hi, "GunShield")
+	_add_box(turret, Vector3(0.88, 0.09, 0.09), Vector3(0.0, 0.68, -0.48), Vector3(0.18, 0.0, 0.0), trim_mat, "ShieldStripe")
+	_add_cyl(turret, 0.07, 0.10, 0.40, Vector3(0.0, 0.24, -0.34), Vector3.ZERO, dark_mat, 10, "PintleMount")
+
+	var barrel_piv := Node3D.new()
+	barrel_piv.name = "BarrelPivot"
+	barrel_piv.position = Vector3(0.0, 0.45, -0.40)
+	turret.add_child(barrel_piv)
+	_add_box(barrel_piv, Vector3(0.18, 0.20, 0.62), Vector3(0.0, 0.0, -0.10), Vector3.ZERO, dark_mat, "MGReceiver")
+	_add_cyl(barrel_piv, 0.056, 0.066, 0.70, Vector3(0.0, 0.02, -0.66), Vector3(-PI * 0.5, 0.0, 0.0), steel_mat, 10, "CoolingJacket")
+	_add_cyl(barrel_piv, 0.032, 0.038, 1.15, Vector3(0.0, 0.02, -1.24), Vector3(-PI * 0.5, 0.0, 0.0), dark_mat, 10, "MGBarrel")
+	_add_cyl(barrel_piv, 0.054, 0.032, 0.18, Vector3(0.0, 0.02, -1.86), Vector3(-PI * 0.5, 0.0, 0.0), trim_mat, 10, "MuzzleCone")
+	_add_box(barrel_piv, Vector3(0.18, 0.22, 0.26), Vector3(0.20, -0.02, -0.08), Vector3.ZERO, trim_mat, "AmmoBox")
+
+	return {"turret": turret, "barrel": barrel_piv, "wheels": wheels}

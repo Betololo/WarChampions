@@ -41,6 +41,7 @@ func _ready() -> void:
 	await _test_phase8_task2_aoe_vfx_and_overhead_buffs()
 	await _test_phase8_task3_plane_accel_and_crash()
 	await _test_phase9_all_9_fixes()
+	await _test_phase10_all_8_items()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -5039,3 +5040,411 @@ func _test_phase9_all_9_fixes() -> void:
 		all_24_meshes_distinct and all_24_icons_distinct,
 		"Phase 9.9: All 24 (weapon_kind 0..7 x archetype 0..2) variants have distinct 3D geometry/muzzle signatures and distinct 2D HUD icons"
 	)
+
+
+func _test_phase10_all_8_items() -> void:
+	var arena := Node3D.new()
+	add_child(arena)
+
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(240.0, 1.0, 240.0)
+	floor_col.shape = floor_box
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var lc10 := LagCompensator.new()
+	arena.add_child(lc10)
+
+	# 1. Sniper 0-tick host rewind, 1500m range, and standing/crouching head & body hitbox hits
+	var sniper_h := HeroCharacter.new()
+	sniper_h.setup_identity(10001, "P10Sniper", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_COMMANDO, 0, true, false)
+	arena.add_child(sniper_h)
+	sniper_h.global_position = Vector3(0.0, 0.0, 0.0)
+	sniper_h.switch_weapon_slot(0)
+	var sniper_w: WeaponBase = sniper_h.weapons[0] as WeaponBase
+
+	var target_s := HeroCharacter.new()
+	target_s.setup_identity(10002, "P10Target", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(target_s)
+	target_s.global_position = Vector3(0.0, 0.0, -40.0)
+
+	var p10_heroes: Dictionary = {10001: sniper_h, 10002: target_s}
+	var p10_ctx: Dictionary = {
+		"heroes_by_id": p10_heroes,
+		"lag_compensator": lc10,
+		"projectiles_root": arena,
+		"vehicles_by_id": {},
+	}
+	await get_tree().physics_frame
+
+	# Record tick 90 at far off-position, then tick 100 at actual 1400m position; 0-tick host rewind hits tick 100
+	target_s.global_position = Vector3(80.0, 0.0, -1400.0)
+	lc10.record_frame(90, p10_heroes)
+	target_s.global_position = Vector3(0.0, 0.0, -1400.0)
+	target_s.is_crouching = false
+	lc10.record_frame(100, p10_heroes)
+	NetworkManager.server_tick = 100
+
+	var trace_stand_head: Dictionary = lc10.trace_rewound_ray(
+		sniper_h, Vector3(0.0, 1.66, 0.0), Vector3(0.0, 0.0, -1.0),
+		sniper_w.max_range_m, 0, 100, p10_heroes, arena.get_world_3d()
+	)
+	var trace_stand_body: Dictionary = lc10.trace_rewound_ray(
+		sniper_h, Vector3(0.0, 1.00, 0.0), Vector3(0.0, 0.0, -1.0),
+		sniper_w.max_range_m, 0, 100, p10_heroes, arena.get_world_3d()
+	)
+
+	target_s.is_crouching = true
+	lc10.record_frame(101, p10_heroes)
+	NetworkManager.server_tick = 101
+	var trace_crouch_head: Dictionary = lc10.trace_rewound_ray(
+		sniper_h, Vector3(0.0, 1.34, 0.0), Vector3(0.0, 0.0, -1.0),
+		sniper_w.max_range_m, 0, 101, p10_heroes, arena.get_world_3d()
+	)
+	var trace_crouch_body: Dictionary = lc10.trace_rewound_ray(
+		sniper_h, Vector3(0.0, 0.78, 0.0), Vector3(0.0, 0.0, -1.0),
+		sniper_w.max_range_m, 0, 101, p10_heroes, arena.get_world_3d()
+	)
+
+	_assert(
+		is_equal_approx(sniper_w.max_range_m, 1500.0)
+		and int(trace_stand_head.get("target_hero_id", -1)) == 10002 and bool(trace_stand_head.get("is_headshot", false))
+		and int(trace_stand_body.get("target_hero_id", -1)) == 10002 and not bool(trace_stand_body.get("is_headshot", true))
+		and int(trace_crouch_head.get("target_hero_id", -1)) == 10002 and bool(trace_crouch_head.get("is_headshot", false))
+		and int(trace_crouch_body.get("target_hero_id", -1)) == 10002 and not bool(trace_crouch_body.get("is_headshot", true)),
+		"Phase 10.1: Sniper 1500m range & 0-tick host rewind hit standing/crouching head and body hitboxes cleanly at 1400m"
+	)
+
+	# 2. Commando Poisoned Blade auto-equips Knife, melee cleave cone hit, immediate poison tick + DoT & SNAP_POISONED
+	target_s.respawn_at(Vector3(0.70, 0.0, -1.95), 0.0)
+	target_s.is_crouching = false
+	sniper_h.global_position = Vector3(0.0, 0.0, 0.0)
+	sniper_h.switch_weapon_slot(0)
+	var pb_cmd := InputCmd.new()
+	pb_cmd.aim_yaw = 0.0
+	pb_cmd.aim_pitch = 0.0
+	pb_cmd.selected_weapon_slot = 0
+	var pb_exec_ok: bool = sniper_h.skill_manager._execute_class_skill(2, 5, pb_cmd, p10_ctx)
+	var auto_knife_ok: bool = (sniper_h.selected_weapon_slot == 1 and pb_cmd.selected_weapon_slot == 1)
+	var hp_before_cleave: int = target_s.hp
+	var knife_w: WeaponBase = sniper_h.weapons[1] as WeaponBase
+	knife_w.fire_server(pb_cmd, p10_ctx)
+	var hp_after_cleave: int = target_s.hp
+	var immediate_poison_ok: bool = (
+		hp_after_cleave <= hp_before_cleave - 50
+		and target_s.status_effects.is_poisoned()
+		and (target_s.active_flags & NetSerializer.SNAP_POISONED) != 0
+	)
+	for _pt in range(40):
+		target_s.status_effects._physics_process(0.016)
+	var dot_tick_ok: bool = target_s.hp < hp_after_cleave
+	_assert(
+		pb_exec_ok and auto_knife_ok and immediate_poison_ok and dot_tick_ok,
+		"Phase 10.2: Poisoned Blade auto-equips Knife, melee cleave cone hits off-axis target (%d->%d->%d), and applies immediate + DoT SNAP_POISONED" % [hp_before_cleave, hp_after_cleave, target_s.hp]
+	)
+
+	# 3. Commando Stealth 10m detection radius, enemy reveal cloak_val <= 0.15, and local Commando uncloak within 10m
+	target_s.respawn_at(Vector3(0.0, 0.0, -18.0), 0.0)
+	sniper_h.global_position = Vector3(0.0, 0.0, 0.0)
+	var stealth_exec_ok: bool = sniper_h.skill_manager._execute_class_skill(0, 5, pb_cmd, p10_ctx)
+	var detect_r_ok: bool = is_equal_approx(sniper_h.status_effects.stealth_detection_radius, 10.0)
+	StatusEffectsVFX.update_hero_client_visuals(sniper_h, target_s, 0.016, {}, p10_heroes)
+	var hidden_far_ok: bool = not sniper_h.visual_root.visible
+	StatusEffectsVFX.update_hero_client_visuals(sniper_h, sniper_h, 0.016, {}, p10_heroes)
+	var local_cloak_far: float = float(((sniper_h._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial).get_shader_parameter("cloak_amount"))
+
+	target_s.global_position = Vector3(0.0, 0.0, -9.0)
+	StatusEffectsVFX.update_hero_client_visuals(sniper_h, target_s, 0.016, {}, p10_heroes)
+	var enemy_mat_near := (sniper_h._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial
+	var enemy_cloak_near: float = float(enemy_mat_near.get_shader_parameter("cloak_amount"))
+	var revealed_to_enemy_ok: bool = sniper_h.visual_root.visible and enemy_cloak_near <= 0.15
+	StatusEffectsVFX.update_hero_client_visuals(sniper_h, sniper_h, 0.016, {}, p10_heroes)
+	var local_cloak_near: float = float(((sniper_h._mesh_parts[0] as MeshInstance3D).material_override as ShaderMaterial).get_shader_parameter("cloak_amount"))
+	sniper_h.status_effects.break_stealth()
+	_assert(
+		stealth_exec_ok and detect_r_ok and hidden_far_ok and revealed_to_enemy_ok and local_cloak_far > 0.4 and local_cloak_near <= 0.01,
+		"Phase 10.3: Stealth 10m detection hides at 18m, reveals enemy cloak<=0.15 (%.2f) & uncloaks local Commando at 9m (%.2f -> %.2f)" % [enemy_cloak_near, local_cloak_far, local_cloak_near]
+	)
+
+	# 4. VehicleMotorcycle 2 seats (Driver + shooting/skill Passenger), speed, visuals, and HUD "MOTO"
+	var moto := VehicleMotorcycle.new()
+	moto.id = 910
+	moto.team = NetworkManager.TEAM_ROYAL
+	arena.add_child(moto)
+	moto.global_position = Vector3(-12.0, 0.05, 0.0)
+
+	var moto_drv := HeroCharacter.new()
+	moto_drv.setup_identity(10010, "MotoDrv", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(moto_drv)
+	var moto_pax := HeroCharacter.new()
+	moto_pax.setup_identity(10011, "MotoPax", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(moto_pax)
+
+	var moto_s0: int = moto.try_enter_hero(moto_drv)
+	var moto_s1: int = moto.try_enter_hero(moto_pax)
+	var moto_heroes: Dictionary = {10010: moto_drv, 10011: moto_pax, 10002: target_s}
+	var moto_ctx: Dictionary = {"heroes_by_id": moto_heroes, "lag_compensator": lc10, "projectiles_root": arena, "vehicles_by_id": {910: moto}}
+
+	var drv_cmd := InputCmd.new()
+	drv_cmd.move_dir = Vector2(0.0, -1.0)
+	moto_drv.latest_server_input = drv_cmd
+
+	target_s.respawn_at(Vector3(-12.0, 0.0, -35.0), 0.0)
+	var pax_cmd := InputCmd.new()
+	pax_cmd.aim_yaw = 0.0
+	pax_cmd.aim_pitch = 0.0
+	pax_cmd.selected_weapon_slot = 0
+	pax_cmd.set_button(InputCmd.BTN_FIRE, true)
+	pax_cmd.set_button(InputCmd.BTN_SKILL_1, true)
+	moto_pax.latest_server_input = pax_cmd
+
+	for _mt in range(45):
+		moto.step_vehicle_server(1.0 / 60.0, moto_heroes, moto_ctx)
+		await get_tree().physics_frame
+	var moto_spd: float = Vector2(moto.linear_velocity.x, moto.linear_velocity.z).length()
+	var pax_shot_ok: bool = target_s.hp < target_s.max_hp
+	var pax_skill_ok: bool = moto_pax.status_effects.hot_timer > 0.0
+
+	var moto_mis: Array[MeshInstance3D] = []
+	_collect_mesh_instances(moto._visual_root, moto_mis)
+	var moto_bad_vol: int = 0
+	var moto_bad_alpha: int = 0
+	for mi in moto_mis:
+		if mi.mesh is ArrayMesh and _signed_volume_outward_cw(mi.mesh as ArrayMesh) <= 0.0:
+			moto_bad_vol += 1
+		var sm := mi.material_override as StandardMaterial3D
+		if sm != null and sm.albedo_color.a >= 0.99 and sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			moto_bad_alpha += 1
+
+	_assert(
+		moto.seats.size() == 2 and moto_s0 == 0 and moto_s1 == 1
+		and not moto.seats[0].can_shoot and moto.seats[1].can_shoot and moto.seats[1].can_use_skills
+		and moto_spd > 28.0 and pax_shot_ok and pax_skill_ok
+		and moto._wheels.size() == 2 and moto._visual_root.get_child_count() >= 6
+		and moto_bad_vol == 0 and moto_bad_alpha == 0
+		and HUDController.get_vehicle_display_name(VehicleBase.VehicleType.MOTORCYCLE) == "MOTO",
+		"Phase 10.4: VehicleMotorcycle 2-seat driver + shooting/skill passenger, high speed (%.1f m/s), lean sculpted visuals, and HUD MOTO" % moto_spd
+	)
+	moto.exit_hero(moto_drv)
+	moto.exit_hero(moto_pax)
+
+	# 5. VehicleAPC 2 seats (enclosed Driver + 360-deg turret Gunner firing mounted MG), visuals, and HUD "BLINDADO"
+	var apc := VehicleAPC.new()
+	apc.id = 911
+	apc.team = NetworkManager.TEAM_NATIONAL
+	arena.add_child(apc)
+	apc.global_position = Vector3(14.0, 0.05, 0.0)
+
+	var apc_drv := HeroCharacter.new()
+	apc_drv.setup_identity(10012, "APCDrv", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(apc_drv)
+	var apc_gun := HeroCharacter.new()
+	apc_gun.setup_identity(10013, "APCGun", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(apc_gun)
+
+	var apc_s0: int = apc.try_enter_hero(apc_drv)
+	var apc_s1: int = apc.try_enter_hero(apc_gun)
+	var apc_victim := HeroCharacter.new()
+	apc_victim.setup_identity(10014, "APCVictim", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(apc_victim)
+	# Place victim 22m to the right (+X) while turret aims right (-PI * 0.5)
+	apc_victim.global_position = Vector3(36.0, 1.0, 0.0)
+
+	var apc_heroes: Dictionary = {10012: apc_drv, 10013: apc_gun, 10014: apc_victim}
+	var apc_ctx: Dictionary = {"heroes_by_id": apc_heroes, "lag_compensator": lc10, "projectiles_root": arena, "vehicles_by_id": {911: apc}}
+	var apc_drv_cmd := InputCmd.new()
+	apc_drv_cmd.aim_yaw = 0.0
+	apc_drv.latest_server_input = apc_drv_cmd
+	var apc_gun_cmd := InputCmd.new()
+	apc_gun_cmd.tick = 1
+	apc_gun_cmd.aim_yaw = -PI * 0.5
+	apc_gun_cmd.aim_pitch = 0.0
+	apc_gun_cmd.set_button(InputCmd.BTN_FIRE, true)
+	apc_gun.latest_server_input = apc_gun_cmd
+
+	lc10.record_frame(105, apc_heroes)
+	NetworkManager.server_tick = 105
+	var victim_hp_before: int = apc_victim.hp
+	for _at in range(6):
+		apc.step_vehicle_server(1.0 / 60.0, apc_heroes, apc_ctx)
+		apc._process(1.0 / 60.0)
+	var apc_mg_dealt: int = victim_hp_before - apc_victim.hp
+
+	var apc_mis: Array[MeshInstance3D] = []
+	_collect_mesh_instances(apc._visual_root, apc_mis)
+	var apc_bad_vol: int = 0
+	var apc_bad_alpha: int = 0
+	for mi in apc_mis:
+		if mi.mesh is ArrayMesh and _signed_volume_outward_cw(mi.mesh as ArrayMesh) <= 0.0:
+			apc_bad_vol += 1
+		var sm := mi.material_override as StandardMaterial3D
+		if sm != null and sm.albedo_color.a >= 0.99 and sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			apc_bad_alpha += 1
+
+	_assert(
+		apc.seats.size() == 2 and apc_s0 == 0 and apc_s1 == 1
+		and apc.get_driver_hero(apc_heroes) == apc_drv and apc.get_gunner_hero(apc_heroes) == apc_gun
+		and VehicleBase.is_hero_enclosed(apc_drv, {911: apc}) and not VehicleBase.is_hero_enclosed(apc_gun, {911: apc})
+		and apc.seats[1].follow_turret and absf(apc.turret_yaw - (-PI * 0.5)) < 0.02
+		and apc._turret_node != null and absf(apc._turret_node.rotation.y - apc._effective_turret_local_yaw()) < 0.05
+		and apc._barrel_pivot != null and apc._wheels.size() == 4
+		and apc_mg_dealt >= VehicleAPC.MG_HERO_DMG
+		and apc_bad_vol == 0 and apc_bad_alpha == 0
+		and HUDController.get_vehicle_display_name(VehicleBase.VehicleType.APC) == "BLINDADO",
+		"Phase 10.5: VehicleAPC enclosed driver + 360-deg turret gunner fires mounted MG (dealt=%d dmg), sculpted turret/wheels, and HUD BLINDADO" % apc_mg_dealt
+	)
+	apc.exit_hero(apc_drv)
+	apc.exit_hero(apc_gun)
+
+	# 6. Ground vehicles (Jeep, Tank, Motorcycle, APC) stall & destroy in water (y <= -0.75) while Boat floats normally
+	var w_jeep := VehicleJeep.new()
+	var w_tank := VehicleTank.new()
+	var w_moto := VehicleMotorcycle.new()
+	var w_apc := VehicleAPC.new()
+	var w_boat := VehicleBoat.new()
+	var water_vehs: Array[VehicleBase] = [w_jeep, w_tank, w_moto, w_apc, w_boat]
+	for wv in water_vehs:
+		wv.team = NetworkManager.TEAM_ROYAL
+		arena.add_child(wv)
+	var water_drv := HeroCharacter.new()
+	water_drv.setup_identity(10015, "WaterDrv", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(water_drv)
+	var water_cmd := InputCmd.new()
+	water_cmd.move_dir = Vector2(0.0, -1.0)
+	water_drv.latest_server_input = water_cmd
+	var w_heroes: Dictionary = {10015: water_drv}
+	var w_ctx: Dictionary = {"heroes_by_id": w_heroes}
+
+	var all_ground_stalled_destroyed: bool = true
+	for gv in [w_jeep, w_tank, w_moto, w_apc]:
+		var veh: VehicleBase = gv as VehicleBase
+		if not veh.is_ground_vehicle():
+			all_ground_stalled_destroyed = false
+		veh.try_enter_hero(water_drv)
+		# First test partial submersion stall at y = -0.45
+		veh.global_position = Vector3(40.0, -0.45, 0.0)
+		veh.linear_velocity = Vector3(0.0, 0.0, -16.0)
+		veh.step_vehicle_server(0.05, w_heroes, w_ctx)
+		if Vector2(veh.linear_velocity.x, veh.linear_velocity.z).length() >= 16.0 or not veh.is_submerged_in_water():
+			all_ground_stalled_destroyed = false
+		# Then test deep water destruction at y = -0.75
+		veh.global_position = Vector3(40.0, -0.75, 0.0)
+		veh.step_vehicle_server(0.05, w_heroes, w_ctx)
+		if not veh.is_destroyed or veh.hp != 0:
+			all_ground_stalled_destroyed = false
+		if water_drv.current_vehicle_id >= 0:
+			veh.exit_hero(water_drv)
+		water_drv.respawn_at(Vector3(40.0, 1.0, 0.0), 0.0)
+
+	w_boat.global_position = Vector3(50.0, -0.80, 0.0)
+	w_boat.linear_velocity = Vector3.ZERO
+	for _bt in range(8):
+		w_boat.step_vehicle_server(1.0 / 60.0, {}, {})
+		await get_tree().physics_frame
+	var boat_floats_ok: bool = (not w_boat.is_ground_vehicle()) and (not w_boat.is_submerged_in_water()) and (not w_boat.is_destroyed) and (w_boat.global_position.y > -0.45)
+	_assert(
+		all_ground_stalled_destroyed and boat_floats_ok,
+		"Phase 10.6: Ground vehicles (Jeep/Tank/Motorcycle/APC) stall and self-destruct when submerged in water (y<=-0.75), while VehicleBoat floats normally (ground_ok=%s, boat_y=%.2f)" % [str(all_ground_stalled_destroyed), w_boat.global_position.y]
+	)
+
+	# 7. Soldier Sixth Sense reveals enemies & Stealthed Commandos within 55m to distant teammates across the map
+	var ss_soldier := HeroCharacter.new()
+	ss_soldier.setup_identity(10020, "P10SolSS", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(ss_soldier)
+	ss_soldier.global_position = Vector3(0.0, 0.1, 0.0)
+	ss_soldier.status_effects.activate_sixth_sense(55.0, 12.0)
+
+	var ss_teammate := HeroCharacter.new()
+	ss_teammate.setup_identity(10021, "P10Mate", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, true, false)
+	arena.add_child(ss_teammate)
+	ss_teammate.global_position = Vector3(-350.0, 0.1, 0.0)
+	ss_teammate.hero_camera.camera.position = Vector3(-350.0, 2.5, 4.0)
+	ss_teammate.hero_camera.camera.look_at(Vector3(0.0, 1.0, -45.0), Vector3.UP)
+
+	var ss_stealth_enemy := HeroCharacter.new()
+	ss_stealth_enemy.setup_identity(10022, "P10Stealth", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	arena.add_child(ss_stealth_enemy)
+	ss_stealth_enemy.global_position = Vector3(0.0, 0.1, -45.0)
+	ss_stealth_enemy.status_effects.activate_stealth(10.0, -1.0)
+
+	var ss_far_enemy := HeroCharacter.new()
+	ss_far_enemy.setup_identity(10023, "P10Far", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(ss_far_enemy)
+	ss_far_enemy.global_position = Vector3(0.0, 0.1, -130.0)
+
+	var ss_heroes: Dictionary = {10020: ss_soldier, 10021: ss_teammate, 10022: ss_stealth_enemy, 10023: ss_far_enemy}
+	var sensed_near_ok: bool = StatusEffectContainer.is_enemy_sensed_by_team(ss_stealth_enemy, NetworkManager.TEAM_ROYAL, ss_heroes, ss_teammate)
+	var sensed_far_ignored: bool = not StatusEffectContainer.is_enemy_sensed_by_team(ss_far_enemy, NetworkManager.TEAM_ROYAL, ss_heroes, ss_teammate)
+	StatusEffectsVFX.update_hero_client_visuals(ss_stealth_enemy, ss_teammate, 0.016, {}, ss_heroes)
+	var distant_xray_ok: bool = ss_stealth_enemy.visual_root.visible and (ss_stealth_enemy._mesh_parts[0] as MeshInstance3D).material_overlay != null
+
+	var hud10 := HUDController.new()
+	arena.add_child(hud10)
+	await _flush_deferred()
+	hud10._local_hero = ss_teammate
+	hud10._heroes_ref = ss_heroes
+	hud10._vehicles_ref = [] as Array[VehicleBase]
+	hud10._update_sixth_sense_markers()
+	var mate_markers: int = 0
+	for mk in hud10._marker_pool:
+		if mk.visible:
+			mate_markers += 1
+	_assert(
+		sensed_near_ok and sensed_far_ignored and distant_xray_ok and mate_markers == 1,
+		"Phase 10.7: Soldier Sixth Sense reveals 45m Stealthed Commando to 350m-distant teammate with HUD marker & X-Ray overlay (markers=%d)" % mate_markers
+	)
+
+	# 8. Explosives (BAZOOKA_ROCKET 8.0m, TNT_SATCHEL 9.0m, FRAG_GRENADE 7.5m) hit full splash radius without curb self-occlusion & launch upward (vy >= 9.0)
+	var curb_body := StaticBody3D.new()
+	curb_body.collision_layer = 1
+	var curb_col := CollisionShape3D.new()
+	var curb_box := BoxShape3D.new()
+	curb_box.size = Vector3(8.0, 0.25, 0.5)
+	curb_col.shape = curb_box
+	curb_col.position = Vector3(70.0, 0.125, -2.5)
+	curb_body.add_child(curb_col)
+	arena.add_child(curb_body)
+
+	var exp_shooter := HeroCharacter.new()
+	exp_shooter.setup_identity(10030, "P10ExpSh", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(exp_shooter)
+	exp_shooter.global_position = Vector3(95.0, 0.0, 0.0)
+
+	var exp_enemy := HeroCharacter.new()
+	exp_enemy.setup_identity(10031, "P10ExpEn", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(exp_enemy)
+	var exp_heroes: Dictionary = {10030: exp_shooter, 10031: exp_enemy}
+	var exp_ctx: Dictionary = {"heroes_by_id": exp_heroes, "projectiles_root": arena}
+
+	var exp_specs: Array[Dictionary] = [
+		{"kind": ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET, "rad": 8.0, "dist": 7.3},
+		{"kind": ProjectileEntity.ProjectileKind.TNT_SATCHEL, "rad": 9.0, "dist": 8.3},
+		{"kind": ProjectileEntity.ProjectileKind.FRAG_GRENADE, "rad": 7.5, "dist": 6.8},
+	]
+	var all_exp_ok: bool = true
+	var exp_vy_log: Array[String] = []
+	for spec in exp_specs:
+		var k: int = int(spec["kind"])
+		var exp_rad: float = float(spec["rad"])
+		var test_dist: float = float(spec["dist"])
+		exp_enemy.respawn_at(Vector3(70.0, 0.0, -test_dist), 0.0)
+		await get_tree().physics_frame
+		var proj := ProjectileEntity.spawn_server_projectile(k, 10030, NetworkManager.TEAM_ROYAL, Vector3(70.0, 0.08, 0.0), Vector3.ZERO, exp_ctx, -1.0, arena)
+		if not is_equal_approx(proj.splash_radius, exp_rad):
+			all_exp_ok = false
+		proj._detonate()
+		exp_vy_log.append("%.1f" % exp_enemy.velocity.y)
+		if exp_enemy.hp >= exp_enemy.max_hp or exp_enemy.velocity.y < 9.0:
+			all_exp_ok = false
+
+	_assert(
+		all_exp_ok,
+		"Phase 10.8: Bazooka (8.0m), TNT (9.0m), and Frag (7.5m) hit outer-radius targets across low curb without self-occlusion and launch upward (vy=%s)" % str(exp_vy_log)
+	)
+
+	arena.queue_free()
+	await _flush_deferred()

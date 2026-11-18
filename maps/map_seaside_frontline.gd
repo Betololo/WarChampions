@@ -891,11 +891,15 @@ func _spawn_all_vehicles(vehicles_parent: Node3D) -> void:
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_ROYAL, Vector3(-438.0, 3.0, 56.0), -PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_ROYAL, Vector3(-422.0, 3.2, 68.0), -PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_ROYAL, Vector3(-458.0, 3.2, 72.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleMotorcycle.new(), NetworkManager.TEAM_ROYAL, Vector3(-446.0, 3.0, 22.0), -PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleAPC.new(), NetworkManager.TEAM_ROYAL, Vector3(-428.0, 3.2, 22.0), -PI * 0.5)
 
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(430.0, 3.0, 38.0), PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), NetworkManager.TEAM_NATIONAL, Vector3(438.0, 3.0, -28.0), PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_NATIONAL, Vector3(422.0, 3.2, -40.0), PI * 0.5)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), NetworkManager.TEAM_NATIONAL, Vector3(458.0, 3.2, -44.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleMotorcycle.new(), NetworkManager.TEAM_NATIONAL, Vector3(446.0, 3.0, -16.0), PI * 0.5)
+	_spawn_vehicle(vehicles_parent, VehicleAPC.new(), NetworkManager.TEAM_NATIONAL, Vector3(424.0, 3.2, -16.0), PI * 0.5)
 
 	_spawn_vehicle(vehicles_parent, VehicleJeep.new(), -1, Vector3(-165.0, 3.0, -95.0), 0.0)
 	_spawn_vehicle(vehicles_parent, VehicleTank.new(), -1, Vector3(0.0, 3.2, -165.0), PI)

@@ -233,6 +233,10 @@ static func get_vehicle_display_name(v_type: int) -> String:
 			return "LANCHA"
 		VehicleBase.VehicleType.AA_GUN:
 			return "CANHÃO AA"
+		VehicleBase.VehicleType.MOTORCYCLE:
+			return "MOTO"
+		VehicleBase.VehicleType.APC:
+			return "BLINDADO"
 		_:
 			return "VEÍCULO"
 
