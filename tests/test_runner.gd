@@ -52,6 +52,7 @@ func _ready() -> void:
 	await _test_phase11_polish_task7()
 	await _test_phase11_polish_task8()
 	await _test_phase12_task1_fixes()
+	await _test_phase12_task2_demolisher_rework()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6236,7 +6237,7 @@ func _test_phase11_task4_demolisher() -> void:
 		and int(demo_slots.get(2, -1)) == 0
 		and int(NetworkManager.local_profile.get("class_id", -1)) == 3
 	)
-	var demo_buffs: int = NetSerializer.BUFF_HASTE | NetSerializer.BUFF_SHIELD_DRAIN | NetSerializer.BUFF_VEHICLE_BUSTER | NetSerializer.BUFF_TNT_ROPE
+	var demo_buffs: int = NetSerializer.BUFF_HASTE | NetSerializer.BUFF_CARRIED_SHIELD | NetSerializer.BUFF_VEHICLE_BUSTER | NetSerializer.BUFF_TNT_ROPE
 	var auth_b: PackedByteArray = NetSerializer.pack_authoritative_state(50, Vector3.ZERO, Vector3.ZERO, 1, 110, 25, -1, -1, 0, demo_buffs)
 	var auth_d: Dictionary = NetSerializer.unpack_authoritative_state(auth_b)
 	var ws_b: PackedByteArray = NetSerializer.pack_world_snapshot(50, 1000, 50, 50, [{
@@ -6252,7 +6253,7 @@ func _test_phase11_task4_demolisher() -> void:
 		and int(ws_h.get("class_id", -1)) == 3
 		and int(ws_h.get("buffs", 0)) == demo_buffs
 	)
-	_assert(nm_ok and net_ok, "Phase 11.4a: NetworkManager CLASS_DEMOLISHER=3 clamping/loadout & NetSerializer BUFF_HASTE/SHIELD_DRAIN/VEHICLE_BUSTER/TNT_ROPE roundtrip")
+	_assert(nm_ok and net_ok, "Phase 11.4a: NetworkManager CLASS_DEMOLISHER=3 clamping/loadout & NetSerializer BUFF_HASTE/CARRIED_SHIELD/VEHICLE_BUSTER/TNT_ROPE roundtrip")
 
 	# 2. ClassDemolisher stats, Weapons 8..10 stats, Fire Breath 10-ammo shot, Caber 60 AoE + 60 self-dmg, 3D meshes & 2D icons
 	var demo := HeroCharacter.new()
@@ -6380,25 +6381,29 @@ func _test_phase11_task4_demolisher() -> void:
 	var d_cmd := InputCmd.new()
 	d_cmd.aim_yaw = 0.0
 
-	# Skill 0: Riot Shield (150 HP) 2.0m ahead
-	var pre_shield_children: int = arena.get_child_count()
+	# Skill 0: Carried Frontal Riot Shield (150 HP) + auto-equips STICK_GRENADE (slot 2), deferred CD until stowed/broken
+	demo.selected_weapon_slot = 0
 	var s0_ok: bool = dsm.try_activate_skill(0, d_cmd, d_ctx)
-	var spawned_shield: DemolisherSkills.RiotShieldEntity = null
-	for ch in arena.get_children():
-		if ch is DemolisherSkills.RiotShieldEntity:
-			spawned_shield = ch as DemolisherSkills.RiotShieldEntity
-	var shield_spawn_ok: bool = (
-		s0_ok and spawned_shield != null and spawned_shield.hp == 150 and spawned_shield.max_hp == 150
-		and spawned_shield.position.distance_to(Vector3(0.0, 0.0, -2.0)) < 0.05
+	var shield_equip_ok: bool = (
+		s0_ok
+		and demo.selected_weapon_slot == 2
+		and demo.status_effects.carried_shield_active
+		and demo.status_effects.carried_shield_hp == 150
+		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0
+		and is_equal_approx(dsm.skill_cooldowns[0], 0.0)
+	)
+	var shield_abs: int = demo.status_effects.damage_carried_shield(80)
+	var shield_dmg_ok: bool = (shield_abs == 80 and demo.status_effects.carried_shield_hp == 70 and demo.status_effects.carried_shield_active)
+	var shield_brk: int = demo.status_effects.damage_carried_shield(80)
+	var shield_break_ok: bool = (
+		shield_brk == 70
+		and demo.status_effects.carried_shield_hp == 0
+		and not demo.status_effects.carried_shield_active
+		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) == 0
 		and is_equal_approx(dsm.skill_cooldowns[0], 16.0)
 	)
-	spawned_shield.apply_damage_server(80, 11401, NetworkManager.TEAM_ROYAL) # friendly ignored
-	var shield_ff_ok: bool = (spawned_shield.hp == 150)
-	spawned_shield.apply_damage_server(80, 11402, NetworkManager.TEAM_NATIONAL)
-	var shield_dmg_ok: bool = (spawned_shield.hp == 70)
-	spawned_shield.apply_damage_server(80, 11402, NetworkManager.TEAM_NATIONAL)
-	var shield_free_ok: bool = spawned_shield.is_queued_for_deletion()
-	_assert(shield_spawn_ok and shield_ff_ok and shield_dmg_ok and shield_free_ok and arena.get_child_count() >= pre_shield_children, "Phase 11.4d: Skill 0 RiotShieldEntity (150 HP) spawns 2.0m ahead, ignores friendly fire, and frees at <=0 HP")
+	dsm.skill_cooldowns[0] = 0.0
+	_assert(shield_equip_ok and shield_dmg_ok and shield_break_ok, "Phase 11.4d: Skill 0 equips Carried Riot Shield (150 HP) + slot 2, absorbs frontal dmg, and starts 16s CD on break")
 
 	# Skill 1: Haste (1.38x move, 1.50x fire rate, 1.60x reload for 6.0s)
 	var s1_ok: bool = dsm.try_activate_skill(1, d_cmd, d_ctx)
@@ -6443,29 +6448,31 @@ func _test_phase11_task4_demolisher() -> void:
 	)
 	_assert(rope_held_ok and rope_thrown_ok, "Phase 11.4f: Skill 2 TNT Rope holds indefinitely, blocks normal firing, and starts 15s cooldown on throw_tnt_rope")
 
-	# Skill 3 (4th slot): Temp Shield (3.0s, adds raw_damage to shield, expires cleanly without touching HP)
+	# Skill 3 (4th slot): Kit de 5 Coletes (spawns ArmorKitEntity with 5 vests, +70 permanent vest shield, CD deferred until empty)
 	demo.hp = 85
 	demo.shield = 0
+	demo.status_effects.permanent_vest_shield = 0
+	demo.global_position = Vector3.ZERO
 	var s3_ok: bool = dsm.try_activate_skill(3, d_cmd, d_ctx)
-	demo.status_effects.notify_damage_dealt_server(45)
-	var shield_gained_ok: bool = (
-		s3_ok
-		and (demo.active_buffs & NetSerializer.BUFF_SHIELD_DRAIN) != 0
-		and demo.shield == 45
-		and demo.status_effects.damage_to_shield_temp == 45
-		and demo.hp == 85
-	)
-	demo.heal_server(10) # 85 -> 95 HP, must NOT touch shield or damage_to_shield_temp
-	var heal_isolated_ok: bool = (demo.hp == 95 and demo.shield == 45 and demo.status_effects.damage_to_shield_temp == 45)
-	for _s in range(4):
-		demo.status_effects._physics_process(1.0) # 4.0s > 3.0s expiry
-	var shield_expired_ok: bool = (
-		demo.shield == 0
-		and demo.status_effects.damage_to_shield_temp == 0
-		and (demo.active_buffs & NetSerializer.BUFF_SHIELD_DRAIN) == 0
-		and demo.hp == 95
-	)
-	_assert(shield_gained_ok and heal_isolated_ok and shield_expired_ok, "Phase 11.4g: Skill 4 Temp Shield converts damage to temporary shield and expires after 3s without touching HP")
+	var spawned_kit: DemolisherSkills.ArmorKitEntity = null
+	for ch in arena.get_children():
+		if ch is DemolisherSkills.ArmorKitEntity:
+			spawned_kit = ch as DemolisherSkills.ArmorKitEntity
+	var kit_spawn_ok: bool = (s3_ok and spawned_kit != null and spawned_kit.charges == 5 and is_equal_approx(dsm.skill_cooldowns[3], 0.0))
+	spawned_kit.step_kit(0.02, d_ctx)
+	var vest_gained_ok: bool = (demo.shield == 70 and demo.status_effects.permanent_vest_shield == 70 and spawned_kit.charges == 4 and is_equal_approx(dsm.skill_cooldowns[3], 0.0))
+	demo.heal_server(10)
+	for _s in range(6):
+		demo.status_effects._physics_process(1.0)
+	var vest_persisted_ok: bool = (demo.hp == 95 and demo.shield == 70 and demo.status_effects.permanent_vest_shield == 70)
+	for _v in range(4):
+		demo.shield = 0
+		demo.status_effects.permanent_vest_shield = 0
+		spawned_kit.step_kit(0.6, d_ctx)
+	var kit_emptied_ok: bool = (spawned_kit.is_queued_for_deletion() and is_equal_approx(dsm.skill_cooldowns[3], 17.0))
+	demo.shield = 0
+	demo.status_effects.permanent_vest_shield = 0
+	_assert(kit_spawn_ok and vest_gained_ok and vest_persisted_ok and kit_emptied_ok, "Phase 11.4g: Skill 3 Kit de 5 Coletes grants +70 permanent vest shield and triggers 17s CD when emptied")
 
 	# Skill 4 (5th slot): Quebra-Tanques (3x Vehicle damage multiplier)
 	var tank := VehicleTank.new()
@@ -6526,7 +6533,7 @@ func _test_phase11_task4_demolisher() -> void:
 	# 6. StatusEffectsVFX continuous buff mapping + spawn_skill_vfx for Demolisher
 	var vfx_stage4 := Node3D.new()
 	arena.add_child(vfx_stage4)
-	demo.active_buffs = NetSerializer.BUFF_HASTE | NetSerializer.BUFF_SHIELD_DRAIN | NetSerializer.BUFF_VEHICLE_BUSTER | NetSerializer.BUFF_TNT_ROPE
+	demo.active_buffs = NetSerializer.BUFF_HASTE | NetSerializer.BUFF_CARRIED_SHIELD | NetSerializer.BUFF_VEHICLE_BUSTER | NetSerializer.BUFF_TNT_ROPE
 	var vfx_buff_ok: bool = StatusEffectsVFX._has_continuous_particle_buff(demo)
 	var vfx_skills_ok: bool = true
 	for s_i in range(5):
@@ -6623,7 +6630,6 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	var ea_hp0: int = enemy_a.hp
 	var ew_hp0: int = enemy_water.hp
 	var al_hp0: int = ally_h.hp
-	demo.status_effects.activate_damage_to_shield(3.0)
 	fw0.fire_server(f_cmd, ctx)
 	var flame0_hit_ok: bool = (
 		enemy_a.hp == ea_hp0 - 10
@@ -6632,7 +6638,6 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		and enemy_water.hp == ew_hp0
 		and not enemy_water.status_effects.is_burning()
 		and ally_h.hp == al_hp0
-		and demo.shield == 10
 	)
 	# Test Layer-1 wall occlusion blocks Flamethrower
 	demo.global_position = Vector3(20.0, 0.0, 0.0)
@@ -6717,9 +6722,6 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		fb_proj.global_position = enemy_a.global_position + Vector3(0.0, 1.0, 0.0)
 		var ea_fb0: int = enemy_a.hp
 		var ew_fb0: int = enemy_water.hp
-		demo.status_effects.activate_damage_to_shield(3.0)
-		demo.shield = 0
-		demo.status_effects.damage_to_shield_temp = 0
 		fb_proj._detonate()
 		var fb_hit_ok: bool = (
 			enemy_a.hp == ea_fb0 - 40
@@ -6727,9 +6729,8 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 			and is_equal_approx(enemy_a.status_effects.burn_timer, 3.0)
 			and enemy_water.hp == ew_fb0
 			and not enemy_water.status_effects.is_burning()
-			and demo.shield == 40
 		)
-		_assert(fb_spawn_ok and fb_hit_ok, "Phase 11.5c: FlameWeapon arch 2 Fire Breath launches 48 m/s FIREBALL dealing 40 dmg + 3s burn, 0 in water, feeds Shield Drain")
+		_assert(fb_spawn_ok and fb_hit_ok, "Phase 11.5c: FlameWeapon arch 2 Fire Breath launches 45 m/s FIREBALL dealing 40 dmg + 3s burn, 0 in water")
 	else:
 		_assert(false, "Phase 11.5c: FlameWeapon arch 2 Fire Breath spawns FIREBALL")
 	fw2.queue_free()
@@ -6889,28 +6890,24 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	if rope_proj != null:
 		rope_proj.queue_free()
 
-	# Allied RiotShieldEntity must NOT trigger Caber explosion
-	var ally_shield := DemolisherSkills.RiotShieldEntity.new()
-	ally_shield.owner_id = ally_h.entity_id
-	ally_shield.owner_team = demo.team
-	ally_shield.position = Vector3(0.0, 0.0, -1.8)
-	ally_shield._context = ctx
-	arena.add_child(ally_shield)
+	# Allied hero in melee range must NOT trigger Caber explosion
+	ally_h.respawn_at(Vector3(0.0, 0.0, -1.8), 0.0)
 	await get_tree().physics_frame
 
 	var caber: HitscanWeapon = demo.weapons[2] as HitscanWeapon
 	var caber_head_node: MeshInstance3D = (demo._weapon_parts_by_name.get("CaberHead", {}) as Dictionary).get("node", null) as MeshInstance3D
 	var vis_before_hit: bool = (caber_head_node != null and caber_head_node.visible)
 	var demo_hp_pre_sh: int = demo.hp
+	var ally_hp_pre_caber: int = ally_h.hp
 	caber.fire_server(f_cmd, ctx)
 	demo._animate_character(0.016)
-	var allied_shield_safe_ok: bool = (
+	var allied_safe_ok: bool = (
 		not caber.caber_spent
 		and demo.hp == demo_hp_pre_sh
-		and ally_shield.hp == 150
+		and ally_h.hp == ally_hp_pre_caber
 		and caber_head_node != null and caber_head_node.visible
 	)
-	ally_shield.queue_free()
+	ally_h.respawn_at(Vector3(-40.0, 0.0, -40.0), 0.0)
 	await get_tree().physics_frame
 
 	# Enemy hit spends Caber and hides CaberHead; respawn restores CaberHead
@@ -6922,27 +6919,28 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	demo._animate_character(0.016)
 	var caber_restored_ok: bool = (not caber.caber_spent and caber_head_node != null and caber_head_node.visible)
 	_assert(
-		rope_ok and vis_before_hit and allied_shield_safe_ok and caber_hidden_ok and caber_restored_ok,
-		"Phase 11.5g: TNT_ROPE_CLUSTER throw (105 dmg/8.5m), allied RiotShield safety, and CaberHead visibility hide/restore"
+		rope_ok and vis_before_hit and allied_safe_ok and caber_hidden_ok and caber_restored_ok,
+		"Phase 11.5g: TNT_ROPE_CLUSTER throw (105 dmg/8.5m), allied safety, and CaberHead visibility hide/restore"
 	)
 
-	# 8. Enemy RiotShieldEntity blocks HitscanWeapon penetration behind intact shield
-	var enemy_shield := DemolisherSkills.RiotShieldEntity.new()
-	enemy_shield.owner_id = enemy_a.entity_id
-	enemy_shield.owner_team = enemy_a.team
-	enemy_shield.position = Vector3(0.0, 0.0, -3.0)
-	enemy_shield._context = ctx
-	arena.add_child(enemy_shield)
-	enemy_a.respawn_at(Vector3(0.0, 0.0, -6.0), 0.0)
+	# 8. Enemy Carried Frontal Riot Shield absorbs HitscanWeapon frontal damage (0 HP lost)
+	var enemy_demo := HeroCharacter.new()
+	enemy_demo.setup_identity(11509, "EnemyDemoSh", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_DEMOLISHER, 0, false, false)
+	arena.add_child(enemy_demo)
+	heroes_map[11509] = enemy_demo
+	enemy_a.respawn_at(Vector3(30.0, 0.0, 30.0), 0.0)
+	enemy_demo.global_position = Vector3(0.0, 0.0, -6.0)
+	enemy_demo.aim_yaw = PI
+	(enemy_demo.skill_manager as DemolisherSkills).try_activate_skill(0, InputCmd.new(), ctx)
 	await get_tree().physics_frame
-	var es_hp0: int = enemy_shield.hp
-	var ea_behind0: int = enemy_a.hp
+	var ed_sh0: int = enemy_demo.status_effects.carried_shield_hp
+	var ed_hp0: int = enemy_demo.hp
 	var p_royal := ally_h.weapons[2] as HitscanWeapon
 	ally_h.global_position = Vector3.ZERO
 	p_royal.fire_server(f_cmd, ctx)
 	_assert(
-		enemy_shield.hp < es_hp0 and enemy_a.hp == ea_behind0,
-		"Phase 11.5h: Enemy RiotShieldEntity absorbs HitscanWeapon damage and blocks penetration behind shield"
+		enemy_demo.status_effects.carried_shield_hp < ed_sh0 and enemy_demo.hp == ed_hp0,
+		"Phase 11.5h: Enemy Carried Riot Shield absorbs frontal HitscanWeapon damage (0 HP lost)"
 	)
 
 	arena.queue_free()
@@ -7965,5 +7963,217 @@ func _test_phase12_task1_fixes() -> void:
 	_assert(ch_contrast_ok, "Phase 12.1d: High-contrast 2x2 white crosshair center dot (4x4 outline) + bright white outlined arms")
 
 	hud.queue_free()
+	arena.queue_free()
+	await _flush_deferred()
+
+func _test_phase12_task2_demolisher_rework() -> void:
+	print("--- Phase 12 Task 2: Demolisher Skill Rework (Carried Shield + 5-Vest Armor Kit) ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_shape := BoxShape3D.new()
+	floor_shape.size = Vector3(120.0, 1.0, 120.0)
+	floor_col.shape = floor_shape
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var demo := HeroCharacter.new()
+	demo.setup_identity(12201, "DemoT2", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, true, false)
+	arena.add_child(demo)
+
+	var ally := HeroCharacter.new()
+	ally.setup_identity(12202, "AllyT2", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(ally)
+
+	var enemy := HeroCharacter.new()
+	enemy.setup_identity(12203, "EnemyT2", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(enemy)
+
+	var enemy_demo := HeroCharacter.new()
+	enemy_demo.setup_identity(12204, "EnemyDemoT2", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_DEMOLISHER, 0, false, false)
+	arena.add_child(enemy_demo)
+
+	var lag_comp := LagCompensator.new()
+	arena.add_child(lag_comp)
+
+	var heroes_map: Dictionary = {
+		12201: demo,
+		12202: ally,
+		12203: enemy,
+		12204: enemy_demo,
+	}
+	var ctx: Dictionary = {
+		"heroes_by_id": heroes_map,
+		"projectiles_root": arena,
+		"lag_compensator": lag_comp,
+	}
+	await get_tree().physics_frame
+
+	# 1. Skill 3: Kit de 5 Coletes (+70 permanent vest shield, CD deferred until all 5 vests consumed)
+	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
+	demo.global_position = Vector3.ZERO
+	ally.global_position = Vector3(20.0, 0.0, 0.0)
+	enemy.global_position = Vector3(0.0, 0.0, 0.0)
+	enemy_demo.global_position = Vector3(30.0, 0.0, 0.0)
+	demo.shield = 0
+	demo.status_effects.permanent_vest_shield = 0
+	var s3_ok: bool = dsm.try_activate_skill(3, InputCmd.new(), ctx)
+	var s3_dup_blocked: bool = not dsm.try_activate_skill(3, InputCmd.new(), ctx)
+	var kit: DemolisherSkills.ArmorKitEntity = null
+	for ch in arena.get_children():
+		if ch is DemolisherSkills.ArmorKitEntity:
+			kit = ch as DemolisherSkills.ArmorKitEntity
+	var kit_init_ok: bool = (
+		s3_ok
+		and s3_dup_blocked
+		and kit != null
+		and kit.charges == 5
+		and is_equal_approx(dsm.skill_cooldowns[3], 0.0)
+		and dsm._defers_cooldown_until_exit(3)
+	)
+
+	kit.step_kit(0.02, ctx)
+	var first_vest_ok: bool = (
+		demo.shield == 70
+		and demo.status_effects.permanent_vest_shield == 70
+		and enemy.shield == 0
+		and kit.charges == 4
+		and is_equal_approx(dsm.skill_cooldowns[3], 0.0)
+	)
+	for _t in range(6):
+		demo.status_effects._physics_process(1.0)
+	var no_decay_ok: bool = (demo.shield == 70 and demo.status_effects.permanent_vest_shield == 70)
+	demo.apply_damage_server(25, enemy.entity_id, false)
+	var vest_damaged_ok: bool = (demo.shield == 45 and demo.status_effects.permanent_vest_shield == 45)
+	demo.global_position = Vector3(10.0, 0.0, 0.0)
+
+	ally.global_position = Vector3(0.8, 0.0, 0.0)
+	for _v in range(4):
+		ally.shield = 0
+		ally.status_effects.permanent_vest_shield = 0
+		kit.step_kit(0.6, ctx)
+	var fifth_empties_ok: bool = (
+		ally.shield == 70
+		and kit.is_queued_for_deletion()
+		and is_equal_approx(dsm.skill_cooldowns[3], 17.0)
+	)
+	_assert(
+		kit_init_ok and first_vest_ok and no_decay_ok and vest_damaged_ok and fifth_empties_ok,
+		"Phase 12.2a: Skill 3 Kit de 5 Coletes grants +70 permanent-until-damaged shield, blocks enemy pickup, and starts 17s CD on 5th vest"
+	)
+
+	# 2. Skill 0: Carried Frontal Riot Shield + Weapon 3 (STICK_GRENADE) Combo + Swing Gap + Frontal Block vs Flank
+	demo.respawn_at(Vector3.ZERO, 0.0)
+	enemy.respawn_at(Vector3(0.0, 0.0, -6.0), PI)
+	enemy_demo.respawn_at(Vector3(0.0, 0.0, -6.0), PI)
+	demo.selected_weapon_slot = 0
+	var s0_cmd := InputCmd.new()
+	s0_cmd.tick = 10
+	s0_cmd.aim_yaw = 0.0
+	var s0_act_ok: bool = dsm.try_activate_skill(0, s0_cmd, ctx)
+	demo._animate_character(0.016)
+	var shield_vis_pos0: Vector3 = demo._held_riot_shield.position if demo._held_riot_shield != null else Vector3.ZERO
+	var shield_vis_rot0: Vector3 = demo._held_riot_shield.rotation if demo._held_riot_shield != null else Vector3.ZERO
+	var s0_equip_ok: bool = (
+		s0_act_ok
+		and demo.selected_weapon_slot == 2
+		and demo.status_effects.carried_shield_active
+		and demo.status_effects.carried_shield_hp == 150
+		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0
+		and is_equal_approx(dsm.skill_cooldowns[0], 0.0)
+		and demo._held_riot_shield != null and demo._held_riot_shield.visible
+	)
+
+	await get_tree().physics_frame
+	var demo_hp0: int = demo.hp
+	var enemy_smg: HitscanWeapon = enemy.weapons[0] as HitscanWeapon
+	var shoot_south := InputCmd.new()
+	shoot_south.aim_yaw = PI
+	shoot_south.aim_pitch = 0.0
+	enemy_smg.fire_server(shoot_south, ctx)
+	var frontal_gun_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp < 150 and demo.status_effects.carried_shield_hp > 0)
+
+	var sh_before_flame: int = demo.status_effects.carried_shield_hp
+	var ed_flame: FlameWeapon = enemy_demo.weapons[0] as FlameWeapon
+	ed_flame.fire_server(shoot_south, ctx)
+	var frontal_flame_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp == sh_before_flame - 10 and not demo.status_effects.is_burning())
+
+	var sh_before_proj: int = demo.status_effects.carried_shield_hp
+	var f_rocket := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.BAZOOKA_ROCKET,
+		enemy.entity_id, enemy.team,
+		Vector3(0.0, 1.0, -1.0), Vector3(0.0, 0.0, 42.0), ctx, 35.0, arena
+	)
+	f_rocket._detonate()
+	var frontal_proj_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp < sh_before_proj)
+
+	enemy.respawn_at(Vector3(0.0, 0.0, 6.0), 0.0)
+	await get_tree().physics_frame
+	var sh_before_back: int = demo.status_effects.carried_shield_hp
+	var shoot_north := InputCmd.new()
+	shoot_north.aim_yaw = 0.0
+	enemy_smg.fire_server(shoot_north, ctx)
+	var back_hits_hp_ok: bool = (demo.hp < demo_hp0 and demo.status_effects.carried_shield_hp == sh_before_back)
+
+	demo.hp = demo.max_hp
+	var caber: HitscanWeapon = demo.weapons[2] as HitscanWeapon
+	var swing_cmd := InputCmd.new()
+	swing_cmd.aim_yaw = 0.0
+	caber.fire_server(swing_cmd, ctx)
+	demo.trigger_weapon_fire_visual(WeaponBase.WeaponKind.STICK_GRENADE, false)
+	demo._animate_character(0.08)
+	var swing_gap_active: bool = demo.status_effects.carried_shield_swing_timer > 0.35
+	var shield_pulled_aside: bool = (
+		demo._held_riot_shield.position.x < shield_vis_pos0.x - 0.10
+		and demo._held_riot_shield.rotation.y > shield_vis_rot0.y + 0.25
+	)
+	enemy.respawn_at(Vector3(0.0, 0.0, -6.0), PI)
+	await get_tree().physics_frame
+	var hp_pre_gap: int = demo.hp
+	enemy_smg.fire_server(shoot_south, ctx)
+	var gap_exposes_hp_ok: bool = (demo.hp < hp_pre_gap)
+
+	demo.status_effects._physics_process(0.55)
+	demo._animate_character(0.55)
+	var shield_returned_ok: bool = (
+		is_equal_approx(demo.status_effects.carried_shield_swing_timer, 0.0)
+		and absf(demo._held_riot_shield.position.x - shield_vis_pos0.x) < 0.02
+		and absf(demo._held_riot_shield.rotation.y) < 0.02
+	)
+
+	demo.status_effects.damage_carried_shield(500)
+	demo._animate_character(0.016)
+	var break_cd_ok: bool = (
+		not demo.status_effects.carried_shield_active
+		and demo.status_effects.carried_shield_hp == 0
+		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) == 0
+		and is_equal_approx(dsm.skill_cooldowns[0], 16.0)
+		and not demo._held_riot_shield.visible
+	)
+
+	dsm.skill_cooldowns[0] = 0.0
+	dsm.try_activate_skill(0, s0_cmd, ctx)
+	demo.selected_weapon_slot = 0
+	demo.status_effects._physics_process(0.016)
+	var switch_stows_ok: bool = (
+		not demo.status_effects.carried_shield_active
+		and is_equal_approx(dsm.skill_cooldowns[0], 16.0)
+	)
+
+	_assert(
+		s0_equip_ok and frontal_gun_ok and frontal_flame_ok and frontal_proj_ok
+		and back_hits_hp_ok and swing_gap_active and shield_pulled_aside
+		and gap_exposes_hp_ok and shield_returned_ok and break_cd_ok and switch_stows_ok,
+		"Phase 12.2b: Skill 0 Carried Shield + STICK_GRENADE combo (equip=%s, gun=%s, flame=%s, proj=%s, back=%s, gap=%s, aside=%s, exp=%s, ret=%s, brk=%s, stow=%s)" % [
+			str(s0_equip_ok), str(frontal_gun_ok), str(frontal_flame_ok), str(frontal_proj_ok),
+			str(back_hits_hp_ok), str(swing_gap_active), str(shield_pulled_aside),
+			str(gap_exposes_hp_ok), str(shield_returned_ok), str(break_cd_ok), str(switch_stows_ok)
+		]
+	)
+
 	arena.queue_free()
 	await _flush_deferred()

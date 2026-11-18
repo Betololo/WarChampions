@@ -739,8 +739,22 @@ func _detonate() -> void:
 						var is_fire_immune: bool = h.is_in_water or (h.status_effects != null and h.status_effects.fire_immunity_timer > 0.0)
 						if is_fire_immune:
 							continue
-					# Enemies: deal damage AND apply radial knockback
+					# Enemies: check frontal carried shield block, then deal damage AND apply radial knockback
 					var dmg: int = maxi(1, int(roundf(base_damage * falloff)))
+					var atk_from_target := Vector3(global_position.x - h.global_position.x, 0.0, global_position.z - h.global_position.z)
+					if atk_from_target.length_squared() < 0.0001 and velocity.length_squared() > 0.0001:
+						atk_from_target = Vector3(-velocity.x, 0.0, -velocity.z)
+					if h.status_effects != null and h.status_effects.has_method("is_frontal_carried_shield_block_dir") and h.status_effects.is_frontal_carried_shield_block_dir(atk_from_target):
+						h.status_effects.damage_carried_shield(dmg)
+						NetworkManager.broadcast_game_event("hit_vfx", {
+							"pos": h.global_position + Vector3(0.0, 1.3, 0.0),
+							"kind": "spark",
+							"attacker_id": owner_id,
+							"victim_id": h.entity_id,
+							"damage": 0,
+							"headshot": false,
+						})
+						continue
 					var dealt: int = h.apply_damage_server(dmg, owner_id, kind != ProjectileKind.FIREBALL)
 					var enemy_kb: float = knockback_force if (is_demolisher_grenade or kind == ProjectileKind.FIREBALL) else maxf(21.0, knockback_force)
 					if kind != ProjectileKind.FIREBALL:
@@ -753,8 +767,6 @@ func _detonate() -> void:
 						h.status_effects.apply_concussion_slow(0.60, 5.0)
 
 					if dealt > 0:
-						if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("notify_damage_dealt_server"):
-							attacker_h.status_effects.notify_damage_dealt_server(dealt)
 						var xp_cb: Callable = _context.get("on_damage_dealt", Callable())
 						if xp_cb.is_valid() and attacker_h != null:
 							xp_cb.call(attacker_h, h, dealt)
@@ -781,17 +793,12 @@ func _detonate() -> void:
 						var hit_dir: Vector3 = ((v as Node3D).global_position - global_position).normalized()
 						if velocity.length_squared() > 1.0:
 							hit_dir = velocity.normalized()
-						var v_hp_pre: int = (v as VehicleBase).hp if v is VehicleBase else 0
 						if kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("apply_bazooka_damage_server") and is_equal_approx(veh_mult, 1.0):
 							v.apply_bazooka_damage_server(owner_id, hit_dir, global_position)
 						else:
 							var base_v: float = float(v.compute_bazooka_directional_damage(hit_dir, global_position)) if (kind == ProjectileKind.BAZOOKA_ROCKET and v.has_method("compute_bazooka_directional_damage")) else (base_damage * 1.15 * clampf(1.0 - vdist / (splash_radius + 3.5), 0.25, 1.0))
 							var vdmg: int = maxi(5, int(roundf(base_v * veh_mult)))
 							v.apply_damage_server(vdmg, owner_id, hit_dir, global_position, true)
-						if attacker_h != null and attacker_h.status_effects != null and attacker_h.status_effects.has_method("notify_damage_dealt_server"):
-							var v_dealt: int = maxi(0, v_hp_pre - ((v as VehicleBase).hp if v is VehicleBase else 0)) if v is VehicleBase else 0
-							if v_dealt > 0:
-								attacker_h.status_effects.notify_damage_dealt_server(v_dealt)
 
 			for s in get_tree().get_nodes_in_group("destructible_stickies"):
 				if s == self or not (s is ProjectileEntity):

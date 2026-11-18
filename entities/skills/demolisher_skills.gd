@@ -2,23 +2,45 @@ class_name DemolisherSkills
 extends SkillManager
 
 ## Demolisher's 5 Heroic Skills:
-## 0: Escudo Balístico (Riot Shield), 1: Haste, 2: Corda de TNTs (TNT Rope),
-## 3: Dreno de Escudo (Damage -> Temp Shield), 4: Quebra-Tanques (3x Vehicle Damage)
+## 0: Escudo Balístico (Em Mãos), 1: Haste, 2: Corda de TNTs (TNT Rope),
+## 3: Kit de 5 Coletes (+70 Escudo), 4: Quebra-Tanques (3x Vehicle Damage)
 
 var _prev_tnt_fire_held: bool = false
 var _suppress_fire_until_release: bool = false
+var _active_armor_kit: ArmorKitEntity = null
 
 
 func _ready() -> void:
 	super._ready()
-	skill_names = ["Escudo Balístico", "Haste", "Corda de TNTs", "Dreno de Escudo", "Quebra-Tanques"]
+	skill_names = ["Escudo Balístico (Em Mãos)", "Haste", "Corda de TNTs", "Kit de 5 Coletes", "Quebra-Tanques"]
 	skill_ranks = [5, 5, 5, 5, 5]
 	skill_cooldowns = [0.0, 0.0, 0.0, 0.0, 0.0]
 	skill_max_cooldowns = [16.0, 16.0, 15.0, 17.0, 18.0]
 
 
 func _defers_cooldown_until_exit(slot_idx: int) -> bool:
-	return slot_idx == 2
+	return slot_idx == 0 or slot_idx == 2 or slot_idx == 3
+
+
+func start_carried_shield_exit_cooldown() -> void:
+	if skill_cooldowns.size() > 0 and skill_max_cooldowns.size() > 0:
+		skill_cooldowns[0] = skill_max_cooldowns[0]
+		skill_activated.emit(0, skill_cooldowns[0])
+
+
+func _on_armor_kit_emptied() -> void:
+	_active_armor_kit = null
+	if skill_cooldowns.size() > 3 and skill_max_cooldowns.size() > 3:
+		skill_cooldowns[3] = skill_max_cooldowns[3]
+		skill_activated.emit(3, skill_cooldowns[3])
+
+
+func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bool:
+	if slot_idx == 0 and owner_hero != null and not owner_hero.is_defeated and owner_hero.status_effects != null:
+		if owner_hero.status_effects.carried_shield_active and skill_cooldowns.size() > 0 and skill_cooldowns[0] <= 0.0:
+			owner_hero.status_effects.deactivate_carried_shield(true)
+			return true
+	return super.try_activate_skill(slot_idx, cmd, context)
 
 
 func blocks_weapon_fire() -> bool:
@@ -44,6 +66,9 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_s
 		_prev_tnt_fire_held = false
 		_suppress_fire_until_release = false
 		return
+
+	if owner_hero.status_effects.carried_shield_active and (owner_hero.selected_weapon_slot != 2 or owner_hero.current_vehicle_id >= 0):
+		owner_hero.status_effects.deactivate_carried_shield(true)
 
 	if was_tnt_active and owner_hero.status_effects.tnt_rope_active and cmd != null:
 		var fire_held: bool = cmd.has_button(InputCmd.BTN_FIRE)
@@ -276,8 +301,6 @@ class FirePatchEntity extends Node3D:
 			if not _contact_cooldowns.has(hid):
 				var dealt: int = h.apply_damage_server(20, owner_id, false)
 				if dealt > 0:
-					if owner_hero != null and owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
-						owner_hero.status_effects.notify_damage_dealt_server(dealt)
 					NetworkManager.broadcast_game_event("hit_vfx", {
 						"pos": h_pos + Vector3(0.0, 1.2, 0.0),
 						"kind": "fire",
@@ -319,118 +342,189 @@ class FirePatchEntity extends Node3D:
 		return extinguished
 
 
-class RiotShieldEntity extends StaticBody3D:
-	var max_hp: int = 150
-	var hp: int = 150
+class ArmorKitEntity extends Node3D:
 	var owner_id: int = -1
 	var owner_team: int = 0
-	var shield_uid: int = 0
-	var lifetime_remaining: float = 25.0
+	var kit_uid: int = 0
+	var charges: int = 5
+	var vest_shield_amount: int = 70
+	var pickup_radius: float = 2.0
+	var on_kit_emptied: Callable = Callable()
+	var _pickup_cooldowns: Dictionary = {}
 	var _context: Dictionary = {}
 	var _is_visual_only: bool = false
+	var _vest_nodes: Array[MeshInstance3D] = []
+	var _halo_ring: MeshInstance3D = null
+	var _anim_t: float = 0.0
 
-	static var _shared_plate_mesh: BoxMesh = null
-	static var _shared_trim_mesh: BoxMesh = null
-	static var _shared_glass_mesh: BoxMesh = null
-	static var _shared_steel_mat: StandardMaterial3D = null
-	static var _shared_glass_mat: StandardMaterial3D = null
+	static var _shared_crate_mesh: BoxMesh = null
+	static var _shared_rail_mesh: BoxMesh = null
+	static var _shared_vest_mesh: BoxMesh = null
+	static var _shared_ring_mesh: TorusMesh = null
+	static var _shared_crate_mat: StandardMaterial3D = null
+	static var _shared_trim_mat: StandardMaterial3D = null
+	static var _shared_vest_mat_royal: StandardMaterial3D = null
+	static var _shared_vest_mat_nat: StandardMaterial3D = null
+	static var _shared_ring_mat: StandardMaterial3D = null
 
 	func _ready() -> void:
+		add_to_group("armor_kits")
 		_is_visual_only = bool(get_meta("visual_only", false))
-		if _is_visual_only:
-			collision_layer = 0
-			collision_mask = 0
-		else:
-			collision_layer = 1 | 64
-			collision_mask = 1 | 2 | 8
-			add_to_group("destructible")
-			var col := CollisionShape3D.new()
-			var shape := BoxShape3D.new()
-			shape.size = Vector3(1.85, 1.90, 0.24)
-			col.shape = shape
-			col.position = Vector3(0.0, 0.95, 0.0)
-			add_child(col)
 		_build_visuals()
+		set_charges_visual(charges)
 
 	func _build_visuals() -> void:
-		if _shared_plate_mesh == null:
-			_shared_plate_mesh = BoxMesh.new()
-			_shared_plate_mesh.size = Vector3(1.82, 1.32, 0.14)
-		if _shared_trim_mesh == null:
-			_shared_trim_mesh = BoxMesh.new()
-			_shared_trim_mesh.size = Vector3(1.88, 0.20, 0.18)
-		if _shared_glass_mesh == null:
-			_shared_glass_mesh = BoxMesh.new()
-			_shared_glass_mesh.size = Vector3(1.16, 0.34, 0.10)
-		if _shared_steel_mat == null:
-			_shared_steel_mat = StandardMaterial3D.new()
-			_shared_steel_mat.albedo_color = Color(0.22, 0.25, 0.30)
-			_shared_steel_mat.roughness = 0.45
-			_shared_steel_mat.metallic = 0.45
-		if _shared_glass_mat == null:
-			_shared_glass_mat = StandardMaterial3D.new()
-			_shared_glass_mat.albedo_color = Color(0.45, 0.80, 0.98, 0.55)
-			_shared_glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-			_shared_glass_mat.roughness = 0.15
+		if _shared_crate_mesh == null:
+			_shared_crate_mesh = BoxMesh.new()
+			_shared_crate_mesh.size = Vector3(0.92, 0.16, 0.68)
+		if _shared_rail_mesh == null:
+			_shared_rail_mesh = BoxMesh.new()
+			_shared_rail_mesh.size = Vector3(0.96, 0.12, 0.08)
+		if _shared_vest_mesh == null:
+			_shared_vest_mesh = BoxMesh.new()
+			_shared_vest_mesh.size = Vector3(0.58, 0.085, 0.46)
+		if _shared_ring_mesh == null:
+			_shared_ring_mesh = TorusMesh.new()
+			_shared_ring_mesh.inner_radius = 0.90
+			_shared_ring_mesh.outer_radius = 1.00
+			_shared_ring_mesh.rings = 20
+			_shared_ring_mesh.ring_segments = 6
+		if _shared_crate_mat == null:
+			_shared_crate_mat = StandardMaterial3D.new()
+			_shared_crate_mat.albedo_color = Color(0.24, 0.28, 0.22)
+			_shared_crate_mat.roughness = 0.72
+		if _shared_trim_mat == null:
+			_shared_trim_mat = StandardMaterial3D.new()
+			_shared_trim_mat.albedo_color = Color(0.32, 0.36, 0.40)
+			_shared_trim_mat.roughness = 0.45
+			_shared_trim_mat.metallic = 0.45
+		if _shared_vest_mat_royal == null:
+			_shared_vest_mat_royal = StandardMaterial3D.new()
+			_shared_vest_mat_royal.albedo_color = Color(0.22, 0.56, 0.92)
+			_shared_vest_mat_royal.roughness = 0.55
+		if _shared_vest_mat_nat == null:
+			_shared_vest_mat_nat = StandardMaterial3D.new()
+			_shared_vest_mat_nat.albedo_color = Color(0.84, 0.24, 0.22)
+			_shared_vest_mat_nat.roughness = 0.55
+		if _shared_ring_mat == null:
+			_shared_ring_mat = StandardMaterial3D.new()
+			_shared_ring_mat.albedo_color = Color(0.28, 0.86, 1.0, 0.55)
+			_shared_ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			_shared_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			_shared_ring_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 
-		var lower_plate := MeshInstance3D.new()
-		lower_plate.mesh = _shared_plate_mesh
-		lower_plate.material_override = _shared_steel_mat
-		lower_plate.position = Vector3(0.0, 0.68, 0.0)
-		lower_plate.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(lower_plate)
+		var base_crate := MeshInstance3D.new()
+		base_crate.mesh = _shared_crate_mesh
+		base_crate.material_override = _shared_crate_mat
+		base_crate.position = Vector3(0.0, 0.08, 0.0)
+		base_crate.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(base_crate)
 
-		var top_bar := MeshInstance3D.new()
-		top_bar.mesh = _shared_trim_mesh
-		top_bar.material_override = _shared_steel_mat
-		top_bar.position = Vector3(0.0, 1.78, 0.0)
-		top_bar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(top_bar)
+		for z_s in [-0.30, 0.30]:
+			var rail := MeshInstance3D.new()
+			rail.mesh = _shared_rail_mesh
+			rail.material_override = _shared_trim_mat
+			rail.position = Vector3(0.0, 0.18, z_s)
+			rail.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(rail)
 
-		var team_col: Color = Color(0.20, 0.50, 0.90) if owner_team == NetworkManager.TEAM_ROYAL else Color(0.84, 0.20, 0.20)
-		var team_mat := HeroMeshBuilder.make_sculpted_mat(team_col, "", 0.50)
-		var stripe := MeshInstance3D.new()
-		stripe.mesh = _shared_trim_mesh
-		stripe.material_override = team_mat
-		stripe.position = Vector3(0.0, 0.95, 0.0)
-		stripe.scale = Vector3(0.96, 0.70, 1.05)
-		stripe.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(stripe)
+		_halo_ring = MeshInstance3D.new()
+		_halo_ring.mesh = _shared_ring_mesh
+		_halo_ring.material_override = _shared_ring_mat
+		_halo_ring.position = Vector3(0.0, 0.03, 0.0)
+		_halo_ring.scale = Vector3(pickup_radius, 0.35, pickup_radius)
+		_halo_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_halo_ring)
 
-		var viewport_glass := MeshInstance3D.new()
-		viewport_glass.mesh = _shared_glass_mesh
-		viewport_glass.material_override = _shared_glass_mat
-		viewport_glass.position = Vector3(0.0, 1.50, 0.0)
-		viewport_glass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		add_child(viewport_glass)
+		var vest_mat: StandardMaterial3D = _shared_vest_mat_royal if owner_team == NetworkManager.TEAM_ROYAL else _shared_vest_mat_nat
+		_vest_nodes.clear()
+		for i in range(5):
+			var vest := MeshInstance3D.new()
+			vest.name = "VestPlate_%d" % i
+			vest.mesh = _shared_vest_mesh
+			vest.material_override = vest_mat
+			vest.position = Vector3(0.0, 0.21 + float(i) * 0.095, 0.0)
+			vest.rotation.y = 0.06 if (i % 2 == 0) else -0.06
+			vest.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(vest)
+			_vest_nodes.append(vest)
+
+	func set_charges_visual(new_charges: int) -> void:
+		charges = clampi(new_charges, 0, 5)
+		for i in range(_vest_nodes.size()):
+			var vn: MeshInstance3D = _vest_nodes[i]
+			if vn != null and is_instance_valid(vn):
+				vn.visible = (i < charges)
 
 	func _physics_process(delta: float) -> void:
-		lifetime_remaining -= delta
-		if lifetime_remaining <= 0.0:
-			if not _is_visual_only and NetworkManager.is_server_authority() and shield_uid != 0:
-				NetworkManager.broadcast_game_event("riot_shield_destroyed", {"shield_uid": shield_uid})
-			queue_free()
+		step_kit(delta, _context)
 
-	func apply_damage_server(dmg: int, attacker_id: int, arg3: Variant = -1, _hit_pos: Vector3 = Vector3.ZERO, _is_explosive: bool = false) -> void:
-		if _is_visual_only or dmg <= 0 or hp <= 0:
+	func step_kit(delta: float, context: Dictionary = {}) -> void:
+		_anim_t += delta
+		if not DisplayServer.get_name().contains("headless") and _halo_ring != null and is_instance_valid(_halo_ring):
+			var pulse_r: float = pickup_radius * (0.94 + 0.06 * sin(_anim_t * 4.5))
+			_halo_ring.scale = Vector3(pulse_r, 0.35, pulse_r)
+		if _is_visual_only or not NetworkManager.is_server_authority():
 			return
-		var attacker_team: int = -1
-		if arg3 is int:
-			attacker_team = int(arg3)
-		else:
-			var heroes_by_id: Dictionary = _context.get("heroes_by_id", {})
-			var attacker_hero: HeroCharacter = heroes_by_id.get(attacker_id, null) as HeroCharacter
-			if attacker_hero != null:
-				attacker_team = attacker_hero.team
-		if attacker_team == owner_team:
+		if charges <= 0:
 			return
-		hp = maxi(0, hp - dmg)
-		if hp <= 0:
-			var pos: Vector3 = global_position if is_inside_tree() else position
-			NetworkManager.broadcast_game_event("hit_vfx", {"pos": pos + Vector3(0.0, 1.0, 0.0), "kind": "spark"})
-			if shield_uid != 0:
-				NetworkManager.broadcast_game_event("riot_shield_destroyed", {"shield_uid": shield_uid})
-			queue_free()
+
+		for hid_key in _pickup_cooldowns.keys():
+			var cd: float = float(_pickup_cooldowns[hid_key]) - delta
+			if cd <= 0.0:
+				_pickup_cooldowns.erase(hid_key)
+			else:
+				_pickup_cooldowns[hid_key] = cd
+
+		var eff_ctx: Dictionary = context if not context.is_empty() else _context
+		var heroes_by_id: Dictionary = eff_ctx.get("heroes_by_id", {})
+		var self_pos: Vector3 = global_position if is_inside_tree() else position
+
+		for id_key in heroes_by_id.keys():
+			if charges <= 0:
+				break
+			var h: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+			if h == null or not is_instance_valid(h) or h.is_defeated:
+				continue
+			if h.team != owner_team:
+				continue
+			if h.shield >= vest_shield_amount:
+				continue
+			if _pickup_cooldowns.has(h.entity_id):
+				continue
+
+			var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
+			var horiz_dist: float = Vector2(h_pos.x - self_pos.x, h_pos.z - self_pos.z).length()
+			if horiz_dist > pickup_radius or absf(h_pos.y - self_pos.y) > 2.2:
+				continue
+
+			if h.status_effects != null and h.status_effects.has_method("apply_vest_shield"):
+				h.status_effects.apply_vest_shield(vest_shield_amount)
+			else:
+				h.shield = maxi(h.shield, vest_shield_amount)
+				h.stats_changed.emit()
+
+			_pickup_cooldowns[h.entity_id] = 0.5
+			charges -= 1
+			set_charges_visual(charges)
+
+			NetworkManager.broadcast_game_event("armor_kit_vfx", {
+				"kit_uid": kit_uid,
+				"hero_id": h.entity_id,
+				"pos": self_pos + Vector3(0.0, 0.45, 0.0),
+				"charges": charges,
+			})
+			if charges <= 0:
+				if on_kit_emptied.is_valid():
+					on_kit_emptied.call()
+				NetworkManager.broadcast_game_event("armor_kit_empty", {"kit_uid": kit_uid})
+				queue_free()
+				return
+			else:
+				NetworkManager.broadcast_game_event("armor_kit_update", {
+					"kit_uid": kit_uid,
+					"charges": charges,
+				})
 
 
 func _execute_class_skill(slot_idx: int, _rank: int, cmd: InputCmd, context: Dictionary) -> bool:
@@ -438,32 +532,12 @@ func _execute_class_skill(slot_idx: int, _rank: int, cmd: InputCmd, context: Dic
 		return false
 
 	match slot_idx:
-		0: # Escudo Balístico (Riot Shield): spawns 150 HP RiotShieldEntity 2.0m ahead facing aim yaw
-			var yaw: float = cmd.aim_yaw if cmd != null else owner_hero.aim_yaw
-			var fwd: Vector3 = -Basis(Vector3.UP, yaw).z
-			fwd.y = 0.0
-			fwd = fwd.normalized() if fwd.length_squared() > 0.0001 else Vector3.FORWARD
-			var hero_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
-			var shield := RiotShieldEntity.new()
-			shield.owner_id = owner_hero.entity_id
-			shield.owner_team = owner_hero.team
-			shield.max_hp = 150
-			shield.hp = 150
-			shield.shield_uid = shield.get_instance_id()
-			shield._context = context
-			shield.position = hero_pos + fwd * 2.0
-			shield.rotation.y = yaw
-			var root: Node = context.get("projectiles_root", owner_hero.get_parent())
-			if root != null:
-				root.add_child(shield)
-			NetworkManager.broadcast_game_event("riot_shield_spawn", {
-				"shield_uid": shield.shield_uid,
-				"owner_id": owner_hero.entity_id,
-				"team": owner_hero.team,
-				"pos": shield.position,
-				"yaw": yaw,
-				"lifetime": shield.lifetime_remaining,
-			})
+		0: # Escudo Balístico (Em Mãos): equips carried 150 HP frontal shield + STICK_GRENADE (slot 2)
+			if owner_hero.status_effects.carried_shield_active:
+				owner_hero.status_effects.deactivate_carried_shield(true)
+				return false
+			owner_hero.force_server_weapon_slot(2, cmd.tick if cmd != null else -1)
+			owner_hero.status_effects.activate_carried_shield(150)
 			return true
 
 		1: # Haste (Adrenalina): 1.38x move, 1.50x fire rate, 1.60x reload for 6.0s
@@ -477,8 +551,31 @@ func _execute_class_skill(slot_idx: int, _rank: int, cmd: InputCmd, context: Dic
 			_prev_tnt_fire_held = cmd != null and cmd.has_button(InputCmd.BTN_FIRE)
 			return true
 
-		3: # Dreno de Escudo (Damage -> Temp Shield): 3.0s
-			owner_hero.status_effects.activate_damage_to_shield(3.0)
+		3: # Kit de 5 Coletes: drops ground 5-vest ArmorKitEntity (+70 permanent-until-damaged shield)
+			if _active_armor_kit != null and is_instance_valid(_active_armor_kit) and not _active_armor_kit.is_queued_for_deletion() and _active_armor_kit.charges > 0:
+				return false
+			var kit := ArmorKitEntity.new()
+			kit.owner_id = owner_hero.entity_id
+			kit.owner_team = owner_hero.team
+			kit.kit_uid = kit.get_instance_id()
+			kit.charges = 5
+			kit.vest_shield_amount = 70
+			kit.pickup_radius = 2.0
+			kit._context = context
+			kit.on_kit_emptied = Callable(self, "_on_armor_kit_emptied")
+			var hero_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+			kit.position = hero_pos
+			var root: Node = context.get("projectiles_root", owner_hero.get_parent())
+			if root != null:
+				root.add_child(kit)
+			_active_armor_kit = kit
+			NetworkManager.broadcast_game_event("armor_kit_spawn", {
+				"kit_uid": kit.kit_uid,
+				"owner_id": owner_hero.entity_id,
+				"team": owner_hero.team,
+				"pos": kit.position,
+				"charges": kit.charges,
+			})
 			return true
 
 		4: # Quebra-Tanques (3x Vehicle Damage): 3.0s

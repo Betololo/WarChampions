@@ -63,8 +63,11 @@ var haste_timer: float = 0.0
 var haste_fire_mult: float = 1.0
 var haste_reload_mult: float = 1.0
 
-var damage_to_shield_timer: float = 0.0
-var damage_to_shield_temp: int = 0
+var permanent_vest_shield: int = 0
+var carried_shield_active: bool = false
+var carried_shield_hp: int = 150
+var carried_shield_max_hp: int = 150
+var carried_shield_swing_timer: float = 0.0
 
 var vehicle_triple_dmg_timer: float = 0.0
 
@@ -137,13 +140,16 @@ func _physics_process(delta: float) -> void:
 			poison_timer = 0.0
 			_poison_tick_accum = 0.0
 
-	# Shield expiry
+	# Shield expiry (preserve non-decaying permanent vest shield!)
 	if shield_timer > 0.0:
 		shield_timer -= delta
 		if shield_timer <= 0.0:
 			shield_timer = 0.0
 			hero_shield_timer = 0.0
-			owner_hero.shield = 0
+			if permanent_vest_shield <= 0:
+				owner_hero.shield = 0
+			else:
+				owner_hero.shield = mini(owner_hero.shield, permanent_vest_shield)
 			owner_hero.stats_changed.emit()
 	if hero_shield_timer > 0.0:
 		hero_shield_timer = maxf(0.0, hero_shield_timer - delta)
@@ -183,14 +189,10 @@ func _physics_process(delta: float) -> void:
 			haste_fire_mult = 1.0
 			haste_reload_mult = 1.0
 
-	if damage_to_shield_timer > 0.0:
-		damage_to_shield_timer -= delta
-		if damage_to_shield_timer <= 0.0:
-			damage_to_shield_timer = 0.0
-			if owner_hero != null and damage_to_shield_temp > 0:
-				owner_hero.shield = maxi(0, owner_hero.shield - damage_to_shield_temp)
-				damage_to_shield_temp = 0
-				owner_hero.stats_changed.emit()
+	if carried_shield_swing_timer > 0.0:
+		carried_shield_swing_timer = maxf(0.0, carried_shield_swing_timer - delta)
+	if carried_shield_active and (owner_hero.selected_weapon_slot != 2 or owner_hero.current_vehicle_id >= 0):
+		deactivate_carried_shield(true)
 
 	vehicle_triple_dmg_timer = maxf(0.0, vehicle_triple_dmg_timer - delta)
 
@@ -283,8 +285,8 @@ func _sync_buffs() -> void:
 		b |= NetSerializer.BUFF_FIREPROOF
 	if haste_timer > 0.0:
 		b |= NetSerializer.BUFF_HASTE
-	if damage_to_shield_timer > 0.0:
-		b |= NetSerializer.BUFF_SHIELD_DRAIN
+	if carried_shield_active:
+		b |= NetSerializer.BUFF_CARRIED_SHIELD
 	if vehicle_triple_dmg_timer > 0.0:
 		b |= NetSerializer.BUFF_VEHICLE_BUSTER
 	if tnt_rope_active:
@@ -673,17 +675,76 @@ func get_haste_reload_mult() -> float:
 	return 1.0
 
 
-func activate_damage_to_shield(duration: float) -> void:
-	damage_to_shield_timer = maxf(damage_to_shield_timer, duration)
+func apply_vest_shield(amount: int = 70) -> void:
+	if owner_hero == null or owner_hero.is_defeated or amount <= 0:
+		return
+	owner_hero.shield = maxi(owner_hero.shield, amount)
+	permanent_vest_shield = owner_hero.shield
+	owner_hero.stats_changed.emit()
 	_sync_flags()
 
 
-func notify_damage_dealt_server(raw_damage: int) -> void:
-	if damage_to_shield_timer > 0.0 and raw_damage > 0 and owner_hero != null and not owner_hero.is_defeated:
-		owner_hero.shield += raw_damage
-		damage_to_shield_temp += raw_damage
-		owner_hero.stats_changed.emit()
-		_sync_flags()
+func activate_carried_shield(hp_amt: int = 150) -> void:
+	carried_shield_max_hp = maxi(1, hp_amt)
+	carried_shield_hp = carried_shield_max_hp
+	carried_shield_active = true
+	carried_shield_swing_timer = 0.0
+	_sync_flags()
+
+
+func deactivate_carried_shield(start_cooldown: bool = true) -> void:
+	var was_active: bool = carried_shield_active
+	carried_shield_active = false
+	carried_shield_swing_timer = 0.0
+	if was_active and start_cooldown and owner_hero != null and owner_hero.skill_manager != null:
+		if owner_hero.skill_manager.has_method("start_carried_shield_exit_cooldown"):
+			owner_hero.skill_manager.start_carried_shield_exit_cooldown()
+	_sync_flags()
+
+
+func trigger_carried_shield_swing_gap(dur: float = 0.48) -> void:
+	if carried_shield_active and dur > 0.0:
+		carried_shield_swing_timer = maxf(carried_shield_swing_timer, dur)
+
+
+func is_frontal_carried_shield_block_dir(attack_dir_from_target: Vector3) -> bool:
+	if not carried_shield_active or carried_shield_swing_timer > 0.0 or owner_hero == null or owner_hero.is_defeated:
+		return false
+	if owner_hero.current_vehicle_id >= 0:
+		return false
+	var flat_atk := Vector3(attack_dir_from_target.x, 0.0, attack_dir_from_target.z)
+	if flat_atk.length_squared() < 0.0001:
+		return false
+	var hero_fwd := -Basis(Vector3.UP, owner_hero.aim_yaw).z
+	hero_fwd.y = 0.0
+	if hero_fwd.length_squared() < 0.0001:
+		hero_fwd = Vector3.FORWARD
+	return flat_atk.normalized().dot(hero_fwd.normalized()) >= 0.15
+
+
+func is_frontal_carried_shield_block(attack_origin_pos: Vector3) -> bool:
+	if owner_hero == null:
+		return false
+	var h_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+	return is_frontal_carried_shield_block_dir(attack_origin_pos - h_pos)
+
+
+func damage_carried_shield(dmg: int) -> int:
+	if not carried_shield_active or dmg <= 0:
+		return 0
+	var absorbed: int = mini(carried_shield_hp, dmg)
+	carried_shield_hp = maxi(0, carried_shield_hp - dmg)
+	if carried_shield_hp <= 0:
+		deactivate_carried_shield(true)
+		if owner_hero != null:
+			var pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": pos + Vector3(0.0, 1.15, 0.0),
+				"kind": "spark",
+				"victim_id": owner_hero.entity_id,
+				"damage": 0,
+			})
+	return absorbed
 
 
 func activate_vehicle_triple_dmg(duration: float) -> void:
@@ -739,8 +800,10 @@ func clear_all() -> void:
 	haste_timer = 0.0
 	haste_fire_mult = 1.0
 	haste_reload_mult = 1.0
-	damage_to_shield_timer = 0.0
-	damage_to_shield_temp = 0
+	permanent_vest_shield = 0
+	carried_shield_active = false
+	carried_shield_hp = carried_shield_max_hp
+	carried_shield_swing_timer = 0.0
 	vehicle_triple_dmg_timer = 0.0
 	tnt_rope_active = false
 	marked_timer = 0.0

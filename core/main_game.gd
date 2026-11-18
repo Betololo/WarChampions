@@ -920,23 +920,35 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			SoundSynthesizer.play_sfx("heal", 0.0, skill_caster_id == NetworkManager.local_peer_id, skill_pos)
 		"eat_grenades":
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)
-		"riot_shield_spawn":
+		"armor_kit_spawn":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
-				var rs := DemolisherSkills.RiotShieldEntity.new()
-				rs.set_meta("visual_only", true)
-				rs.owner_id = int(payload.get("owner_id", -1))
-				rs.owner_team = int(payload.get("team", 0))
-				rs.shield_uid = int(payload.get("shield_uid", 0))
-				rs.lifetime_remaining = float(payload.get("lifetime", 25.0))
-				rs.position = payload.get("pos", Vector3.ZERO)
-				rs.rotation.y = float(payload.get("yaw", 0.0))
-				projectiles_root.add_child(rs)
-		"riot_shield_destroyed":
+				var kit := DemolisherSkills.ArmorKitEntity.new()
+				kit.set_meta("visual_only", true)
+				kit.owner_id = int(payload.get("owner_id", -1))
+				kit.owner_team = int(payload.get("team", 0))
+				kit.kit_uid = int(payload.get("kit_uid", 0))
+				kit.charges = int(payload.get("charges", 5))
+				kit.position = payload.get("pos", Vector3.ZERO)
+				projectiles_root.add_child(kit)
+		"armor_kit_update":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
-				var target_uid: int = int(payload.get("shield_uid", 0))
+				var upd_uid: int = int(payload.get("kit_uid", 0))
+				var upd_charges: int = int(payload.get("charges", 0))
 				for ch in projectiles_root.get_children():
-					if ch is DemolisherSkills.RiotShieldEntity and (ch as DemolisherSkills.RiotShieldEntity).shield_uid == target_uid:
+					if ch is DemolisherSkills.ArmorKitEntity and (ch as DemolisherSkills.ArmorKitEntity).kit_uid == upd_uid:
+						(ch as DemolisherSkills.ArmorKitEntity).set_charges_visual(upd_charges)
+		"armor_kit_empty":
+			if not NetworkManager.is_server_authority() and projectiles_root != null:
+				var empty_uid: int = int(payload.get("kit_uid", 0))
+				for ch in projectiles_root.get_children():
+					if ch is DemolisherSkills.ArmorKitEntity and (ch as DemolisherSkills.ArmorKitEntity).kit_uid == empty_uid:
 						ch.queue_free()
+		"armor_kit_vfx":
+			var kit_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var kit_hero_id: int = int(payload.get("hero_id", -1))
+			if projectiles_root != null:
+				StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, kit_pos, "heal", 0.9)
+			SoundSynthesizer.play_sfx("heal", 0.0, kit_hero_id == NetworkManager.local_peer_id, kit_pos)
 		"fire_patch_spawn":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
 				var spawn_pos: Vector3 = payload.get("pos", Vector3.ZERO)

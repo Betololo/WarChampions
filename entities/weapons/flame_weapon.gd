@@ -117,10 +117,19 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			if not occ_hit.is_empty():
 				continue
 
+		if h.status_effects != null and h.status_effects.has_method("is_frontal_carried_shield_block") and h.status_effects.is_frontal_carried_shield_block(cone_origin):
+			h.status_effects.damage_carried_shield(dmg_amt)
+			NetworkManager.broadcast_game_event("hit_vfx", {
+				"pos": h_center,
+				"kind": "spark",
+				"attacker_id": owner_hero.entity_id,
+				"victim_id": h.entity_id,
+				"damage": 0,
+			})
+			continue
+
 		var dealt: int = h.apply_damage_server(dmg_amt, owner_hero.entity_id, false)
 		if dealt > 0:
-			if owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
-				owner_hero.status_effects.notify_damage_dealt_server(dealt)
 			if xp_cb.is_valid():
 				xp_cb.call(owner_hero, h, dealt)
 			NetworkManager.broadcast_game_event("hit_vfx", {
@@ -160,20 +169,13 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var v_occ := PhysicsRayQueryParameters3D.create(cone_origin, v_pos, 1, v_excl)
 			if not space_state.intersect_ray(v_occ).is_empty():
 				continue
-		var v_hp_pre: int = (v as VehicleBase).hp if v is VehicleBase else 0
 		var vdmg: int = maxi(1, int(roundf(float(dmg_amt) * veh_mult)))
 		v.apply_damage_server(vdmg, owner_hero.entity_id, v_dir, v_pos, false)
-		if owner_hero.status_effects != null and owner_hero.status_effects.has_method("notify_damage_dealt_server"):
-			var v_dealt: int = maxi(0, v_hp_pre - (v as VehicleBase).hp) if v is VehicleBase else vdmg
-			if v_dealt > 0:
-				owner_hero.status_effects.notify_damage_dealt_server(v_dealt)
 
-	# 3. Enemy Riot Shields & destructible props in flame cone
+	# 3. Destructible props in flame cone
 	if owner_hero.is_inside_tree():
 		for d in owner_hero.get_tree().get_nodes_in_group("destructible"):
 			if not (d is Node3D) or not d.has_method("apply_damage_server"):
-				continue
-			if d is DemolisherSkills.RiotShieldEntity and (d as DemolisherSkills.RiotShieldEntity).owner_team == owner_hero.team:
 				continue
 			var d_node: Node3D = d as Node3D
 			var d_pos: Vector3 = d_node.global_position + Vector3(0.0, 0.9, 0.0)
@@ -182,8 +184,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 			var d_dir: Vector3 = to_d / maxf(d_dist, 0.001)
 			var d_eff: Vector3 = cam_fwd if d_dist <= 3.0 else dir
 			if d_dist <= max_range_m + 0.8 and (d_dist <= 1.35 and to_d.dot(cam_fwd) >= -0.15 or d_dir.dot(d_eff) >= FLAME_CONE_MIN_DOT):
-				var arg3: Variant = owner_hero.team if d is DemolisherSkills.RiotShieldEntity else d_dir
-				d.apply_damage_server(dmg_amt, owner_hero.entity_id, arg3, d_pos, false)
+				d.apply_damage_server(dmg_amt, owner_hero.entity_id, d_dir, d_pos, false)
 
 	# 4. Fire Starter (arch == 1): raycast aim ray up to max_range_m (21.0m) to spawn/refresh FirePatchEntity
 	var stream_end: Vector3 = origin + dir * max_range_m

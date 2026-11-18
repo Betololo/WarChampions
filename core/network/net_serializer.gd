@@ -36,7 +36,7 @@ const BUFF_COMBAT_MED_HOT: int = 1 << 9
 const BUFF_BANDAGE: int = 1 << 10
 const BUFF_FIREPROOF: int = 1 << 11
 const BUFF_HASTE: int = 1 << 12
-const BUFF_SHIELD_DRAIN: int = 1 << 13
+const BUFF_CARRIED_SHIELD: int = 1 << 13
 const BUFF_VEHICLE_BUSTER: int = 1 << 14
 const BUFF_TNT_ROPE: int = 1 << 15
 

@@ -1405,14 +1405,19 @@ static func _sprite_skill(slot_str: String) -> ImageTexture:
 			_draw_triangle(img, Vector2(15, 16), Vector2(25, 16), Vector2(20, 25), Color(1.0, 0.18, 0.18))
 			_draw_circle(img, 20.0, 20.0, 2.5, Color(1.0, 0.88, 0.30))
 
-		"3_0": # Escudo Balístico (Riot Shield): steel/slate badge + heavy riot shield with cyan viewport slit
+		"3_0": # Escudo Balístico (Em Mãos): heavy tactical shield + stick grenade melee combo
 			_draw_rounded_badge(img, Color(0.24, 0.34, 0.48), Color(0.10, 0.14, 0.22), Color(0.68, 0.82, 0.96))
-			_draw_rect(img, 11, 8, 18, 24, ink)
-			_draw_rect(img, 12, 9, 16, 22, Color(0.42, 0.48, 0.56))
-			_draw_rect(img, 14, 12, 12, 4, Color(0.45, 0.88, 1.0))
-			_draw_rect(img, 12, 20, 16, 3, Color(0.90, 0.62, 0.18))
-			_draw_circle(img, 14.5, 27.5, 1.4, white)
-			_draw_circle(img, 25.5, 27.5, 1.4, white)
+			_draw_rect(img, 8, 9, 16, 22, ink)
+			_draw_rect(img, 9, 10, 14, 20, Color(0.42, 0.48, 0.56))
+			_draw_rect(img, 11, 13, 10, 4, Color(0.45, 0.88, 1.0))
+			_draw_rect(img, 9, 20, 14, 3, Color(0.90, 0.62, 0.18))
+			_draw_circle(img, 11.5, 27.5, 1.3, white)
+			_draw_circle(img, 20.5, 27.5, 1.3, white)
+			# Stick grenade angled on right side
+			_draw_line(img, Vector2(26, 29), Vector2(31, 16), 3.6, ink)
+			_draw_line(img, Vector2(26, 29), Vector2(30, 18), 2.0, Color(0.76, 0.52, 0.24))
+			_draw_rect(img, 27, 9, 7, 8, ink)
+			_draw_rect(img, 28, 10, 5, 6, Color(0.36, 0.48, 0.28))
 
 		"3_1": # Haste (Adrenalina): orange-gold badge + sharp lightning bolt & speed chevrons
 			_draw_rounded_badge(img, Color(0.88, 0.44, 0.10), Color(0.48, 0.16, 0.06), Color(1.0, 0.86, 0.28))
@@ -1434,16 +1439,17 @@ static func _sprite_skill(slot_str: String) -> ImageTexture:
 			_draw_line(img, Vector2(20, 13), Vector2(26, 8), 2.0, Color(0.90, 0.75, 0.36))
 			_draw_circle(img, 27.0, 8.0, 2.6, Color(1.0, 0.95, 0.38))
 
-		"3_3": # Dreno de Escudo (Shield Drain): teal-crimson badge + glowing blue shield receiving energy arrows
-			_draw_rounded_badge(img, Color(0.14, 0.42, 0.62), Color(0.26, 0.10, 0.24), Color(0.45, 0.92, 1.0))
-			_draw_rect(img, 13, 11, 14, 11, ink)
-			_draw_triangle(img, Vector2(13, 22), Vector2(27, 22), Vector2(20, 30), ink)
-			_draw_rect(img, 14, 12, 12, 10, Color(0.30, 0.85, 1.0))
-			_draw_triangle(img, Vector2(14, 22), Vector2(26, 22), Vector2(20, 28), Color(0.30, 0.85, 1.0))
-			_draw_line(img, Vector2(7, 20), Vector2(13, 20), 2.4, Color(1.0, 0.42, 0.32))
-			_draw_line(img, Vector2(33, 20), Vector2(27, 20), 2.4, Color(1.0, 0.42, 0.32))
-			_draw_rect(img, 18, 15, 4, 8, white)
-			_draw_rect(img, 16, 17, 8, 4, white)
+		"3_3": # Kit de 5 Coletes (+70 Escudo): supply crate + tactical cyan/steel ballistic armor vest
+			_draw_rounded_badge(img, Color(0.14, 0.42, 0.62), Color(0.14, 0.22, 0.18), Color(0.45, 0.92, 1.0))
+			# Crate base
+			_draw_rect(img, 8, 23, 24, 9, ink)
+			_draw_rect(img, 9, 24, 22, 7, Color(0.32, 0.38, 0.28))
+			# Tactical armor vest on top
+			_draw_rect(img, 12, 10, 16, 15, ink)
+			_draw_rect(img, 13, 11, 14, 13, Color(0.28, 0.78, 0.96))
+			_draw_rect(img, 17, 10, 6, 4, Color(0.12, 0.22, 0.32))
+			_draw_rect(img, 18, 15, 4, 7, white)
+			_draw_rect(img, 16, 17, 8, 3, white)
 
 		"3_4": # Quebra-Tanques (Vehicle Buster): olive/gold badge + tank silhouette + 3x explosive burst
 			_draw_rounded_badge(img, Color(0.40, 0.44, 0.16), Color(0.24, 0.14, 0.08), Color(1.0, 0.82, 0.24))

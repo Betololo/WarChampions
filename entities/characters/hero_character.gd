@@ -130,6 +130,8 @@ var _weapon_parts_by_name: Dictionary = {}
 var _caber_head_spent: bool = false
 var _tnt_rope_bundle: Node3D = null
 var _tnt_spin_angle: float = 0.0
+var _held_riot_shield: Node3D = null
+var _held_riot_shield_base_pos: Vector3 = Vector3(-0.08, 0.26, -0.56)
 var _skill_anim_timer: float = 0.0
 var _skill_anim_duration: float = 0.55
 var _skill_anim_style: String = ""
@@ -518,6 +520,7 @@ func _rebuild_cartoon_visuals() -> void:
 	_last_vfx_key = ""
 	_overhead_buff_row = null
 	_overhead_buff_slots.clear()
+	_held_riot_shield = null
 
 	var is_royal: bool = (team == NetworkManager.TEAM_ROYAL)
 	var style: Dictionary = _get_visual_style(is_royal)
@@ -596,6 +599,12 @@ func _rebuild_cartoon_visuals() -> void:
 	_shown_weapon_kind = -1
 	_rebuild_held_weapon_mesh()
 
+	if class_id == NetworkManager.CLASS_DEMOLISHER:
+		_held_riot_shield = HeroMeshBuilder.build_carried_riot_shield(is_royal)
+		_held_riot_shield.position = _held_riot_shield_base_pos
+		_held_riot_shield.visible = false
+		_torso_pivot.add_child(_held_riot_shield)
+
 	# Parachute Rig (Canopy + 4 cords)
 	_parachute_rig = Node3D.new()
 	_parachute_rig.name = "ParachuteRig"
@@ -648,6 +657,16 @@ func _rebuild_cartoon_visuals() -> void:
 
 func trim_mat_badge_mesh() -> Mesh:
 	return HeroMeshBuilder.build_badge_mesh()
+
+
+func is_carried_shield_active() -> bool:
+	if is_defeated:
+		return false
+	if (active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0:
+		return true
+	if status_effects != null and status_effects.get("carried_shield_active") == true:
+		return true
+	return false
 
 
 func _is_tnt_rope_held() -> bool:
@@ -785,6 +804,8 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false) ->
 			active_interval = 0.90
 		WeaponBase.WeaponKind.GRENADE_LAUNCHER:
 			active_interval = 0.50
+		WeaponBase.WeaponKind.STICK_GRENADE:
+			active_interval = 0.48
 	_cycle_anim_duration = active_interval
 	_cycle_anim_timer = active_interval
 	if apply_camera_kick and hero_camera != null:
@@ -879,6 +900,8 @@ func _animate_character(delta: float) -> void:
 	if not is_defeated:
 		_defeat_elapsed = 0.0
 	else:
+		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+			_held_riot_shield.visible = false
 		_defeat_elapsed += delta
 		var slump_t: float = clampf((_defeat_elapsed - 0.45) / 0.40, 0.0, 1.0)
 		var kneel_t: float = clampf(_defeat_elapsed / 0.45, 0.0, 1.0)
@@ -936,6 +959,8 @@ func _animate_character(delta: float) -> void:
 			can_shoot_seat = false
 		if _held_weapon_root != null:
 			_held_weapon_root.visible = can_shoot_seat
+		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+			_held_riot_shield.visible = false
 		if current_seat_pose == "sit":
 			_hips_pivot.position.y = 0.28
 			# +X rotation swings downward -Y legs forward toward -Z into the cockpit/footwell
@@ -992,6 +1017,8 @@ func _animate_character(delta: float) -> void:
 	if is_falling_air:
 		if _held_weapon_root != null:
 			_held_weapon_root.visible = false
+		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+			_held_riot_shield.visible = false
 		var flutter_freq: float = 24.0
 		var flutter_amp: float = 0.08
 		var flutter: float = sin(Time.get_ticks_msec() * 0.001 * flutter_freq) * flutter_amp
@@ -1130,10 +1157,10 @@ func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
 					5: style = "mark_point"; dur = 0.70
 			NetworkManager.CLASS_DEMOLISHER:
 				match slot_idx:
-					0: style = "plant_kneel"; dur = 0.55
+					0: style = "flex_shield"; dur = 0.48
 					1: style = "sprint_boost"; dur = 0.55
 					2: style = "throw_overhead"; dur = 0.55
-					3: style = "flex_shield"; dur = 0.55
+					3: style = "plant_kneel"; dur = 0.55
 					4: style = "weapon_charge"; dur = 0.50
 	_skill_anim_style = style
 	last_skill_anim_name = style
@@ -1232,6 +1259,7 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 
 	var cycle_p: float = _weapon_cycle_progress
 	var reload_p: float = _weapon_reload_progress
+	var shield_up: bool = is_carried_shield_active()
 
 	if _held_weapon_root != null:
 		var custom_right_target: bool = false
@@ -1285,8 +1313,22 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.75 + kick * 0.28, lerpf(0.16, 0.04, fire_blend), 0.42 if reloading else 0.0)
 			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE:
 				var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
-				_held_weapon_root.position = Vector3(0.25 - swing_phase * 0.42, 0.34 + swing_phase * 0.10, -0.22 - swing_phase * 0.24)
+				if _shown_weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE and _cycle_anim_timer > 0.0 and _cycle_anim_duration > 0.001:
+					swing_phase = maxf(swing_phase, sin(clampf(cycle_p, 0.0, 1.0) * PI))
+				var ready_x: float = 0.34 if shield_up else 0.25
+				_held_weapon_root.position = Vector3(ready_x - swing_phase * 0.42, 0.34 + swing_phase * 0.10, -0.22 - swing_phase * 0.24)
 				_held_weapon_root.rotation = Vector3(-0.22 + aim_pitch * 0.45 - swing_phase * 0.55, 0.40 + swing_phase * 1.15, -0.35 - swing_phase * 0.65)
+				if shield_up and _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+					_held_riot_shield.visible = true
+					if swing_phase > 0.05:
+						_held_riot_shield.position = _held_riot_shield_base_pos + Vector3(-0.42 * swing_phase, 0.0, 0.06 * swing_phase)
+						_held_riot_shield.rotation = Vector3(0.0, 1.05 * swing_phase, 0.0)
+						left_target = Vector3(-0.08 - 0.42 * swing_phase, 0.36, -0.58 + 0.06 * swing_phase)
+					else:
+						_held_riot_shield.position = _held_riot_shield_base_pos
+						_held_riot_shield.rotation = Vector3.ZERO
+						left_target = Vector3(-0.08, 0.36, -0.58)
+					custom_left_target = true
 			WeaponBase.WeaponKind.FLAMETHROWER:
 				var f_tilt: float = 0.45 if reloading else 0.0
 				_held_weapon_root.position = Vector3(0.23, 0.26, -0.14 + kick * 0.03)
@@ -1363,6 +1405,18 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 					if bolt_lift > 0.05:
 						right_target = _held_weapon_root.transform * (_weapon_grip_local + Vector3(0.028 * bolt_pull, 0.06 * bolt_lift, 0.04 * bolt_pull))
 						custom_right_target = true
+
+		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+			if not shield_up:
+				_held_riot_shield.visible = false
+				_held_riot_shield.position = _held_riot_shield_base_pos
+				_held_riot_shield.rotation = Vector3.ZERO
+			elif not custom_left_target:
+				_held_riot_shield.visible = true
+				_held_riot_shield.position = _held_riot_shield_base_pos
+				_held_riot_shield.rotation = Vector3.ZERO
+				left_target = Vector3(-0.08, 0.36, -0.58)
+				custom_left_target = true
 
 		if not custom_right_target:
 			right_target = _held_weapon_root.transform * _weapon_grip_local
@@ -2165,6 +2219,8 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 		var absorbed: int = mini(shield, remaining)
 		shield -= absorbed
 		remaining -= absorbed
+		if status_effects != null and status_effects.get("permanent_vest_shield") != null and int(status_effects.permanent_vest_shield) > 0:
+			status_effects.permanent_vest_shield = mini(int(status_effects.permanent_vest_shield), shield)
 		if shield <= 0 and status_effects != null and status_effects.has_method("_sync_flags"):
 			status_effects._sync_flags()
 	var hp_dealt: int = mini(hp, remaining)
@@ -2172,6 +2228,8 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 	if hp <= 0:
 		hp = 0
 		is_defeated = true
+		if status_effects != null and status_effects.has_method("deactivate_carried_shield") and status_effects.get("carried_shield_active") == true:
+			status_effects.deactivate_carried_shield(true)
 		active_buffs = 0
 		collision_layer = 0
 		defeat_timer = 5.0
@@ -2231,6 +2289,8 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	shield = 0
 	active_buffs = 0
 	is_defeated = false
+	if status_effects != null and status_effects.has_method("clear_all"):
+		status_effects.clear_all()
 	collision_layer = 2
 	reset_weapons_full()
 	_pending_forced_slot = -1

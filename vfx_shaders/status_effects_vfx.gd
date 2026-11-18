@@ -24,7 +24,7 @@ const BUFF_ICON_TABLE: Array[Array] = [
 	[NetSerializer.BUFF_BANDAGE, "icon_widget_0"],
 	[NetSerializer.BUFF_FIREPROOF, "icon_widget_2"],
 	[NetSerializer.BUFF_HASTE, "icon_skill_3_1"],
-	[NetSerializer.BUFF_SHIELD_DRAIN, "icon_skill_3_3"],
+	[NetSerializer.BUFF_CARRIED_SHIELD, "icon_skill_3_0"],
 	[NetSerializer.BUFF_VEHICLE_BUSTER, "icon_skill_3_4"],
 	[NetSerializer.BUFF_TNT_ROPE, "icon_skill_3_2"],
 ]
@@ -365,9 +365,9 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	elif pierce_flag == 1:
 		rim_col = Color(1.0, 0.28, 0.22)
 		rim_str = 1.45
-	elif (hero.active_buffs & NetSerializer.BUFF_SHIELD_DRAIN) != 0:
-		rim_col = Color(0.28, 0.84, 1.0)
-		rim_str = 1.50
+	elif (hero.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0:
+		rim_col = Color(0.32, 0.84, 1.0)
+		rim_str = 1.45
 	elif (hero.active_buffs & NetSerializer.BUFF_VEHICLE_BUSTER) != 0:
 		rim_col = Color(1.0, 0.42, 0.16)
 		rim_str = 1.50
@@ -443,7 +443,7 @@ static func _has_continuous_particle_buff(hero: HeroCharacter) -> bool:
 		| NetSerializer.BUFF_BANDAGE
 		| NetSerializer.BUFF_FIREPROOF
 		| NetSerializer.BUFF_HASTE
-		| NetSerializer.BUFF_SHIELD_DRAIN
+		| NetSerializer.BUFF_CARRIED_SHIELD
 		| NetSerializer.BUFF_VEHICLE_BUSTER
 		| NetSerializer.BUFF_TNT_ROPE
 	)
@@ -520,8 +520,8 @@ static func _spawn_active_buff_tick_vfx(parent: Node, hero: HeroCharacter) -> vo
 
 	if (b & NetSerializer.BUFF_HASTE) != 0:
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 0.95, randf_range(-0.36, 0.36)), Color(1.0, 0.78, 0.16, 0.92), 0.11, 0.65, false)
-	if (b & NetSerializer.BUFF_SHIELD_DRAIN) != 0:
-		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 1.05, randf_range(-0.36, 0.36)), Color(0.32, 0.86, 1.0, 0.90), 0.11, 0.62, true)
+	if (b & NetSerializer.BUFF_CARRIED_SHIELD) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 1.05, randf_range(-0.36, 0.36)), Color(0.32, 0.86, 1.0, 0.86), 0.10, 0.55, false)
 	if (b & NetSerializer.BUFF_VEHICLE_BUSTER) != 0:
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.34, 0.34), 1.15, randf_range(-0.34, 0.34)), Color(1.0, 0.34, 0.14, 0.92), 0.12, 0.65, false)
 	if (b & NetSerializer.BUFF_TNT_ROPE) != 0:
@@ -1044,14 +1044,14 @@ static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_po
 
 			NetworkManager.CLASS_DEMOLISHER:
 				match slot_idx:
-					0: # Escudo Balístico: forward steel/cyan deploy shockwave + expanding barrier ring
-						dur = 0.52
+					0: # Escudo Balístico (Em Mãos): forward steel/cyan equip flash in front of Demolisher
+						dur = 0.44
 						var mat_sh := _get_shared_mat(Color(0.32, 0.82, 1.0, 0.86), true)
-						var plate := _vfx_part(root, box, mat_sh, Vector3(0.0, 1.0, -1.8), Vector3(1.6, 1.4, 0.12), Vector3.ZERO, fade_meshes)
-						var s_ring := _vfx_part(root, torus, mat_sh, Vector3(0.0, 0.12, -1.8), Vector3(1.2, 0.7, 1.2), Vector3.ZERO, fade_meshes)
+						var plate := _vfx_part(root, box, mat_sh, Vector3(-0.08, 1.05, -0.65), Vector3(1.15, 1.35, 0.10), Vector3.ZERO, fade_meshes)
+						var s_ring := _vfx_part(root, torus, mat_sh, Vector3(0.0, 0.12, -0.55), Vector3(1.0, 0.7, 1.0), Vector3.ZERO, fade_meshes)
 						if tw != null:
-							tw.tween_property(plate, "scale", Vector3(1.9, 1.7, 0.16), dur)
-							tw.tween_property(s_ring, "scale", Vector3(2.8, 0.7, 2.8), dur)
+							tw.tween_property(plate, "scale", Vector3(1.28, 1.48, 0.14), dur)
+							tw.tween_property(s_ring, "scale", Vector3(2.2, 0.7, 2.2), dur)
 					1: # Haste: amber speed streaks & fiery adrenaline aura
 						dur = 0.54
 						var mat_hst := _get_shared_mat(Color(1.0, 0.78, 0.18, 0.94), true)
@@ -1068,13 +1068,13 @@ static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_po
 							var sp := _vfx_part(root, sph, mat_tnt, Vector3(0.24 + cos(a) * 0.20, 1.15 + sin(a) * 0.15, -0.22), Vector3(0.16, 0.16, 0.16), Vector3.ZERO, fade_meshes)
 							if tw != null:
 								tw.tween_property(sp, "position:y", 1.55, dur)
-					3: # Dreno de Escudo: inward-pulling cyan energy dome + rising crosses
+					3: # Kit de 5 Coletes: ground armor kit deploy halo + rising cyan armor cross
 						dur = 0.56
 						var mat_drn := _get_shared_mat(Color(0.28, 0.88, 1.0, 0.88), true)
-						var dome_d := _vfx_part(root, torus, mat_drn, Vector3(0.0, 1.05, 0.0), Vector3(2.2, 0.8, 2.2), Vector3.ZERO, fade_meshes)
+						var kit_ring := _vfx_part(root, torus, mat_drn, Vector3(0.0, 0.12, 0.0), Vector3(0.8, 0.7, 0.8), Vector3.ZERO, fade_meshes)
 						if tw != null:
-							tw.tween_property(dome_d, "scale", Vector3(0.8, 0.8, 0.8), dur)
-						_vfx_plus_cross(root, mat_drn, Vector3(0.0, 1.85, 0.0), 0.38, 0.10, fade_meshes)
+							tw.tween_property(kit_ring, "scale", Vector3(3.8, 0.7, 3.8), dur)
+						_vfx_plus_cross(root, mat_drn, Vector3(0.0, 0.85, 0.0), 0.42, 0.11, fade_meshes)
 					_: # Quebra-Tanques: fiery orange-gold armor-buster shock ring & upward lance
 						dur = 0.54
 						var mat_vb := _get_shared_mat(Color(1.0, 0.36, 0.12, 0.94), true)

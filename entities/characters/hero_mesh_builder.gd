@@ -1833,3 +1833,37 @@ static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
 		"muzzle": Vector3(0.0, 0.0, -0.78),
 		"two_handed": false,
 	}
+
+
+## Builds Demolisher's carried 1.15m x 1.35m tactical ballistic riot shield with viewport, team trim & bolts.
+static func build_carried_riot_shield(is_royal: bool) -> Node3D:
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var root := Node3D.new()
+	root.name = "HeldRiotShield"
+
+	var steel_mat := make_sculpted_mat(Color(0.20, 0.24, 0.29), "", 0.42, 0.50)
+	var rim_mat := make_sculpted_mat(Color(0.12, 0.14, 0.18), "", 0.48, 0.45)
+	var glass_mat := make_sculpted_mat(Color(0.45, 0.82, 0.98, 0.56), "", 0.14, 0.05)
+	var team_col := Color(0.18, 0.46, 0.88) if is_royal else Color(0.84, 0.20, 0.20)
+	var team_mat := make_sculpted_mat(team_col, "", 0.50)
+	var bolt_mat := make_sculpted_mat(Color(0.76, 0.80, 0.86), "", 0.28, 0.72)
+	var parts: Array[MeshInstance3D] = []
+
+	_add_box_part(root, Vector3(1.15, 0.90, 0.09), Vector3(0.0, -0.225, 0.0), Vector3.ZERO, steel_mat, parts, "ShieldLowerPlate")
+	_add_box_part(root, Vector3(1.15, 0.21, 0.10), Vector3(0.0, 0.57, 0.0), Vector3.ZERO, rim_mat, parts, "ShieldTopFrame")
+	_add_box_part(root, Vector3(0.23, 0.24, 0.095), Vector3(-0.46, 0.345, 0.0), Vector3.ZERO, rim_mat, parts, "ShieldPillarL")
+	_add_box_part(root, Vector3(0.23, 0.24, 0.095), Vector3(0.46, 0.345, 0.0), Vector3.ZERO, rim_mat, parts, "ShieldPillarR")
+	_add_box_part(root, Vector3(0.69, 0.24, 0.05), Vector3(0.0, 0.345, 0.0), Vector3.ZERO, glass_mat, parts, "ShieldViewport")
+	_add_box_part(root, Vector3(1.10, 0.12, 0.105), Vector3(0.0, 0.08, 0.0), Vector3.ZERO, team_mat, parts, "ShieldTeamTrim")
+	_add_box_part(root, Vector3(0.045, 0.26, 0.065), Vector3(0.0, 0.08, 0.075), Vector3.ZERO, rim_mat, parts, "ShieldGrip")
+
+	for bx in [-0.48, 0.48]:
+		for by in [-0.56, 0.56]:
+			_add_cyl_part(root, 0.032, 0.032, 0.115, Vector3(bx, by, 0.0), Vector3(PI * 0.5, 0.0, 0.0), bolt_mat, 8, parts)
+
+	for mi in parts:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 220.0
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return root
