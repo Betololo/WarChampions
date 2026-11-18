@@ -14,8 +14,14 @@ var on_turret_destroyed: Callable = Callable()
 var _shield_body: StaticBody3D = null
 
 
+func _ready() -> void:
+	super._ready()
+	add_to_group("deployed_turrets")
+
+
 func _setup_vehicle_stats_and_seats() -> void:
 	vehicle_type = VehicleType.MOUNTED_MG
+	is_deployable = true
 	max_hp = 320
 	hp = 320
 	freeze = true
@@ -86,10 +92,15 @@ func _drive_physics(driver: HeroCharacter, _delta: float, context: Dictionary) -
 		_fire_ballistic_mg(driver, muzzle, fire_dir, 180.0, 9.8 * 0.18, 220.0, MG_HERO_DMG, MG_OBJ_DMG, context)
 
 
-func _on_destroyed(attacker_id: int) -> void:
-	super._on_destroyed(attacker_id)
+func disable_shield_collision() -> void:
 	if _shield_body != null and is_instance_valid(_shield_body):
 		_shield_body.collision_layer = 0
+		_shield_body.collision_mask = 0
+
+
+func _on_destroyed(attacker_id: int) -> void:
+	super._on_destroyed(attacker_id)
+	disable_shield_collision()
 	if on_turret_destroyed.is_valid():
 		on_turret_destroyed.call()
 	queue_free()

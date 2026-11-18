@@ -59,6 +59,7 @@ class TrenchEntity:
 		if _is_visual_only:
 			collision_layer = 0
 			collision_mask = 0
+			add_to_group("client_trenches")
 		else:
 			collision_layer = 1 | 64
 			collision_mask = 0
@@ -190,6 +191,7 @@ var _active_build_slot: int = -1
 var _build_timer: float = 0.0
 var _build_total: float = 0.0
 var _build_target_veh: VehicleBase = null
+var _build_started_on_foot: bool = true
 var _mortar_pending_hero_aim: bool = false
 var _pending_mortars: Array[Dictionary] = []
 var _last_context: Dictionary = {}
@@ -232,10 +234,10 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_s
 	_step_pending_mortars(delta, context)
 	_step_active_build(delta, context)
 
-	# Keep skill_max_cooldowns responsive while trench or turret is deployed
-	if _active_trench != null and not is_instance_valid(_active_trench):
+	# Keep deployed references clear if freed or queued for deletion
+	if _active_trench != null and (not is_instance_valid(_active_trench) or _active_trench.is_queued_for_deletion()):
 		_active_trench = null
-	if _active_turret != null and not is_instance_valid(_active_turret):
+	if _active_turret != null and (not is_instance_valid(_active_turret) or _active_turret.is_queued_for_deletion()):
 		_active_turret = null
 
 	super.step_server(delta, cmd, context, allow_class_skills and _active_build_slot < 0)
@@ -246,13 +248,20 @@ func _physics_process(delta: float) -> void:
 		_step_pending_mortars(delta, _last_context)
 
 
+func _cancel_build_channel() -> void:
+	_active_build_slot = -1
+	_build_timer = 0.0
+	_build_total = 0.0
+	_build_target_veh = null
+	_build_started_on_foot = true
+
+
 func _step_active_build(delta: float, context: Dictionary) -> void:
 	if _active_build_slot < 0:
 		return
-	if owner_hero == null or owner_hero.is_defeated:
-		_active_build_slot = -1
-		_build_timer = 0.0
-		_build_target_veh = null
+	var in_vehicle_interrupt: bool = (owner_hero != null and owner_hero.current_vehicle_id >= 0 and (_active_build_slot != 2 or _build_started_on_foot))
+	if owner_hero == null or owner_hero.is_defeated or in_vehicle_interrupt:
+		_cancel_build_channel()
 		return
 	_build_timer -= delta
 	if _build_timer > 0.0:
@@ -260,9 +269,7 @@ func _step_active_build(delta: float, context: Dictionary) -> void:
 
 	var finished_slot: int = _active_build_slot
 	var target_veh: VehicleBase = _build_target_veh
-	_active_build_slot = -1
-	_build_timer = 0.0
-	_build_target_veh = null
+	_cancel_build_channel()
 
 	match finished_slot:
 		0:
@@ -270,7 +277,7 @@ func _step_active_build(delta: float, context: Dictionary) -> void:
 		1:
 			_complete_turret_spawn(context)
 		2:
-			_complete_vehicle_armor(target_veh)
+			_complete_vehicle_armor(target_veh, context)
 
 
 func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Dictionary) -> bool:
@@ -281,21 +288,23 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 		0: # Trincheira (3.0s build, max 1 active, 18s CD starts ONLY after destroyed)
 			if owner_hero.current_vehicle_id >= 0:
 				return false
-			if _active_trench != null and is_instance_valid(_active_trench) and not _active_trench.is_destroyed:
+			if _active_trench != null and is_instance_valid(_active_trench) and not _active_trench.is_queued_for_deletion() and not _active_trench.is_destroyed:
 				return false
 			_active_build_slot = 0
 			_build_total = 3.0
 			_build_timer = 3.0
+			_build_started_on_foot = true
 			return true
 
 		1: # Metralhadora Montada c/ Escudo (2.0s build, max 1 active, 18s CD starts ONLY after destroyed)
 			if owner_hero.current_vehicle_id >= 0:
 				return false
-			if _active_turret != null and is_instance_valid(_active_turret) and not _active_turret.is_destroyed:
+			if _active_turret != null and is_instance_valid(_active_turret) and not _active_turret.is_queued_for_deletion() and not _active_turret.is_destroyed:
 				return false
 			_active_build_slot = 1
 			_build_total = 2.0
 			_build_timer = 2.0
+			_build_started_on_foot = true
 			return true
 
 		2: # Blindar Veiculo (2.0s channel on occupied or nearest <= 7.0m allied/empty vehicle)
@@ -306,6 +315,7 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 			_build_total = 2.0
 			_build_timer = 2.0
 			_build_target_veh = veh
+			_build_started_on_foot = (owner_hero.current_vehicle_id < 0)
 			return true
 
 		3: # Morteiro via Minimapa
@@ -569,15 +579,34 @@ func _complete_turret_spawn(context: Dictionary) -> void:
 	})
 
 
+func _is_vehicle_allied_or_empty(v: VehicleBase, heroes_by_id: Dictionary) -> bool:
+	if owner_hero == null or v == null:
+		return false
+	var has_occupant: bool = false
+	for seat in v.seats:
+		if seat.occupant_id >= 0:
+			has_occupant = true
+			var occ := heroes_by_id.get(seat.occupant_id, null) as HeroCharacter
+			if occ != null and is_instance_valid(occ):
+				if occ.team != owner_hero.team:
+					return false
+			elif v.team != owner_hero.team:
+				return false
+	if has_occupant and v.team >= 0 and v.team != owner_hero.team:
+		return false
+	return true
+
+
 func _find_armor_target_vehicle(context: Dictionary) -> VehicleBase:
 	if owner_hero == null:
 		return null
 	var vehicles: Array = context.get("vehicles", [])
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", context.get("heroes", {}))
 	if owner_hero.current_vehicle_id >= 0:
 		for v_node in vehicles:
 			if v_node is VehicleBase and is_instance_valid(v_node):
 				var v: VehicleBase = v_node as VehicleBase
-				if v.id == owner_hero.current_vehicle_id and not v.is_destroyed:
+				if v.id == owner_hero.current_vehicle_id and not v.is_destroyed and not v.is_armored:
 					return v
 
 	var hpos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
@@ -589,15 +618,7 @@ func _find_armor_target_vehicle(context: Dictionary) -> VehicleBase:
 		var v: VehicleBase = v_node as VehicleBase
 		if v.is_destroyed or v.is_armored:
 			continue
-		# Must be empty or currently occupied only by allied team
-		var has_occupant: bool = false
-		var has_enemy: bool = false
-		for seat in v.seats:
-			if seat.occupant_id >= 0:
-				has_occupant = true
-				if v.team != owner_hero.team:
-					has_enemy = true
-		if has_enemy or (has_occupant and v.team != owner_hero.team):
+		if not _is_vehicle_allied_or_empty(v, heroes_by_id):
 			continue
 		var vpos: Vector3 = v.global_position if v.is_inside_tree() else v.position
 		var dist: float = hpos.distance_to(vpos)
@@ -607,16 +628,26 @@ func _find_armor_target_vehicle(context: Dictionary) -> VehicleBase:
 	return best_v
 
 
-func _complete_vehicle_armor(target_veh: VehicleBase) -> void:
-	if target_veh == null or not is_instance_valid(target_veh) or target_veh.is_destroyed:
+func _complete_vehicle_armor(target_veh: VehicleBase, context: Dictionary = {}) -> void:
+	if owner_hero == null or owner_hero.is_defeated:
 		return
+	if target_veh == null or not is_instance_valid(target_veh) or target_veh.is_queued_for_deletion() or target_veh.is_destroyed or target_veh.is_armored:
+		return
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", context.get("heroes", {}))
+	if not _is_vehicle_allied_or_empty(target_veh, heroes_by_id):
+		return
+	if owner_hero.current_vehicle_id != target_veh.id:
+		var hpos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+		var vpos: Vector3 = target_veh.global_position if target_veh.is_inside_tree() else target_veh.position
+		if hpos.distance_to(vpos) > 10.0:
+			return
 	if target_veh.apply_engineer_armor():
 		if skill_cooldowns.size() > 2:
 			skill_cooldowns[2] = skill_max_cooldowns[2]
 			skill_activated.emit(2, skill_cooldowns[2])
 		NetworkManager.broadcast_game_event("veh_armored", {
 			"vehicle_id": target_veh.id,
-			"hero_id": owner_hero.entity_id if owner_hero != null else -1,
+			"hero_id": owner_hero.entity_id,
 			"max_hp": target_veh.max_hp,
 			"hp": target_veh.hp,
 		})

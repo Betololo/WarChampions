@@ -46,6 +46,7 @@ var max_hp: int = 350
 var hp: int = 350
 var _base_max_hp: int = 0
 var is_armored: bool = false
+var is_deployable: bool = false
 var _armor_plates_root: Node3D = null
 var turret_yaw: float = 0.0
 var turret_pitch: float = 0.0
@@ -518,12 +519,16 @@ func attach_engineer_armor_visuals() -> void:
 
 
 func _respawn_vehicle() -> void:
+	if is_deployable:
+		return
 	is_destroyed = false
 	is_marked = false
 	is_armored = false
 	if _base_max_hp > 0:
 		max_hp = _base_max_hp
 	if _armor_plates_root != null and is_instance_valid(_armor_plates_root):
+		if _armor_plates_root.get_parent() != null:
+			_armor_plates_root.get_parent().remove_child(_armor_plates_root)
 		_armor_plates_root.queue_free()
 		_armor_plates_root = null
 		_cached_visual_meshes.clear()

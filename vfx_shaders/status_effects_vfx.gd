@@ -1294,6 +1294,7 @@ static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: flo
 	var root := Node3D.new()
 	root.name = "MortarWarningVFX"
 	root.position = origin + Vector3(0.0, 0.08, 0.0)
+	root.add_to_group("mortar_rings")
 	parent.add_child(root)
 
 	var outer_ring := MeshInstance3D.new()
