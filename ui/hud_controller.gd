@@ -241,9 +241,11 @@ static func get_vehicle_display_name(v_type: int) -> String:
 			return "VEÍCULO"
 
 
-static func get_seat_display_name(seat_type: int) -> String:
+static func get_seat_display_name(seat_type: int, vehicle_type: int = -1) -> String:
 	match seat_type:
 		VehicleBase.SeatType.DRIVER:
+			if vehicle_type == VehicleBase.VehicleType.BOAT or vehicle_type == VehicleBase.VehicleType.PLANE:
+				return "Piloto"
 			return "Motorista"
 		VehicleBase.SeatType.PASSENGER:
 			return "Passageiro"
@@ -1451,7 +1453,7 @@ func _update_vehicle_hp_panel(delta: float) -> void:
 				target_v = v
 				var seat: VehicleBase.SeatSlot = v.get_seat(_local_hero.current_seat_index)
 				if seat != null:
-					seat_text = get_seat_display_name(seat.seat_type)
+					seat_text = get_seat_display_name(seat.seat_type, v.vehicle_type)
 				break
 	elif _local_hero.is_inside_tree():
 		var best_dist: float = 8.5
@@ -1524,7 +1526,7 @@ func _update_vehicle_seat_diagram(target_v: VehicleBase) -> void:
 		if not btn.visible:
 			btn.visible = true
 		var s: VehicleBase.SeatSlot = target_v.seats[i]
-		var role_txt: String = get_seat_display_name(s.seat_type)
+		var role_txt: String = get_seat_display_name(s.seat_type, target_v.vehicle_type)
 		var is_mine: bool = (s.occupant_id == _local_hero.entity_id)
 		var is_occupied: bool = (s.occupant_id >= 0)
 		var state_txt: String = "VOCÊ" if is_mine else ("OCUPADO" if is_occupied else "LIVRE")

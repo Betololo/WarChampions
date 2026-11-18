@@ -1,7 +1,8 @@
 class_name VehicleAPC
 extends VehicleBase
 
-## Armored MG Carrier (Blindado): enclosed armored driver + 360-degree mounted MG turret gunner.
+## Armored MG Carrier (Blindado): enclosed armored driver + 360-degree mounted MG turret gunner
+## + rear hitch backwards-facing passenger (weapons/skills/Wrench).
 const MAX_SPEED: float = 21.0
 const ACCEL: float = 32.0
 const STEER_RATE: float = 2.15
@@ -19,6 +20,7 @@ func _setup_vehicle_stats_and_seats() -> void:
 	mass = 2600.0
 	_add_seat(SeatType.DRIVER, Vector3(-0.45, 0.85, -0.35), false, false, true, "hidden")
 	_add_seat(SeatType.GUNNER, Vector3(0.0, 1.48, 0.35), false, false, false, "stand", true)
+	_add_seat(SeatType.PASSENGER, Vector3(0.0, 0.85, 2.48), true, true, false, "sit", false, PI)
 
 
 func _build_vehicle_mesh() -> void:
@@ -51,14 +53,16 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", _last_heroes_by_id)
 	var gunner: HeroCharacter = get_gunner_hero(heroes_by_id)
-	var operator: HeroCharacter = gunner if gunner != null else driver
-	if operator != null and operator.latest_server_input != null:
-		var op_cmd: InputCmd = operator.latest_server_input
-		turret_yaw = op_cmd.aim_yaw
-		turret_pitch = op_cmd.aim_pitch
-		if op_cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
+	if gunner != null and gunner.latest_server_input != null:
+		var gun_cmd: InputCmd = gunner.latest_server_input
+		turret_yaw = gun_cmd.aim_yaw
+		turret_pitch = clampf(gun_cmd.aim_pitch, -0.45, 0.65)
+		if _turret_node != null:
+			_turret_node.rotation.y = _effective_turret_local_yaw()
+		if gun_cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
 			_driver_fire_cd = MG_FIRE_INTERVAL
-			var aim_b := Basis.from_euler(Vector3(clampf(turret_pitch, -0.45, 0.65), turret_yaw, 0.0))
+			var aim_b := Basis.from_euler(Vector3(turret_pitch, turret_yaw, 0.0))
 			var fire_dir: Vector3 = (-aim_b.z).normalized()
-			var muzzle: Vector3 = global_position + Vector3(0.0, 2.15, 0.0) + fire_dir * 2.3
-			_fire_ballistic_mg(operator, muzzle, fire_dir, 175.0, 9.8 * 0.20, 220.0, MG_HERO_DMG, MG_OBJ_DMG, context)
+			var muzzle_base: Vector3 = _barrel_pivot.global_position if (_barrel_pivot != null and is_inside_tree()) else ((global_transform if is_inside_tree() else transform) * Vector3(0.0, 1.88, 0.25))
+			var muzzle: Vector3 = muzzle_base + fire_dir * 2.30
+			_fire_ballistic_mg(gunner, muzzle, fire_dir, 175.0, 9.8 * 0.20, 220.0, MG_HERO_DMG, MG_OBJ_DMG, context)

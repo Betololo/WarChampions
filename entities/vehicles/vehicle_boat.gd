@@ -2,7 +2,7 @@ class_name VehicleBoat
 extends VehicleBase
 
 ## Aquatic Patrol / Landing Boat: Buoyancy over ocean (Y = 0.0),
-## 1 Driver + 2 open deck Passengers who can fire weapons, skills & Wrench.
+## Pilot (no weapon) + Bow Twin-MG Gunner + Rear Standing Passenger (weapons/skills/Wrench).
 const MAX_WATER_SPEED: float = 24.0
 const ACCEL: float = 34.0
 const TURN_RATE: float = 2.75
@@ -18,8 +18,8 @@ func _setup_vehicle_stats_and_seats() -> void:
 	hp = 380
 	mass = 1600.0
 	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.85, 0.35), false, false, false, "sit")
-	_add_seat(SeatType.PASSENGER, Vector3(-0.72, 0.72, -1.25), true, true, false, "sit")
-	_add_seat(SeatType.PASSENGER, Vector3(0.72, 0.72, -1.25), true, true, false, "sit")
+	_add_seat(SeatType.GUNNER, Vector3(0.0, 0.96, -1.95), false, false, false, "stand", true)
+	_add_seat(SeatType.PASSENGER, Vector3(0.0, 0.76, 1.95), true, true, false, "stand")
 
 
 func _build_vehicle_mesh() -> void:
@@ -57,17 +57,25 @@ func _apply_buoyancy_and_leveling(delta: float) -> void:
 
 func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) -> void:
 	var water_y: float = HeroCharacter.WATER_LEVEL
-	var in_water: bool = global_position.y <= water_y + 0.65
+	var cur_y: float = global_position.y if is_inside_tree() else position.y
+	var in_water: bool = cur_y <= water_y + 0.65
 
 	if in_water:
 		var cmd: InputCmd = driver.latest_server_input if driver != null else null
 		_apply_arcade_drive(delta, cmd, MAX_WATER_SPEED, ACCEL, TURN_RATE, LATERAL_GRIP, IDLE_DRAG, 0.65)
 		_process_roadkill(driver, context, Vector2(1.5, 3.2), 5.5)
 
-		if driver != null and cmd != null:
-			# Bow light gun on fire
-			if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
-				_driver_fire_cd = 0.14
-				var fire_dir: Vector3 = -Basis.from_euler(Vector3(cmd.aim_pitch, cmd.aim_yaw, 0.0)).z.normalized()
-				var muzzle: Vector3 = global_position + Vector3(0.0, 1.9, 0.0) + fire_dir * 2.5
-				_fire_ballistic_mg(driver, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)
+	var heroes_by_id: Dictionary = context.get("heroes_by_id", _last_heroes_by_id)
+	var gunner: HeroCharacter = get_gunner_hero(heroes_by_id)
+	if gunner != null and gunner.latest_server_input != null:
+		var gun_cmd: InputCmd = gunner.latest_server_input
+		turret_yaw = gun_cmd.aim_yaw
+		turret_pitch = clampf(gun_cmd.aim_pitch, -0.35, 0.65)
+		if _turret_node != null:
+			_turret_node.rotation.y = _effective_turret_local_yaw()
+		if gun_cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
+			_driver_fire_cd = 0.14
+			var fire_dir: Vector3 = -Basis.from_euler(Vector3(turret_pitch, turret_yaw, 0.0)).z.normalized()
+			var muzzle_base: Vector3 = _barrel_pivot.global_position if (_barrel_pivot != null and is_inside_tree()) else ((global_transform if is_inside_tree() else transform) * Vector3(0.0, 1.40, -2.52))
+			var muzzle: Vector3 = muzzle_base + fire_dir * 0.88
+			_fire_ballistic_mg(gunner, muzzle, fire_dir, 140.0, 16.0, 140.0, 14, 18, context)

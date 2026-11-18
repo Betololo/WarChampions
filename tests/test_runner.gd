@@ -43,6 +43,7 @@ func _ready() -> void:
 	await _test_phase9_all_9_fixes()
 	await _test_phase10_all_8_items()
 	await _test_phase11_task1_fixes()
+	await _test_phase11_task2_vehicles()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -5400,7 +5401,11 @@ func _test_phase10_all_8_items() -> void:
 			apc_bad_alpha += 1
 
 	_assert(
-		apc.seats.size() == 2 and apc_s0 == 0 and apc_s1 == 1
+		apc.seats.size() == 3 and apc_s0 == 0 and apc_s1 == 1
+		and apc.seats[2].seat_type == VehicleBase.SeatType.PASSENGER
+		and apc.seats[2].local_offset.distance_to(Vector3(0.0, 0.85, 2.48)) < 0.01
+		and is_equal_approx(apc.seats[2].local_yaw, PI)
+		and apc.seats[2].can_shoot and apc.seats[2].can_use_skills
 		and apc_drv_enclosed_while_seated
 		and apc.get_gunner_hero(apc_heroes) == apc_gun
 		and not VehicleBase.is_hero_enclosed(apc_drv, {911: apc}) and not VehicleBase.is_hero_enclosed(apc_gun, {911: apc})
@@ -5411,7 +5416,7 @@ func _test_phase10_all_8_items() -> void:
 		and apc_gunner_hides_personal_wep and solo_gunner_mg_ok
 		and apc_bad_vol == 0 and apc_bad_alpha == 0
 		and HUDController.get_vehicle_display_name(VehicleBase.VehicleType.APC) == "BLINDADO",
-		"Phase 10.5: VehicleAPC enclosed driver + 360-deg turret gunner fires mounted MG (dealt=%d dmg), hides personal weapon, supports solo gunner, and HUD BLINDADO" % apc_mg_dealt
+		"Phase 10.5: VehicleAPC 3-seat enclosed driver + 360-deg turret gunner fires mounted MG (dealt=%d dmg) + rear hitch passenger, hides personal weapon, supports solo gunner, and HUD BLINDADO" % apc_mg_dealt
 	)
 	apc.exit_hero(apc_gun)
 
@@ -5440,19 +5445,22 @@ func _test_phase10_all_8_items() -> void:
 		if not veh.is_ground_vehicle():
 			all_ground_stalled_destroyed = false
 		veh.try_enter_hero(water_drv)
-		# First test partial submersion stall at y = -0.45
+		# First test partial submersion stall at y = -0.45 while occupied
 		veh.global_position = Vector3(40.0, -0.45, 0.0)
 		veh.linear_velocity = Vector3(0.0, 0.0, -16.0)
 		veh.step_vehicle_server(0.05, w_heroes, w_ctx)
 		if Vector2(veh.linear_velocity.x, veh.linear_velocity.z).length() >= 16.0 or not veh.is_submerged_in_water():
 			all_ground_stalled_destroyed = false
-		# Then test deep water destruction at y = -0.75
+		# Occupied in deep water (y = -0.75) stays present without exploding
 		veh.global_position = Vector3(40.0, -0.75, 0.0)
 		veh.step_vehicle_server(0.05, w_heroes, w_ctx)
-		if not veh.is_destroyed or veh.hp != 0:
+		if veh.is_destroyed or veh.hp <= 0 or water_drv.hp != water_drv.max_hp:
 			all_ground_stalled_destroyed = false
-		if water_drv.current_vehicle_id >= 0:
-			veh.exit_hero(water_drv)
+		# Once all occupants exit (get_occupant_count() == 0), submerged ground vehicle vanishes silently
+		veh.exit_hero(water_drv)
+		veh.step_vehicle_server(0.05, w_heroes, w_ctx)
+		if not veh.is_destroyed or veh.hp != 0 or veh.visible or water_drv.hp != water_drv.max_hp:
+			all_ground_stalled_destroyed = false
 		water_drv.respawn_at(Vector3(40.0, 1.0, 0.0), 0.0)
 
 	w_boat.global_position = Vector3(50.0, -0.80, 0.0)
@@ -5463,7 +5471,7 @@ func _test_phase10_all_8_items() -> void:
 	var boat_floats_ok: bool = (not w_boat.is_ground_vehicle()) and (not w_boat.is_submerged_in_water()) and (not w_boat.is_destroyed) and (w_boat.global_position.y > -0.45)
 	_assert(
 		all_ground_stalled_destroyed and boat_floats_ok,
-		"Phase 10.6: Ground vehicles (Jeep/Tank/Motorcycle/APC) stall and self-destruct when submerged in water (y<=-0.75), while VehicleBoat floats normally (ground_ok=%s, boat_y=%.2f)" % [str(all_ground_stalled_destroyed), w_boat.global_position.y]
+		"Phase 10.6: Ground vehicles (Jeep/Tank/Motorcycle/APC) stall while occupied in water and vanish silently when empty (y<=-0.75), while VehicleBoat floats normally (ground_ok=%s, boat_y=%.2f)" % [str(all_ground_stalled_destroyed), w_boat.global_position.y]
 	)
 
 	# 7. Soldier Sixth Sense reveals enemies & Stealthed Commandos within 55m to distant teammates across the map
@@ -5768,6 +5776,277 @@ func _test_phase11_task1_fixes() -> void:
 	_assert(
 		wat_cat_ok and wat_sm_ok and wat_act_ok and wat_clean_ok and wat_immune_ok and water_blocks_ok and water_extinguish_ok,
 		"Phase 11.1e: Water (Água) slot 2 cleanses burn + resets accum + grants 2.0s fire immunity and water blocks/extinguishes burn"
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+
+
+func _test_phase11_task2_vehicles() -> void:
+	var arena := Node3D.new()
+	add_child(arena)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(120.0, 1.0, 120.0)
+	floor_col.shape = floor_box
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var lc := LagCompensator.new()
+
+	# 1. Silent Water Vanish When Empty + Respawn (no explosion damage, no explosion_vfx, no vehicle_destroyed)
+	var w_jeep := VehicleJeep.new()
+	w_jeep.id = 11201
+	w_jeep.team = NetworkManager.TEAM_ROYAL
+	arena.add_child(w_jeep)
+	w_jeep.spawn_transform = Transform3D(Basis.IDENTITY, Vector3(0.0, 0.5, 0.0))
+	w_jeep.global_position = Vector3(0.0, -0.80, 0.0)
+	w_jeep.linear_velocity = Vector3(0.0, 0.0, -14.0)
+
+	var w_drv := HeroCharacter.new()
+	w_drv.setup_identity(11210, "P11WaterDrv", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(w_drv)
+	var w_cmd := InputCmd.new()
+	w_cmd.move_dir = Vector2(0.0, -1.0)
+	w_drv.latest_server_input = w_cmd
+	w_jeep.try_enter_hero(w_drv)
+
+	var water_events: Array[String] = []
+	var water_shots: Array[Vector3] = []
+	var ev_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "explosion_vfx" or ev_type == "vehicle_destroyed":
+			water_events.append(ev_type)
+		elif ev_type == "shot_vfx":
+			water_shots.append(payload.get("origin", Vector3.ZERO))
+	NetworkManager.game_event_received.connect(ev_cb)
+
+	var w_heroes: Dictionary = {11210: w_drv}
+	var w_ctx: Dictionary = {"heroes_by_id": w_heroes}
+	for _i in range(6):
+		w_jeep.step_vehicle_server(0.1, w_heroes, w_ctx)
+	var occupied_stalled_ok: bool = (
+		not w_jeep.is_destroyed
+		and w_jeep.hp > 0
+		and w_jeep.visible
+		and w_jeep.get_occupant_count() == 1
+		and Vector2(w_jeep.linear_velocity.x, w_jeep.linear_velocity.z).length() < 4.0
+		and w_drv.hp == w_drv.max_hp
+		and water_events.is_empty()
+	)
+
+	var vanished_sig: Array[int] = []
+	w_jeep.destroyed.connect(func(vid: int) -> void: vanished_sig.append(vid))
+	w_jeep.exit_hero(w_drv)
+	w_jeep.step_vehicle_server(0.05, w_heroes, w_ctx)
+	var empty_vanished_ok: bool = (
+		w_jeep.get_occupant_count() == 0
+		and w_jeep.is_destroyed
+		and not w_jeep.visible
+		and w_jeep.hp == 0
+		and w_jeep.collision_layer == 0
+		and w_drv.hp == w_drv.max_hp
+		and water_events.is_empty()
+		and vanished_sig.size() == 1 and vanished_sig[0] == 11201
+	)
+
+	w_jeep._respawn_timer = 0.05
+	w_jeep.step_vehicle_server(0.1, w_heroes, w_ctx)
+	var respawn_ok: bool = (
+		not w_jeep.is_destroyed
+		and w_jeep.visible
+		and w_jeep.hp == w_jeep.max_hp
+		and w_jeep.collision_layer == 8
+		and w_jeep.global_position.distance_to(Vector3(0.0, 0.5, 0.0)) < 0.05
+	)
+	_assert(
+		occupied_stalled_ok and empty_vanished_ok and respawn_ok,
+		"Phase 11.2a: Submerged ground vehicle stalls silently while occupied, vanishes cleanly without blast/killfeed once empty, and respawns cleanly"
+	)
+
+	# 2. VehicleBoat exact 3 seats: Driver (no weapon), Bow Gunner (rotates turret + fires from bow muzzle z < -2.5), Rear Standing Passenger (weapons & skills)
+	var boat := VehicleBoat.new()
+	boat.id = 11202
+	boat.team = NetworkManager.TEAM_ROYAL
+	arena.add_child(boat)
+	boat.global_position = Vector3(20.0, 0.0, 0.0)
+
+	var b_drv := HeroCharacter.new()
+	b_drv.setup_identity(11211, "P11BoatDrv", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var b_gun := HeroCharacter.new()
+	b_gun.setup_identity(11212, "P11BoatGun", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	var b_pax := HeroCharacter.new()
+	b_pax.setup_identity(11213, "P11BoatPax", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var b_vic := HeroCharacter.new()
+	b_vic.setup_identity(11214, "P11BoatVic", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	for h in [b_drv, b_gun, b_pax, b_vic]:
+		arena.add_child(h)
+	b_vic.global_position = Vector3(20.0, 1.4, -22.0)
+
+	var bs0: int = boat.try_enter_hero(b_drv)
+	var bs1: int = boat.try_enter_hero(b_gun)
+	var bs2: int = boat.try_enter_hero(b_pax)
+	var b_heroes: Dictionary = {11211: b_drv, 11212: b_gun, 11213: b_pax, 11214: b_vic}
+	var b_ctx: Dictionary = {"heroes_by_id": b_heroes, "lag_compensator": lc, "projectiles_root": arena, "vehicles_by_id": {11202: boat}}
+
+	var drv_fire_cmd := InputCmd.new()
+	drv_fire_cmd.tick = 1
+	drv_fire_cmd.aim_yaw = 0.0
+	drv_fire_cmd.set_button(InputCmd.BTN_FIRE, true)
+	b_drv.latest_server_input = drv_fire_cmd
+	var gun_idle_cmd := InputCmd.new()
+	gun_idle_cmd.tick = 1
+	gun_idle_cmd.aim_yaw = 0.0
+	b_gun.latest_server_input = gun_idle_cmd
+	var pax_idle_cmd := InputCmd.new()
+	pax_idle_cmd.tick = 1
+	b_pax.latest_server_input = pax_idle_cmd
+
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 200
+	lc.record_frame(200, b_heroes)
+	water_shots.clear()
+	var b_vic_hp0: int = b_vic.hp
+	for _i in range(4):
+		boat.step_vehicle_server(1.0 / 60.0, b_heroes, b_ctx)
+	var boat_drv_no_fire_ok: bool = (b_vic.hp == b_vic_hp0 and water_shots.is_empty())
+
+	var gun_fire_cmd := InputCmd.new()
+	gun_fire_cmd.tick = 2
+	gun_fire_cmd.aim_yaw = 0.0
+	gun_fire_cmd.aim_pitch = 0.0
+	gun_fire_cmd.set_button(InputCmd.BTN_FIRE, true)
+	b_gun.latest_server_input = gun_fire_cmd
+	boat._driver_fire_cd = 0.0
+	water_shots.clear()
+	for _i in range(4):
+		boat.step_vehicle_server(1.0 / 60.0, b_heroes, b_ctx)
+		boat._process(1.0 / 60.0)
+	var bow_muzzle_local_z: float = boat.to_local(water_shots[0]).z if not water_shots.is_empty() else 99.0
+	var boat_gun_fires_ok: bool = (
+		not water_shots.is_empty()
+		and bow_muzzle_local_z < -2.5
+		and b_vic.hp < b_vic_hp0
+		and boat._turret_node != null
+		and boat._barrel_pivot != null
+	)
+
+	# Verify bow gunner turret rotates to -PI/2 when aiming right
+	gun_fire_cmd.aim_yaw = -PI * 0.5
+	gun_fire_cmd.set_button(InputCmd.BTN_FIRE, false)
+	boat.step_vehicle_server(1.0 / 60.0, b_heroes, b_ctx)
+	boat._process(1.0 / 60.0)
+	var boat_turret_rot_ok: bool = (absf(boat._turret_node.rotation.y - (-PI * 0.5)) < 0.05)
+
+	var boat_seats_ok: bool = (
+		boat.seats.size() == 3 and bs0 == 0 and bs1 == 1 and bs2 == 2
+		and boat.seats[0].seat_type == VehicleBase.SeatType.DRIVER and not boat.seats[0].can_shoot
+		and boat.seats[1].seat_type == VehicleBase.SeatType.GUNNER and boat.seats[1].follow_turret
+		and boat.seats[2].seat_type == VehicleBase.SeatType.PASSENGER
+		and boat.seats[2].local_offset.distance_to(Vector3(0.0, 0.76, 1.95)) < 0.01
+		and boat.seats[2].seat_pose == "stand"
+		and boat.seats[2].can_shoot and boat.seats[2].can_use_skills
+	)
+	_assert(
+		boat_seats_ok and boat_drv_no_fire_ok and boat_gun_fires_ok and boat_turret_rot_ok,
+		"Phase 11.2b: VehicleBoat 3 seats (Driver no-fire, Bow Gunner turret muzzle z=%.2f < -2.5, Rear Standing Passenger)" % bow_muzzle_local_z
+	)
+
+	# 3. VehicleAPC exact 3 seats: solo Driver holding BTN_FIRE does NOT fire MG; Gunner fires MG; Seat 2 sits backwards (PI)
+	var apc := VehicleAPC.new()
+	apc.id = 11203
+	apc.team = NetworkManager.TEAM_NATIONAL
+	arena.add_child(apc)
+	apc.global_position = Vector3(-20.0, 0.05, 0.0)
+
+	var a_drv := HeroCharacter.new()
+	a_drv.setup_identity(11215, "P11APCDrv", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var a_gun := HeroCharacter.new()
+	a_gun.setup_identity(11216, "P11APCGun", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	var a_pax := HeroCharacter.new()
+	a_pax.setup_identity(11217, "P11APCPax", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var a_vic := HeroCharacter.new()
+	a_vic.setup_identity(11218, "P11APCVic", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	for h in [a_drv, a_gun, a_pax, a_vic]:
+		arena.add_child(h)
+	a_vic.global_position = Vector3(-20.0, 1.8, -22.0)
+
+	var as0: int = apc.try_enter_hero(a_drv)
+	var a_heroes_solo: Dictionary = {11215: a_drv, 11218: a_vic}
+	var a_ctx_solo: Dictionary = {"heroes_by_id": a_heroes_solo, "lag_compensator": lc, "projectiles_root": arena, "vehicles_by_id": {11203: apc}}
+	a_drv.latest_server_input = drv_fire_cmd
+	await get_tree().physics_frame
+	NetworkManager.server_tick = 205
+	lc.record_frame(205, a_heroes_solo)
+	water_shots.clear()
+	var a_vic_hp0: int = a_vic.hp
+	for _i in range(4):
+		apc.step_vehicle_server(1.0 / 60.0, a_heroes_solo, a_ctx_solo)
+	var apc_solo_drv_no_fire_ok: bool = (a_vic.hp == a_vic_hp0 and water_shots.is_empty())
+
+	var as1: int = apc.try_enter_hero(a_gun)
+	var as2: int = apc.try_enter_hero(a_pax)
+	var a_heroes: Dictionary = {11215: a_drv, 11216: a_gun, 11217: a_pax, 11218: a_vic}
+	var a_ctx: Dictionary = {"heroes_by_id": a_heroes, "lag_compensator": lc, "projectiles_root": arena, "vehicles_by_id": {11203: apc}}
+	var a_gun_cmd := InputCmd.new()
+	a_gun_cmd.tick = 3
+	a_gun_cmd.aim_yaw = 0.0
+	a_gun_cmd.aim_pitch = 0.0
+	a_gun_cmd.set_button(InputCmd.BTN_FIRE, true)
+	a_gun.latest_server_input = a_gun_cmd
+	var a_pax_cmd := InputCmd.new()
+	a_pax_cmd.tick = 3
+	a_pax.latest_server_input = a_pax_cmd
+
+	apc._driver_fire_cd = 0.0
+	water_shots.clear()
+	for _i in range(4):
+		apc.step_vehicle_server(1.0 / 60.0, a_heroes, a_ctx)
+		apc._process(1.0 / 60.0)
+	var apc_gun_fires_ok: bool = (not water_shots.is_empty() and a_vic.hp < a_vic_hp0)
+
+	# Rear hitch passenger sits facing backwards (visual_root forward = +Z when APC faces -Z)
+	a_pax._sync_seated_visual_transform(apc)
+	var pax_fwd: Vector3 = (-a_pax.visual_root.global_transform.basis.z).normalized()
+	var apc_pax_backwards_ok: bool = (
+		pax_fwd.dot(Vector3(0.0, 0.0, 1.0)) > 0.99
+		and apc.seats[2].seat_pose == "sit"
+		and apc.seats[2].local_offset.distance_to(Vector3(0.0, 0.85, 2.48)) < 0.01
+		and is_equal_approx(apc.get_seat_local_yaw(2), PI)
+		and apc.seats[2].can_shoot and apc.seats[2].can_use_skills
+	)
+
+	# 4. HUD seat diagram shows exact 3 seats cleanly for Boat & APC
+	var hud := HUDController.new()
+	arena.add_child(hud)
+	var hud_vehs: Array[VehicleBase] = [boat, apc]
+	hud.bind_context(null, hud_vehs, b_heroes)
+	hud.set_local_hero(b_gun)
+	hud._update_vehicle_seat_diagram(boat)
+	var boat_hud_ok: bool = (
+		hud._seat_slot_buttons[0].visible and hud._seat_slot_buttons[0].text.contains("Pilot")
+		and hud._seat_slot_buttons[1].visible and hud._seat_slot_buttons[1].text.contains("Artil")
+		and hud._seat_slot_buttons[2].visible and hud._seat_slot_buttons[2].text.contains("Passa")
+		and not hud._seat_slot_buttons[3].visible
+	)
+	hud.set_local_hero(a_pax)
+	hud._update_vehicle_seat_diagram(apc)
+	var apc_hud_ok: bool = (
+		hud._seat_slot_buttons[0].visible and hud._seat_slot_buttons[0].text.contains("Motor")
+		and hud._seat_slot_buttons[1].visible and hud._seat_slot_buttons[1].text.contains("Artil")
+		and hud._seat_slot_buttons[2].visible and hud._seat_slot_buttons[2].text.contains("Passa")
+		and not hud._seat_slot_buttons[3].visible
+	)
+
+	NetworkManager.game_event_received.disconnect(ev_cb)
+
+	_assert(
+		apc.seats.size() == 3 and as0 == 0 and as1 == 1 and as2 == 2
+		and apc_solo_drv_no_fire_ok and apc_gun_fires_ok and apc_pax_backwards_ok
+		and boat_hud_ok and apc_hud_ok,
+		"Phase 11.2c: VehicleAPC 3 seats (solo Driver cannot fire MG, Gunner fires roof MG, Rear Hitch sits backwards at PI yaw), and 3-seat HUD diagram"
 	)
 
 	arena.queue_free()

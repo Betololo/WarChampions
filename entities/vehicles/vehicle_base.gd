@@ -35,6 +35,7 @@ class SeatSlot extends RefCounted:
 	var is_enclosed: bool = false
 	var seat_pose: String = "stand"
 	var follow_turret: bool = false
+	var local_yaw: float = 0.0
 
 
 var id: int = 1
@@ -149,7 +150,7 @@ func _build_vehicle_mesh() -> void:
 	pass
 
 
-func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bool, is_enclosed: bool = false, seat_pose: String = "sit", follow_turret_flag: bool = false) -> void:
+func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bool, is_enclosed: bool = false, seat_pose: String = "sit", follow_turret_flag: bool = false, p_local_yaw: float = 0.0) -> void:
 	var s := SeatSlot.new()
 	s.seat_index = seats.size()
 	s.seat_type = s_type
@@ -159,7 +160,21 @@ func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bo
 	s.is_enclosed = is_enclosed
 	s.seat_pose = seat_pose
 	s.follow_turret = follow_turret_flag
+	s.local_yaw = p_local_yaw
 	seats.append(s)
+
+
+func get_seat_local_yaw(seat_idx: int) -> float:
+	var s: SeatSlot = get_seat(seat_idx)
+	return s.local_yaw if s != null else 0.0
+
+
+func get_occupant_count() -> int:
+	var count: int = 0
+	for s in seats:
+		if s.occupant_id >= 0:
+			count += 1
+	return count
 
 
 func _effective_turret_local_yaw() -> float:
@@ -432,6 +447,19 @@ func repair_server(amount: int) -> int:
 	return hp - prev
 
 
+func _vanish_in_water_and_schedule_respawn() -> void:
+	is_destroyed = true
+	_respawn_timer = respawn_delay
+	_water_submerge_timer = 0.0
+	hp = 0
+	linear_velocity = Vector3.ZERO
+	angular_velocity = Vector3.ZERO
+	visible = false
+	freeze = true
+	collision_layer = 0
+	destroyed.emit(id)
+
+
 func _on_destroyed(attacker_id: int) -> void:
 	is_destroyed = true
 	_respawn_timer = respawn_delay
@@ -514,9 +542,8 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 		return
 	if is_submerged_in_water():
 		_water_submerge_timer += delta
-		if _get_world_y() <= HeroCharacter.WATER_LEVEL - 0.70 or _water_submerge_timer >= 0.40:
-			hp = 0
-			_on_destroyed(-1)
+		if (_get_world_y() <= HeroCharacter.WATER_LEVEL - 0.70 or _water_submerge_timer >= 0.40) and get_occupant_count() == 0:
+			_vanish_in_water_and_schedule_respawn()
 			return
 	else:
 		_water_submerge_timer = 0.0

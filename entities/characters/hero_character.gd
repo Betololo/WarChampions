@@ -1708,7 +1708,7 @@ func _sync_seated_visual_orientation(veh: VehicleBase) -> void:
 		visual_root.global_transform.basis = Basis(Vector3.UP, veh.turret_yaw)
 	elif not current_seat_can_shoot and current_seat_index == 0:
 		# Non-shooting Driver/Pilot (Jeep Driver, Boat Driver, Plane Pilot)
-		visual_root.global_transform.basis = veh.global_transform.basis
+		visual_root.global_transform.basis = veh.global_transform.basis * Basis(Vector3.UP, veh.get_seat_local_yaw(current_seat_index))
 	else:
 		# Open shooting Passengers / Wing-riders
 		var is_shooting: bool = _fire_pose_timer > 0.0 or (is_local_player and not is_bot and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or (latest_server_input != null and latest_server_input.has_button(InputCmd.BTN_FIRE))
@@ -1719,7 +1719,7 @@ func _sync_seated_visual_orientation(veh: VehicleBase) -> void:
 			var local_yaw: float = wrapf(aim_yaw - veh_yaw, -PI, PI)
 			visual_root.global_transform.basis = veh_basis * Basis(Vector3.UP, local_yaw)
 		else:
-			visual_root.global_transform.basis = veh.global_transform.basis
+			visual_root.global_transform.basis = veh.global_transform.basis * Basis(Vector3.UP, veh.get_seat_local_yaw(current_seat_index))
 
 
 func reconcile_with_server(state: Dictionary) -> void:

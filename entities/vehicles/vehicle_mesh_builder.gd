@@ -576,13 +576,22 @@ static func build_boat_visuals(root: Node3D, team: int) -> Dictionary:
 		_add_seat_cushion(root, Vector3(sx * 0.72, 0.72, -1.25), 0.58, pal["leather_mat"])
 		_add_box(root, Vector3(0.46, 0.24, 1.25), Vector3(sx * 0.92, 0.84, 1.92), Vector3.ZERO, wood_mat, "RearBench")
 
-	# Mounted twin bow MG behind sloped steel gun shield
-	_add_cyl(root, 0.10, 0.14, 0.62, Vector3(0.0, 1.04, -2.42), Vector3.ZERO, steel_mat, 10, "BowMount")
-	_add_box(root, Vector3(0.76, 0.48, 0.06), Vector3(0.0, 1.38, -2.52), Vector3(0.24, 0.0, 0.0), steel_mat, "BowShield")
-	for bx in [-0.11, 0.11]:
-		_add_cyl(root, 0.032, 0.038, 0.98, Vector3(bx, 1.40, -2.84), Vector3(PI * 0.5, 0.0, 0.0), pal["dark_metal"], 8, "BowMG")
+	# Mounted twin bow MG behind sloped steel gun shield (rotating turret + elevating barrels)
+	var bow_turret := Node3D.new()
+	bow_turret.name = "Turret"
+	bow_turret.position = Vector3(0.0, 1.04, -2.42)
+	root.add_child(bow_turret)
+	_add_cyl(bow_turret, 0.10, 0.14, 0.62, Vector3.ZERO, Vector3.ZERO, steel_mat, 10, "BowMount")
+	_add_box(bow_turret, Vector3(0.76, 0.48, 0.06), Vector3(0.0, 0.34, -0.10), Vector3(0.24, 0.0, 0.0), steel_mat, "BowShield")
 
-	return {}
+	var bow_barrel := Node3D.new()
+	bow_barrel.name = "BarrelPivot"
+	bow_barrel.position = Vector3(0.0, 0.36, -0.10)
+	bow_turret.add_child(bow_barrel)
+	for bx in [-0.11, 0.11]:
+		_add_cyl(bow_barrel, 0.032, 0.038, 0.98, Vector3(bx, 0.0, -0.32), Vector3(PI * 0.5, 0.0, 0.0), pal["dark_metal"], 8, "BowMG")
+
+	return {"turret": bow_turret, "barrel": bow_barrel}
 
 
 static func build_aa_visuals(root: Node3D, team: int) -> Dictionary:
