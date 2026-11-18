@@ -73,9 +73,9 @@ class TroopTrapEntity extends Node3D:
 			var h: HeroCharacter = heroes_by_id[id_key]
 			if h != null and not h.is_defeated and h.team != owner_team:
 				var d: float = h.global_position.distance_to(global_position)
-				if d <= 5.5:
+				if d <= 7.5:
 					h.apply_damage_server(damage, owner_id, true)
-					h.apply_knockback((h.global_position - global_position + Vector3(0.0, 0.8, 0.0)).normalized() * 12.0)
+					h.apply_knockback((h.global_position - global_position + Vector3(0.0, 0.8, 0.0)).normalized() * 20.0)
 					NetworkManager.broadcast_game_event("hit_vfx", {
 						"pos": h.global_position + Vector3(0.0, 1.85, 0.0),
 						"kind": "spark",
@@ -84,7 +84,7 @@ class TroopTrapEntity extends Node3D:
 						"damage": damage,
 						"headshot": true,
 					})
-		NetworkManager.broadcast_game_event("explosion_vfx", {"pos": global_position, "radius": 5.5, "kind": 99})
+		NetworkManager.broadcast_game_event("explosion_vfx", {"pos": global_position, "radius": 7.5, "kind": 99})
 		queue_free()
 
 

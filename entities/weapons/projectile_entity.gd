@@ -81,41 +81,41 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 	match kind:
 		ProjectileKind.BAZOOKA_ROCKET:
 			gravity_scale = 0.0
-			splash_radius = 5.5
-			base_damage = 68.0
-			knockback_force = 12.0
+			splash_radius = 8.0
+			base_damage = 85.0
+			knockback_force = 19.0
 			lifetime = 5.0
 			explode_on_impact = true
 		ProjectileKind.TNT_SATCHEL:
 			gravity_scale = 1.05
-			splash_radius = 6.5
-			base_damage = 90.0
-			knockback_force = 15.0
+			splash_radius = 9.0
+			base_damage = 110.0
+			knockback_force = 22.0
 			lifetime = 3.2
 			bounce_restitution = 0.1
 			explode_on_impact = false
 		ProjectileKind.FRAG_GRENADE:
 			gravity_scale = 1.05
-			splash_radius = 5.0
-			base_damage = 42.0
-			knockback_force = 10.0
+			splash_radius = 7.5
+			base_damage = 58.0
+			knockback_force = 17.0
 			lifetime = 2.0
 			bounce_restitution = 0.45
 			explode_on_impact = false
 		ProjectileKind.EXPLOSIVE_KEG:
 			gravity_scale = 1.05
-			splash_radius = 7.0
-			base_damage = 55.0
-			knockback_force = 14.0
+			splash_radius = 9.5
+			base_damage = 78.0
+			knockback_force = 21.0
 			lifetime = 3.8
 			bounce_restitution = 0.55
 			explode_on_impact = false
 			apply_keg_slow = true
 		ProjectileKind.TANK_SHELL:
 			gravity_scale = 0.0
-			splash_radius = 7.5
-			base_damage = 95.0
-			knockback_force = 16.0
+			splash_radius = 9.5
+			base_damage = 110.0
+			knockback_force = 23.0
 			lifetime = 6.0
 			explode_on_impact = true
 		ProjectileKind.AA_FLAK:
@@ -367,23 +367,22 @@ func _detonate() -> void:
 			if h.team == owner_team and h.entity_id != owner_id:
 				continue
 			var dist: float = h.global_position.distance_to(global_position)
-			if dist <= splash_radius:
-				# Solid Layer-1 wall/destructible occlusion blocks splash damage & knockback
+			var eff_dist: float = maxf(0.0, dist - h.capsule_radius)
+			if eff_dist <= splash_radius:
+				# Solid Layer-1 vertical wall occlusion blocks splash damage & knockback
 				if is_inside_tree() and dist > 0.35:
 					var occ_space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state
 					if occ_space != null:
-						var occ_q := PhysicsRayQueryParameters3D.create(
-							global_position + Vector3(0.0, 0.22, 0.0),
-							h.global_position + Vector3(0.0, 1.0, 0.0),
-							1 | 64
-						)
-						if not occ_space.intersect_ray(occ_q).is_empty():
+						var ray_from: Vector3 = global_position + Vector3(0.0, 1.05, 0.0)
+						var ray_to: Vector3 = h.global_position + Vector3(0.0, 1.25, 0.0)
+						var occ_q := PhysicsRayQueryParameters3D.create(ray_from, ray_to, 1)
+						var occ_hit: Dictionary = occ_space.intersect_ray(occ_q)
+						if not occ_hit.is_empty() and absf((occ_hit.get("normal", Vector3.UP) as Vector3).y) < 0.45:
 							continue
-				var falloff: float = clampf(1.0 - (dist / splash_radius) * 0.75, 0.25, 1.0)
-				var diff_with_lift: Vector3 = h.global_position - global_position + Vector3(0.0, 0.9, 0.0)
-				if diff_with_lift.length_squared() < 0.001:
-					diff_with_lift = Vector3.UP
-				var kb_dir: Vector3 = diff_with_lift.normalized()
+				var falloff: float = clampf(1.0 - (eff_dist / splash_radius) * 0.55, 0.45, 1.0)
+				var horiz_vec := Vector3(h.global_position.x - global_position.x, 0.0, h.global_position.z - global_position.z)
+				var horiz_dir: Vector3 = horiz_vec.normalized() if horiz_vec.length_squared() > 0.001 else Vector3.FORWARD
+				var kb_dir: Vector3 = (horiz_dir * 0.78 + Vector3.UP * 0.62).normalized()
 
 				if h.entity_id == owner_id:
 					# ZERO self-damage, full radial self-knockback for rocket jumping
@@ -392,7 +391,7 @@ func _detonate() -> void:
 					# Enemies: deal damage AND always apply strong radial knockback
 					var dmg: int = maxi(1, int(roundf(base_damage * falloff)))
 					var dealt: int = h.apply_damage_server(dmg, owner_id, true)
-					var enemy_kb: float = maxf(16.0, knockback_force)
+					var enemy_kb: float = maxf(21.0, knockback_force)
 					h.apply_knockback(kb_dir * enemy_kb * falloff)
 
 					if apply_keg_slow and h.status_effects != null and h.status_effects.has_method("apply_concussion_slow"):

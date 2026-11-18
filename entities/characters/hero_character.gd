@@ -1416,6 +1416,8 @@ func _move_and_slide_with_steps(delta: float, wish_dir: Vector3, grounded: bool)
 	var pre_vel: Vector3 = velocity
 	move_and_slide()
 
+	if _knockback_stun_timer > 0.0 or velocity.y > 1.0:
+		return
 	if wish_dir.length_squared() <= 0.001 or not (grounded or is_on_floor()):
 		return
 
@@ -1745,8 +1747,9 @@ func build_snapshot_dict() -> Dictionary:
 func apply_knockback(impulse: Vector3) -> void:
 	velocity += impulse
 	if impulse.y > 0.2 or impulse.length() > 5.0:
-		velocity.y = maxf(velocity.y, maxf(4.8, impulse.y))
-	_knockback_stun_timer = maxf(_knockback_stun_timer, 0.38)
+		velocity.y = maxf(velocity.y, maxf(9.2, impulse.y))
+	floor_snap_length = 0.0
+	_knockback_stun_timer = maxf(_knockback_stun_timer, 0.60)
 	knockback_seq = (knockback_seq + 1) & 0xFF
 
 

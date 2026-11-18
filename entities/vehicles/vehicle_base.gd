@@ -62,6 +62,7 @@ var _driver_fire_cd: float = 0.0
 var _last_heroes_by_id: Dictionary = {}
 var _damage_smoke_timer: float = 0.0
 var _roadkill_cooldowns: Dictionary = {}
+var _water_submerge_timer: float = 0.0
 
 
 static func is_hero_enclosed(hero: HeroCharacter, vehicles_by_id: Dictionary) -> bool:
@@ -118,6 +119,21 @@ func _collect_visual_meshes_recursive(node: Node) -> void:
 
 func is_aircraft() -> bool:
 	return vehicle_type == VehicleType.PLANE
+
+
+func is_watercraft() -> bool:
+	return vehicle_type == VehicleType.BOAT
+
+
+func is_ground_vehicle() -> bool:
+	return not is_aircraft() and not is_watercraft() and vehicle_type != VehicleType.AA_GUN
+
+
+func is_submerged_in_water() -> bool:
+	if not is_ground_vehicle():
+		return false
+	var cur_y: float = global_position.y if is_inside_tree() else position.y
+	return cur_y <= HeroCharacter.WATER_LEVEL - 0.35
 
 
 func _setup_vehicle_stats_and_seats() -> void:
@@ -432,6 +448,7 @@ func _respawn_vehicle() -> void:
 	_last_xray_state = -1
 	hp = max_hp
 	_damage_smoke_timer = 0.0
+	_water_submerge_timer = 0.0
 	_roadkill_cooldowns.clear()
 	for mi in _cached_visual_meshes:
 		if is_instance_valid(mi):
@@ -476,6 +493,14 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 		if _respawn_timer <= 0.0:
 			_respawn_vehicle()
 		return
+	if is_submerged_in_water():
+		_water_submerge_timer += delta
+		if (global_position.y if is_inside_tree() else position.y) <= HeroCharacter.WATER_LEVEL - 0.70 or _water_submerge_timer >= 0.40:
+			hp = 0
+			_on_destroyed(-1)
+			return
+	else:
+		_water_submerge_timer = 0.0
 	if _driver_fire_cd > 0.0:
 		_driver_fire_cd = maxf(0.0, _driver_fire_cd - delta)
 	sync_occupants(heroes_by_id, delta, context)
@@ -526,6 +551,9 @@ func _apply_arcade_drive(
 
 	var throttle: float = -cmd.move_dir.y if cmd != null else 0.0
 	var steer: float = -cmd.move_dir.x if cmd != null else 0.0
+	var submerged: bool = is_submerged_in_water()
+	if submerged:
+		throttle = 0.0
 
 	var is_tank: bool = (vehicle_type == VehicleType.TANK)
 	var steer_factor: float = 1.0
@@ -546,7 +574,9 @@ func _apply_arcade_drive(
 	rotation.x = lerpf(rotation.x, 0.0, minf(1.0, 10.0 * delta))
 	rotation.z = lerpf(rotation.z, 0.0, minf(1.0, 10.0 * delta))
 
-	if absf(throttle) > 0.05:
+	if submerged:
+		fwd_speed = lerpf(fwd_speed, 0.0, minf(1.0, 14.0 * delta))
+	elif absf(throttle) > 0.05:
 		if throttle > 0.0:
 			var target_fwd: float = max_speed * throttle
 			if fwd_speed < target_fwd:

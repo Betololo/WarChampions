@@ -2308,15 +2308,9 @@ func _test_parachute_delay_death_collapse_and_knockback() -> void:
 	)
 
 	# --- 3B. Red Barrel ---
-	shooter.global_position = Vector3(0.0, 0.0, 0.0)
-	shooter.velocity = Vector3.ZERO
-	shooter.hp = shooter.max_hp
-	teammate.global_position = Vector3(1.2, 0.0, 0.0)
-	teammate.velocity = Vector3.ZERO
-	teammate.hp = teammate.max_hp
-	enemy.global_position = Vector3(0.0, 0.0, 1.2)
-	enemy.velocity = Vector3.ZERO
-	enemy.hp = enemy.max_hp
+	shooter.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	teammate.respawn_at(Vector3(1.2, 0.0, 0.0), 0.0)
+	enemy.respawn_at(Vector3(0.0, 0.0, 1.2), 0.0)
 
 	var barrel := DestructibleProp.new()
 	barrel.setup(DestructibleProp.PropKind.RED_BARREL, Vector3(0.0, 0.0, 0.0), 0.0, exp_ctx)
@@ -2348,14 +2342,9 @@ func _test_parachute_delay_death_collapse_and_knockback() -> void:
 	barrel.free()
 
 	# --- 3C. Soldier Blasting Strike ---
-	shooter.global_position = Vector3(0.0, 0.0, 0.0)
-	shooter.velocity = Vector3.ZERO
-	teammate.global_position = Vector3(2.5, 0.0, 0.0)
-	teammate.velocity = Vector3.ZERO
-	teammate.hp = teammate.max_hp
-	enemy.global_position = Vector3(0.0, 0.0, 2.5)
-	enemy.velocity = Vector3.ZERO
-	enemy.hp = enemy.max_hp
+	shooter.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
+	teammate.respawn_at(Vector3(2.5, 0.0, 0.0), 0.0)
+	enemy.respawn_at(Vector3(0.0, 0.0, 2.5), 0.0)
 
 	var sm_cmd := InputCmd.new()
 	var strike_ok: bool = shooter.skill_manager._execute_class_skill(3, 0, sm_cmd, exp_ctx)
