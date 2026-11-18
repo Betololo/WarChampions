@@ -869,9 +869,8 @@ func _animate_character(delta: float) -> void:
 	if is_falling_air:
 		if _held_weapon_root != null:
 			_held_weapon_root.visible = false
-		var ready_for_chute: bool = (_airborne_fall_time >= 1.0 or velocity.y < -10.5)
-		var flutter_freq: float = 24.0 if ready_for_chute else 12.0
-		var flutter_amp: float = 0.08 if ready_for_chute else 0.03
+		var flutter_freq: float = 24.0
+		var flutter_amp: float = 0.08
 		var flutter: float = sin(Time.get_ticks_msec() * 0.001 * flutter_freq) * flutter_amp
 
 		# Arched belly-to-earth skydiving freefall pose
@@ -1845,7 +1844,7 @@ func reconcile_with_server(state: Dictionary) -> void:
 		if hero_camera != null:
 			hero_camera.global_position = global_position
 
-		visual_error_offset = _pred_error_offset
+	visual_error_offset = _pred_error_offset
 	_prev_phys_pos = global_position
 	_curr_phys_pos = global_position
 

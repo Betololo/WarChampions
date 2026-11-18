@@ -5755,9 +5755,19 @@ func _test_phase11_task1_fixes() -> void:
 	vic.is_in_water = true
 	vic.status_effects.apply_burn(11001, 16.0, 4.5)
 	var water_blocks_ok: bool = (vic.status_effects.burn_timer == 0.0)
+	vic.is_in_water = false
+	vic.status_effects.apply_burn(11001, 16.0, 4.5)
+	var active_burn_ok: bool = (vic.status_effects.burn_timer > 0.0)
+	vic.is_in_water = true
+	vic.status_effects._physics_process(0.05)
+	var water_extinguish_ok: bool = (
+		active_burn_ok
+		and vic.status_effects.burn_timer == 0.0
+		and is_equal_approx(vic.status_effects._burn_tick_accum, 0.0)
+	)
 	_assert(
-		wat_cat_ok and wat_sm_ok and wat_act_ok and wat_clean_ok and wat_immune_ok and water_blocks_ok,
-		"Phase 11.1e: Water (Água) slot 2 cleanses burn + resets accum + grants 2.0s fire immunity and water blocks burn"
+		wat_cat_ok and wat_sm_ok and wat_act_ok and wat_clean_ok and wat_immune_ok and water_blocks_ok and water_extinguish_ok,
+		"Phase 11.1e: Water (Água) slot 2 cleanses burn + resets accum + grants 2.0s fire immunity and water blocks/extinguishes burn"
 	)
 
 	arena.queue_free()
