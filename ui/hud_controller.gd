@@ -515,9 +515,15 @@ var _hp_icon_tex: TextureRect
 var _hp_value_lbl: Label
 var _shield_value_lbl: Label
 
+var _ammo_panel: HBoxContainer
+var _ammo_vbox: VBoxContainer
 var _ammo_icon_tex: TextureRect
 var _ammo_value_lbl: Label
 var _weapon_name_lbl: Label
+var _mounted_heat_panel: PanelContainer
+var _mounted_heat_style: StyleBoxFlat
+var _mounted_heat_bar_fill: ColorRect
+var _ammo_mounted_mode: bool = false
 
 var _hotbar_hbox: HBoxContainer
 var _weapon_slot_boxes: Array[VBoxContainer] = []
@@ -708,6 +714,7 @@ func set_local_hero(hero: HeroCharacter) -> void:
 	_last_hp_val = -1
 	_last_shield_val = -1
 	_last_ammo_key = ""
+	_reset_ammo_hud_mode()
 	_last_interact_text = ""
 	_reset_seat_diagram_cache()
 	_crosshair_bloom = 0.0
@@ -1064,13 +1071,13 @@ func _build_hud() -> void:
 	_style_label(_shield_value_lbl, 14, Color(0.45, 0.85, 1.0))
 	hp_vbox.add_child(_shield_value_lbl)
 
-	# 4. Bottom-Right: Bold Magazine Ammo + Golden Bullet Sprite
+	# 4. Bottom-Right: Bold Magazine Ammo + Golden Bullet Sprite (or Mounted Overheat Gauge)
 	var br_hbox := HBoxContainer.new()
 	br_hbox.anchor_left = 1.0
 	br_hbox.anchor_right = 1.0
 	br_hbox.anchor_top = 1.0
 	br_hbox.anchor_bottom = 1.0
-	br_hbox.offset_left = -310.0
+	br_hbox.offset_left = -350.0
 	br_hbox.offset_top = -86.0
 	br_hbox.offset_right = -20.0
 	br_hbox.offset_bottom = -16.0
@@ -1078,6 +1085,7 @@ func _build_hud() -> void:
 	br_hbox.add_theme_constant_override("separation", 10)
 	br_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(br_hbox)
+	_ammo_panel = br_hbox
 
 	var ammo_vbox := VBoxContainer.new()
 	ammo_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1085,12 +1093,39 @@ func _build_hud() -> void:
 	ammo_vbox.add_theme_constant_override("separation", -4)
 	ammo_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	br_hbox.add_child(ammo_vbox)
+	_ammo_vbox = ammo_vbox
 
 	_ammo_value_lbl = Label.new()
 	_ammo_value_lbl.text = "32"
 	_ammo_value_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_style_label(_ammo_value_lbl, 34, Color.WHITE)
 	ammo_vbox.add_child(_ammo_value_lbl)
+
+	_mounted_heat_panel = PanelContainer.new()
+	_mounted_heat_panel.visible = false
+	_mounted_heat_panel.custom_minimum_size = Vector2(186, 14)
+	_mounted_heat_panel.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_mounted_heat_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mounted_heat_style = StyleBoxFlat.new()
+	_mounted_heat_style.bg_color = Color(0.06, 0.08, 0.11, 0.90)
+	_mounted_heat_style.border_color = Color(0.92, 0.95, 0.98, 0.95)
+	_mounted_heat_style.set_border_width_all(2)
+	_mounted_heat_style.set_corner_radius_all(4)
+	_mounted_heat_style.set_content_margin_all(2)
+	_mounted_heat_panel.add_theme_stylebox_override("panel", _mounted_heat_style)
+	ammo_vbox.add_child(_mounted_heat_panel)
+
+	var heat_track := Control.new()
+	heat_track.custom_minimum_size = Vector2(180, 10)
+	heat_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mounted_heat_panel.add_child(heat_track)
+
+	_mounted_heat_bar_fill = ColorRect.new()
+	_mounted_heat_bar_fill.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_mounted_heat_bar_fill.anchor_right = 0.0
+	_mounted_heat_bar_fill.color = Color(1.0, 0.85, 0.14)
+	_mounted_heat_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	heat_track.add_child(_mounted_heat_bar_fill)
 
 	_weapon_name_lbl = Label.new()
 	_weapon_name_lbl.text = "SMG | ∞"
@@ -1712,8 +1747,135 @@ func _hide_local_hud_overlays() -> void:
 		_veh_hp_panel.visible = false
 	if _seat_diagram_panel != null:
 		_seat_diagram_panel.visible = false
+	_reset_ammo_hud_mode()
 	_reset_seat_diagram_cache()
 	_hide_all_sixth_sense_markers()
+
+
+static func _get_mounted_weapon_icon_key(v_type: int) -> String:
+	match v_type:
+		VehicleBase.VehicleType.AA_GUN:
+			return "icon_mounted_aa"
+		VehicleBase.VehicleType.PLANE:
+			return "icon_mounted_plane"
+		_:
+			return "icon_mounted_mg"
+
+
+static func _get_mounted_weapon_label(v_type: int) -> String:
+	match v_type:
+		VehicleBase.VehicleType.AA_GUN:
+			return "CANHÃO ANTIAÉREO"
+		VehicleBase.VehicleType.PLANE:
+			return "METRALHADORA CAÇA"
+		VehicleBase.VehicleType.BOAT:
+			return "METRALHADORA LANCHA"
+		VehicleBase.VehicleType.APC:
+			return "METRALHADORA BLINDADO"
+		_:
+			return "METRALHADORA MONTADA"
+
+
+func _reset_ammo_hud_mode() -> void:
+	_ammo_mounted_mode = false
+	if _ammo_vbox != null:
+		_ammo_vbox.add_theme_constant_override("separation", -4)
+	if _mounted_heat_panel != null:
+		_mounted_heat_panel.visible = false
+	if _ammo_icon_tex != null:
+		_ammo_icon_tex.custom_minimum_size = Vector2(34, 46)
+		_ammo_icon_tex.texture = CartoonAssets.get_texture("icon_ammo")
+		_ammo_icon_tex.modulate = Color.WHITE
+	if _ammo_value_lbl != null:
+		_style_label(_ammo_value_lbl, 34, Color.WHITE)
+	_last_ammo_key = ""
+
+
+func _get_local_mounted_vehicle() -> VehicleBase:
+	if _local_hero == null or not is_instance_valid(_local_hero):
+		return null
+	if _local_hero.current_vehicle_id < 0:
+		return null
+	for v in _vehicles_ref:
+		if v != null and is_instance_valid(v) and not v.is_destroyed and v.id == _local_hero.current_vehicle_id:
+			if v.is_seat_mounted_gunner(_local_hero.current_seat_index):
+				return v
+			return null
+	return null
+
+
+func _update_ammo_hud() -> void:
+	if _local_hero == null or not is_instance_valid(_local_hero):
+		return
+	var mounted_v: VehicleBase = _get_local_mounted_vehicle()
+	if mounted_v != null:
+		var heat_pct: int = int(roundf(clampf(mounted_v.weapon_heat, 0.0, 1.0) * 100.0))
+		var cd_tenths: int = int(ceilf(maxf(0.0, mounted_v.overheat_cooldown_timer) * 10.0)) if mounted_v.weapon_overheated else 0
+		var mounted_key: String = "mounted|%d|%d|%s|%d|%d" % [
+			mounted_v.id, mounted_v.vehicle_type, str(mounted_v.weapon_overheated), heat_pct, cd_tenths
+		]
+		if mounted_key == _last_ammo_key:
+			return
+		_last_ammo_key = mounted_key
+		if not _ammo_mounted_mode:
+			_ammo_mounted_mode = true
+			if _ammo_vbox != null:
+				_ammo_vbox.add_theme_constant_override("separation", 2)
+			if _mounted_heat_panel != null:
+				_mounted_heat_panel.visible = true
+			if _ammo_icon_tex != null:
+				_ammo_icon_tex.custom_minimum_size = Vector2(68, 44)
+		if _ammo_icon_tex != null:
+			_ammo_icon_tex.texture = CartoonAssets.get_texture(_get_mounted_weapon_icon_key(mounted_v.vehicle_type))
+			_ammo_icon_tex.modulate = Color(1.0, 0.35, 0.30) if mounted_v.weapon_overheated else Color.WHITE
+		if _mounted_heat_bar_fill != null:
+			if mounted_v.weapon_overheated:
+				_mounted_heat_bar_fill.anchor_right = 1.0
+				_mounted_heat_bar_fill.color = Color(0.95, 0.16, 0.14)
+			else:
+				_mounted_heat_bar_fill.anchor_right = clampf(mounted_v.weapon_heat, 0.0, 1.0)
+				_mounted_heat_bar_fill.color = Color(1.0, 0.85, 0.14)
+		if _mounted_heat_style != null:
+			_mounted_heat_style.border_color = Color(0.95, 0.16, 0.14, 1.0) if mounted_v.weapon_overheated else Color(0.92, 0.95, 0.98, 0.95)
+		if _ammo_value_lbl != null:
+			if mounted_v.weapon_overheated:
+				_ammo_value_lbl.text = "SUPERAQUECIDO %.1fs" % maxf(0.0, mounted_v.overheat_cooldown_timer)
+				_style_label(_ammo_value_lbl, 20, Color(0.98, 0.24, 0.20))
+			else:
+				_ammo_value_lbl.text = "CALOR %d%%" % heat_pct
+				_style_label(_ammo_value_lbl, 22, Color(1.0, 0.90, 0.28) if mounted_v.weapon_heat > 0.05 else Color.WHITE)
+		if _weapon_name_lbl != null:
+			_weapon_name_lbl.text = _get_mounted_weapon_label(mounted_v.vehicle_type)
+		return
+
+	if _ammo_mounted_mode:
+		_reset_ammo_hud_mode()
+
+	if not _local_hero.weapons.is_empty():
+		var slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
+		if slot != _last_highlighted_slot and not (_drag_active and _drag_category == "weapon"):
+			_last_highlighted_slot = slot
+			var w_order: Array[int] = InputCmd.get_active_weapon_order(_local_hero.weapons.size())
+			var active_vis_w: int = w_order.find(slot)
+			for vis_i in range(mini(w_order.size(), _weapon_slot_bgs.size())):
+				_weapon_slot_bgs[vis_i].add_theme_stylebox_override("panel", _make_slot_style(vis_i == active_vis_w))
+		var w: WeaponBase = _local_hero.weapons[slot] as WeaponBase
+		if w != null:
+			var ammo_key: String = "%d|%s|%s|%s|%d" % [slot, w.weapon_name, str(w.is_melee), str(w.is_reloading), w.ammo_in_mag]
+			if ammo_key != _last_ammo_key:
+				_last_ammo_key = ammo_key
+				if w.is_melee:
+					_ammo_value_lbl.text = "∞"
+					var melee_tag: String = "Faca"
+					if w.weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE:
+						melee_tag = "Corpo a Corpo" if w.caber_spent else "Explosivo"
+					_weapon_name_lbl.text = "%s (%s)" % [w.weapon_name, melee_tag]
+				elif w.is_reloading:
+					_ammo_value_lbl.text = "..."
+					_weapon_name_lbl.text = "%s | RECARREGANDO" % w.weapon_name
+				else:
+					_ammo_value_lbl.text = "%d" % w.ammo_in_mag
+					_weapon_name_lbl.text = "%s | ∞" % w.weapon_name
 
 
 func _make_drag_slot_style(is_target: bool) -> StyleBoxFlat:
@@ -2290,32 +2452,8 @@ func _process(delta: float) -> void:
 		if show_para:
 			_parachute_lbl.text = "[ESPAÇO] Fechar Paraquedas" if _local_hero.is_parachuting else "[ESPAÇO] Abrir Paraquedas"
 
-	# Update Active Weapon slot highlight & Ammo counter (via weapon_slot_order)
-	if not _local_hero.weapons.is_empty():
-		var slot: int = clampi(_local_hero.selected_weapon_slot, 0, _local_hero.weapons.size() - 1)
-		if slot != _last_highlighted_slot and not (_drag_active and _drag_category == "weapon"):
-			_last_highlighted_slot = slot
-			var w_order: Array[int] = InputCmd.get_active_weapon_order(_local_hero.weapons.size())
-			var active_vis_w: int = w_order.find(slot)
-			for vis_i in range(mini(w_order.size(), _weapon_slot_bgs.size())):
-				_weapon_slot_bgs[vis_i].add_theme_stylebox_override("panel", _make_slot_style(vis_i == active_vis_w))
-		var w: WeaponBase = _local_hero.weapons[slot] as WeaponBase
-		if w != null:
-			var ammo_key: String = "%d|%s|%s|%s|%d" % [slot, w.weapon_name, str(w.is_melee), str(w.is_reloading), w.ammo_in_mag]
-			if ammo_key != _last_ammo_key:
-				_last_ammo_key = ammo_key
-				if w.is_melee:
-					_ammo_value_lbl.text = "∞"
-					var melee_tag: String = "Faca"
-					if w.weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE:
-						melee_tag = "Corpo a Corpo" if w.caber_spent else "Explosivo"
-					_weapon_name_lbl.text = "%s (%s)" % [w.weapon_name, melee_tag]
-				elif w.is_reloading:
-					_ammo_value_lbl.text = "..."
-					_weapon_name_lbl.text = "%s | RECARREGANDO" % w.weapon_name
-				else:
-					_ammo_value_lbl.text = "%d" % w.ammo_in_mag
-					_weapon_name_lbl.text = "%s | ∞" % w.weapon_name
+	# Update Active Weapon slot highlight & Ammo / Mounted Overheat counter
+	_update_ammo_hud()
 
 	# Update RPG Portrait ring, Skills & Widgets (via skill_slot_order & widget_slot_order)
 	if _local_hero.skill_manager != null and _local_hero.skill_manager is SkillManager:

@@ -250,6 +250,9 @@ static func pack_world_snapshot(
 		_put_vec3_s16_vel(buf, v.get("vel", Vector3.ZERO))
 		buf.put_u16(_pack_angle_u16(float(v.get("turret_yaw", 0.0))))
 		buf.put_u16(clampi(int(v.get("hp", 0)), 0, 65535))
+		var heat_norm: float = clampf(float(v.get("heat", 0.0)), 0.0, 1.0)
+		var heat_byte: int = (0x80 if bool(v.get("overheated", false)) else 0) | clampi(int(roundf(heat_norm * 127.0)), 0, 127)
+		buf.put_u8(heat_byte)
 
 	var flag_count: int = mini(flags_state.size(), 16)
 	buf.put_u8(flag_count)
@@ -328,6 +331,9 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 		var vel: Vector3 = _get_vec3_s16_vel(buf)
 		var turret_yaw: float = _unwrap_signed_angle(_unpack_angle_u16(buf.get_u16()))
 		var hp: int = buf.get_u16()
+		var heat_byte: int = buf.get_u8() if buf.get_available_bytes() >= 1 else 0
+		var v_overheated: bool = (heat_byte & 0x80) != 0
+		var v_heat: float = float(heat_byte & 0x7F) / 127.0
 		vehicles_out.append({
 			"id": id,
 			"type": vtype,
@@ -337,6 +343,8 @@ static func unpack_world_snapshot(bytes: PackedByteArray) -> Dictionary:
 			"vel": vel,
 			"turret_yaw": turret_yaw,
 			"hp": hp,
+			"heat": v_heat,
+			"overheated": v_overheated,
 		})
 	result["vehicles"] = vehicles_out
 

@@ -18,6 +18,8 @@ func _setup_vehicle_stats_and_seats() -> void:
 	max_hp = 420
 	hp = 420
 	mass = 2600.0
+	has_mounted_overheat = true
+	heat_per_shot = 0.045
 	_add_seat(SeatType.DRIVER, Vector3(-0.45, 0.85, -0.35), false, false, true, "hidden")
 	_add_seat(SeatType.GUNNER, Vector3(0.0, 1.48, 0.35), false, false, false, "stand", true)
 	_add_seat(SeatType.PASSENGER, Vector3(0.0, 0.85, 2.48), true, true, false, "sit", false, PI)
@@ -60,6 +62,8 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 		if _turret_node != null:
 			_turret_node.rotation.y = _effective_turret_local_yaw()
 		if gun_cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
+			if not try_consume_mounted_heat():
+				return
 			_driver_fire_cd = MG_FIRE_INTERVAL
 			var aim_b := Basis.from_euler(Vector3(turret_pitch, turret_yaw, 0.0))
 			var fire_dir: Vector3 = (-aim_b.z).normalized()

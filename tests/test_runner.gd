@@ -60,6 +60,7 @@ func _ready() -> void:
 	await _test_phase12b_task2_mortar_anim_and_aoe()
 	await _test_phase12b_task3_perf_optimizations()
 	await _test_phase13_task1_lod_demolisher_gunner()
+	await _test_phase13_task2_mounted_overheat()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -10242,6 +10243,335 @@ func _test_phase13_task1_lod_demolisher_gunner() -> void:
 	)
 
 	NetworkManager.game_event_received.disconnect(evt_cb)
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+
+func _test_phase13_task2_mounted_overheat() -> void:
+	print("--- Phase 13 Task 2: Mounted Weapon Overheat System & HUD Silhouette Heat Gauge ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	var lc := LagCompensator.new()
+	var gunner_hero := HeroCharacter.new()
+	gunner_hero.setup_identity(13201, "GunnerP13", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(gunner_hero)
+	var pilot_hero := HeroCharacter.new()
+	pilot_hero.setup_identity(13202, "PilotP13", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	arena.add_child(pilot_hero)
+
+	var mg_turret := VehicleShieldedMG.new()
+	mg_turret.id = 1321
+	mg_turret.team = NetworkManager.TEAM_ROYAL
+	arena.add_child(mg_turret)
+
+	var apc := VehicleAPC.new()
+	apc.id = 1322
+	apc.team = NetworkManager.TEAM_ROYAL
+	apc.position = Vector3(12.0, 0.5, 0.0)
+	arena.add_child(apc)
+
+	var boat := VehicleBoat.new()
+	boat.id = 1323
+	boat.team = NetworkManager.TEAM_ROYAL
+	boat.position = Vector3(24.0, -0.34, 0.0)
+	arena.add_child(boat)
+
+	var plane := VehiclePlane.new()
+	plane.id = 1324
+	plane.team = NetworkManager.TEAM_ROYAL
+	plane.position = Vector3(36.0, 0.5, 0.0)
+	arena.add_child(plane)
+
+	var aa := AAGun.new()
+	aa.id = 1325
+	aa.team = NetworkManager.TEAM_ROYAL
+	aa.position = Vector3(48.0, 0.0, 0.0)
+	arena.add_child(aa)
+
+	var jeep := VehicleJeep.new()
+	jeep.id = 1326
+	jeep.team = NetworkManager.TEAM_ROYAL
+	jeep.position = Vector3(60.0, 0.5, 0.0)
+	arena.add_child(jeep)
+
+	await get_tree().physics_frame
+
+	var ctx: Dictionary = {
+		"heroes_by_id": {13201: gunner_hero, 13202: pilot_hero},
+		"vehicles_by_id": {1321: mg_turret, 1322: apc, 1323: boat, 1324: plane, 1325: aa, 1326: jeep},
+		"lag_compensator": lc,
+		"projectiles_root": arena,
+	}
+
+	# 1. Config & seat role checks across all 5 mounted-overheat vehicles vs Jeep
+	var config_ok: bool = (
+		mg_turret.has_mounted_overheat and apc.has_mounted_overheat and boat.has_mounted_overheat
+		and plane.has_mounted_overheat and aa.has_mounted_overheat and not jeep.has_mounted_overheat
+		and mg_turret.is_seat_mounted_gunner(0)
+		and not apc.is_seat_mounted_gunner(0) and apc.is_seat_mounted_gunner(1) and not apc.is_seat_mounted_gunner(2)
+		and not boat.is_seat_mounted_gunner(0) and boat.is_seat_mounted_gunner(1) and not boat.is_seat_mounted_gunner(2)
+		and plane.is_seat_mounted_gunner(0) and not plane.is_seat_mounted_gunner(1) and not plane.is_seat_mounted_gunner(2)
+		and aa.is_seat_mounted_gunner(0)
+		and not jeep.is_seat_mounted_gunner(0) and not jeep.is_seat_mounted_gunner(1)
+	)
+	_assert(config_ok, "Phase 13.2a: All 5 mounted-gun vehicles enable overheat & identify exact gunner seats (incl. Plane Driver)")
+
+	# 2. Firing heat build -> 0.18s cool pause -> cooling -> 1.0 overheat 4.0s lockout -> reset unlock
+	var shot_events: Array[Dictionary] = []
+	var shot_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "shot_vfx":
+			shot_events.append(payload)
+	NetworkManager.game_event_received.connect(shot_cb)
+
+	# 2a. VehicleShieldedMG: fire 10 shots, verify heat pause then cool down
+	mg_turret.try_enter_hero(gunner_hero)
+	var fire_cmd := InputCmd.new()
+	fire_cmd.buttons = InputCmd.BTN_FIRE
+	gunner_hero.latest_server_input = fire_cmd
+	for _s in range(10):
+		mg_turret._driver_fire_cd = 0.0
+		mg_turret.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	var heat_after_10: float = mg_turret.weapon_heat
+	var idle_cmd := InputCmd.new()
+	gunner_hero.latest_server_input = idle_cmd
+	# Within 0.18s cool delay, heat remains paused
+	mg_turret.step_vehicle_server(0.10, ctx["heroes_by_id"] as Dictionary, ctx)
+	var heat_during_pause: float = mg_turret.weapon_heat
+	# Step past pause -> heat cools down
+	for _c in range(10):
+		mg_turret.step_vehicle_server(0.10, ctx["heroes_by_id"] as Dictionary, ctx)
+	var heat_after_cool: float = mg_turret.weapon_heat
+	_assert(
+		heat_after_10 > 0.35 and absf(heat_during_pause - heat_after_10) < 0.001 and heat_after_cool < heat_after_10 - 0.20,
+		"Phase 13.2b: Mounted MG heat builds (%.2f), pauses 0.18s (%.2f), then cools cleanly (%.2f)" % [
+			heat_after_10, heat_during_pause, heat_after_cool
+		]
+	)
+
+	# 2b. Overheat all 5 vehicles to 1.0, confirm 4.0s lockout blocks fire, then cools to 0.0 when unmanned
+	gunner_hero.latest_server_input = fire_cmd
+	while not mg_turret.weapon_overheated:
+		mg_turret._driver_fire_cd = 0.0
+		mg_turret.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	var shots_before_lock: int = shot_events.size()
+	mg_turret._driver_fire_cd = 0.0
+	mg_turret.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	var mg_blocked_ok: bool = (
+		mg_turret.weapon_overheated
+		and mg_turret.overheat_cooldown_timer > 3.9
+		and not mg_turret.try_consume_mounted_heat()
+		and shot_events.size() == shots_before_lock
+	)
+	mg_turret.exit_hero(gunner_hero)
+	# Unmanned 4.0s cooldown unlocks cleanly
+	for _u in range(41):
+		mg_turret.step_vehicle_server(0.10, ctx["heroes_by_id"] as Dictionary, ctx)
+	var mg_unlocked_ok: bool = (
+		not mg_turret.weapon_overheated
+		and is_equal_approx(mg_turret.weapon_heat, 0.0)
+		and is_equal_approx(mg_turret.overheat_cooldown_timer, 0.0)
+		and mg_turret.try_consume_mounted_heat()
+	)
+
+	# 2c. Verify APC, Boat, Plane, and AA Gun overheat lockouts & firing gates
+	var multi_veh_ok: bool = true
+	# APC gunner
+	apc.try_enter_hero(pilot_hero)
+	apc.try_enter_hero(gunner_hero)
+	gunner_hero.latest_server_input = fire_cmd
+	for _i in range(30):
+		apc._driver_fire_cd = 0.0
+		apc.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	if not apc.weapon_overheated or apc.try_consume_mounted_heat():
+		multi_veh_ok = false
+	apc.exit_hero(gunner_hero)
+	apc.exit_hero(pilot_hero)
+
+	# Boat gunner
+	boat.try_enter_hero(pilot_hero)
+	boat.try_enter_hero(gunner_hero)
+	for _i in range(25):
+		boat._driver_fire_cd = 0.0
+		boat.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	if not boat.weapon_overheated or boat.try_consume_mounted_heat():
+		multi_veh_ok = false
+	boat.exit_hero(gunner_hero)
+	boat.exit_hero(pilot_hero)
+
+	# Plane driver
+	plane.try_enter_hero(pilot_hero)
+	pilot_hero.latest_server_input = fire_cmd
+	for _i in range(30):
+		plane._driver_fire_cd = 0.0
+		plane.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	if not plane.weapon_overheated or plane.try_consume_mounted_heat():
+		multi_veh_ok = false
+	plane.exit_hero(pilot_hero)
+
+	# AA Gunner (also verifies no AA_FLAK projectile spawned while locked out)
+	aa.try_enter_hero(gunner_hero)
+	for _i in range(10):
+		aa._driver_fire_cd = 0.0
+		aa.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	var pre_aa_children: int = arena.get_child_count()
+	aa._driver_fire_cd = 0.0
+	aa.step_vehicle_server(0.016, ctx["heroes_by_id"] as Dictionary, ctx)
+	if not aa.weapon_overheated or arena.get_child_count() != pre_aa_children:
+		multi_veh_ok = false
+	aa.exit_hero(gunner_hero)
+
+	_assert(
+		mg_blocked_ok and mg_unlocked_ok and multi_veh_ok,
+		"Phase 13.2c: 4.0s overheat lockout blocks firing & resets cleanly across MG, APC, Boat, Plane & AA Gun"
+	)
+
+	# 2d. Respawn reset check on APC
+	apc._respawn_vehicle()
+	_assert(
+		not apc.weapon_overheated and is_equal_approx(apc.weapon_heat, 0.0) and is_equal_approx(apc.overheat_cooldown_timer, 0.0),
+		"Phase 13.2d: _respawn_vehicle resets mounted weapon overheat state"
+	)
+
+	# 3. NetSerializer heat_byte roundtrip & 12v12 < 1200B MTU
+	var heroes24: Array[Dictionary] = []
+	for hi in range(24):
+		heroes24.append({
+			"id": 100 + hi,
+			"team": hi % 2,
+			"class_id": hi % 5,
+			"weapon_slot": 0,
+			"flags": NetSerializer.SNAP_GROUNDED,
+			"buffs": 0,
+			"pos": Vector3(float(hi) * 4.0, 0.0, 0.0),
+			"vel": Vector3.ZERO,
+			"yaw": 0.0,
+			"pitch": 0.0,
+			"hp": 110,
+			"shield": 0,
+			"vehicle_id": -1,
+			"seat_idx": -1,
+		})
+	var snap_apc := apc.build_snapshot_dict()
+	snap_apc["heat"] = 0.64
+	snap_apc["overheated"] = false
+	var snap_aa := aa.build_snapshot_dict()
+	snap_aa["heat"] = 1.0
+	snap_aa["overheated"] = true
+	var ws_bytes: PackedByteArray = NetSerializer.pack_world_snapshot(
+		777, 12950, 48, 46, heroes24, [snap_apc],
+		[
+			{"owner": 0, "capturing_team": -1, "progress": 1.0},
+			{"owner": 1, "capturing_team": -1, "progress": 1.0},
+			{"owner": -1, "capturing_team": 0, "progress": 0.5},
+			{"owner": -1, "capturing_team": -1, "progress": 0.0},
+		]
+	)
+	var ws_dec: Dictionary = NetSerializer.unpack_world_snapshot(ws_bytes)
+	var dec_vehs: Array = ws_dec.get("vehicles", []) as Array
+	var dec_apc: Dictionary = dec_vehs[0] if dec_vehs.size() > 0 else {}
+	var roundtrip_two := NetSerializer.unpack_world_snapshot(
+		NetSerializer.pack_world_snapshot(778, 13000, 48, 46, [], [snap_apc, snap_aa], [])
+	)
+	var rt_vehs: Array = roundtrip_two.get("vehicles", []) as Array
+	var rt_aa: Dictionary = rt_vehs[1] if rt_vehs.size() > 1 else {}
+
+	var remote_aa := AAGun.new()
+	remote_aa.id = 1329
+	arena.add_child(remote_aa)
+	remote_aa.push_remote_snapshot(778, 13000.0, rt_aa)
+
+	_assert(
+		NetSerializer.INPUT_CMD_BYTES == 15
+		and ws_bytes.size() < 1200
+		and absf(float(dec_apc.get("heat", 0.0)) - 0.64) <= 0.02
+		and not bool(dec_apc.get("overheated", true))
+		and absf(float(rt_aa.get("heat", 0.0)) - 1.0) <= 0.01
+		and bool(rt_aa.get("overheated", false))
+		and remote_aa.weapon_overheated
+		and remote_aa.overheat_cooldown_timer >= 3.9,
+		"Phase 13.2e: NetSerializer heat_byte roundtrip & 12v12 MTU (%dB < 1200B), INPUT_CMD_BYTES==15" % ws_bytes.size()
+	)
+
+	# 4. CartoonAssets silhouette icons & HUDController bottom-right overheat gauge switching
+	var icon_mg: ImageTexture = CartoonAssets.get_texture("icon_mounted_mg")
+	var icon_aa: ImageTexture = CartoonAssets.get_texture("icon_mounted_aa")
+	var icon_plane: ImageTexture = CartoonAssets.get_texture("icon_mounted_plane")
+	var icons_ok: bool = (icon_mg != null and icon_aa != null and icon_plane != null)
+
+	var hud := HUDController.new()
+	arena.add_child(hud)
+	var hud_vehicles: Array[VehicleBase] = [apc, plane, aa]
+	hud.bind_context(null, hud_vehicles, ctx["heroes_by_id"] as Dictionary)
+	hud.set_local_hero(gunner_hero)
+
+	# 4a. Enter APC Driver -> Passenger -> Gunner
+	apc.try_enter_hero(gunner_hero) # seat 0 (Driver)
+	hud._process(0.016)
+	var apc_driver_normal: bool = (not hud._mounted_heat_panel.visible and hud._ammo_icon_tex.texture == CartoonAssets.get_texture("icon_ammo"))
+
+	apc.try_switch_seat(gunner_hero, 2) # seat 2 (Passenger)
+	hud._process(0.016)
+	var apc_pass_normal: bool = (not hud._mounted_heat_panel.visible and hud._ammo_icon_tex.texture == CartoonAssets.get_texture("icon_ammo"))
+
+	apc.try_switch_seat(gunner_hero, 1) # seat 1 (Gunner)
+	apc.weapon_overheated = false
+	apc.weapon_heat = 0.50
+	hud._process(0.016)
+	var apc_gunner_yellow: bool = (
+		hud._mounted_heat_panel.visible
+		and hud._ammo_icon_tex.texture == icon_mg
+		and absf(hud._mounted_heat_bar_fill.anchor_right - 0.50) < 0.02
+		and hud._mounted_heat_bar_fill.color.is_equal_approx(Color(1.0, 0.85, 0.14))
+		and hud._ammo_value_lbl.text.contains("50%")
+	)
+
+	apc.weapon_heat = 1.0
+	apc.weapon_overheated = true
+	apc.overheat_cooldown_timer = 3.2
+	hud._process(0.016)
+	var apc_gunner_red: bool = (
+		hud._mounted_heat_panel.visible
+		and is_equal_approx(hud._mounted_heat_bar_fill.anchor_right, 1.0)
+		and hud._mounted_heat_bar_fill.color.is_equal_approx(Color(0.95, 0.16, 0.14))
+		and hud._mounted_heat_style.border_color.is_equal_approx(Color(0.95, 0.16, 0.14, 1.0))
+		and hud._ammo_value_lbl.text == "SUPERAQUECIDO 3.2s"
+	)
+
+	# Switch back to Passenger -> gauge hides & restores hero ammo
+	apc.try_switch_seat(gunner_hero, 2)
+	hud._process(0.016)
+	var swap_restore_ok: bool = (
+		not hud._mounted_heat_panel.visible
+		and hud._ammo_icon_tex.texture == CartoonAssets.get_texture("icon_ammo")
+		and hud._ammo_value_lbl.text == str(gunner_hero.weapons[gunner_hero.selected_weapon_slot].ammo_in_mag)
+	)
+	apc.exit_hero(gunner_hero)
+
+	# 4b. Plane Driver shows icon_mounted_plane; AA Gunner shows icon_mounted_aa; exit restores ammo
+	plane.weapon_overheated = false
+	plane.weapon_heat = 0.25
+	plane.try_enter_hero(gunner_hero) # seat 0 (Driver)
+	hud._process(0.016)
+	var plane_hud_ok: bool = (hud._mounted_heat_panel.visible and hud._ammo_icon_tex.texture == icon_plane)
+	plane.exit_hero(gunner_hero)
+	hud._process(0.016)
+	var exit_restore_ok: bool = (not hud._mounted_heat_panel.visible and hud._ammo_icon_tex.texture == CartoonAssets.get_texture("icon_ammo"))
+
+	aa.weapon_overheated = false
+	aa.weapon_heat = 0.45
+	aa.try_enter_hero(gunner_hero)
+	hud._process(0.016)
+	var aa_hud_ok: bool = (hud._mounted_heat_panel.visible and hud._ammo_icon_tex.texture == icon_aa)
+	aa.exit_hero(gunner_hero)
+
+	_assert(
+		icons_ok and apc_driver_normal and apc_pass_normal and apc_gunner_yellow and apc_gunner_red and swap_restore_ok and plane_hud_ok and exit_restore_ok and aa_hud_ok,
+		"Phase 13.2f: HUD bottom-right swaps to silhouette + yellow/red overheat bar on Gunner/Plane-Driver & restores normal ammo on Passenger/Exit"
+	)
+
+	NetworkManager.game_event_received.disconnect(shot_cb)
 	arena.queue_free()
 	await _flush_deferred()
 	await get_tree().process_frame

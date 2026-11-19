@@ -33,6 +33,8 @@ func _setup_vehicle_stats_and_seats() -> void:
 	hp = 340
 	mass = 1400.0
 	gravity_scale = 1.0
+	has_mounted_overheat = true
+	heat_per_shot = 0.045
 	_add_seat(SeatType.DRIVER, Vector3(0.0, 0.92, -0.15), false, false, false, "sit")
 	# Wing-Riding slots on Left & Right wings!
 	_add_seat(SeatType.WING_RIDER, Vector3(-3.3, 1.05, 0.15), true, true, false, "stand")
@@ -375,5 +377,7 @@ func _respawn_vehicle() -> void:
 
 
 func _fire_front_mgs(driver: HeroCharacter, forward: Vector3, context: Dictionary) -> void:
+	if not try_consume_mounted_heat():
+		return
 	var origin: Vector3 = global_position + forward * 3.6
 	_fire_ballistic_mg(driver, origin, forward, 165.0, 12.0, 240.0, 18, 24, context)

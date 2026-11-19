@@ -66,7 +66,17 @@ var _turret_node: Node3D
 var _barrel_pivot: Node3D
 var _propeller_node: Node3D
 var _wheels: Array[Node3D] = []
+const OVERHEAT_LOCKOUT_SEC: float = 4.0
+const HEAT_COOL_DELAY_SEC: float = 0.18
+
 var _driver_fire_cd: float = 0.0
+var has_mounted_overheat: bool = false
+var weapon_heat: float = 0.0
+var weapon_overheated: bool = false
+var overheat_cooldown_timer: float = 0.0
+var heat_per_shot: float = 0.05
+var heat_cool_rate: float = 0.35
+var _heat_cool_delay: float = 0.0
 var _last_heroes_by_id: Dictionary = {}
 var _damage_smoke_timer: float = 0.0
 var _roadkill_cooldowns: Dictionary = {}
@@ -173,6 +183,55 @@ func _add_seat(s_type: int, offset: Vector3, allow_shoot: bool, allow_skills: bo
 func get_seat_local_yaw(seat_idx: int) -> float:
 	var s: SeatSlot = get_seat(seat_idx)
 	return s.local_yaw if s != null else 0.0
+
+
+func is_seat_mounted_gunner(seat_idx: int) -> bool:
+	if not has_mounted_overheat or seat_idx < 0 or seat_idx >= seats.size():
+		return false
+	var s: SeatSlot = seats[seat_idx]
+	if s == null or s.can_shoot:
+		return false
+	if vehicle_type == VehicleType.PLANE:
+		return s.seat_type == SeatType.DRIVER
+	return s.seat_type == SeatType.GUNNER
+
+
+func try_consume_mounted_heat() -> bool:
+	if not has_mounted_overheat:
+		return true
+	if weapon_overheated:
+		return false
+	weapon_heat = minf(1.0, weapon_heat + heat_per_shot)
+	_heat_cool_delay = HEAT_COOL_DELAY_SEC
+	if weapon_heat >= 0.9999:
+		weapon_heat = 1.0
+		weapon_overheated = true
+		overheat_cooldown_timer = OVERHEAT_LOCKOUT_SEC
+	return true
+
+
+func _step_mounted_heat(delta: float) -> void:
+	if not has_mounted_overheat:
+		return
+	if weapon_overheated:
+		overheat_cooldown_timer = maxf(0.0, overheat_cooldown_timer - delta)
+		if overheat_cooldown_timer <= 0.0:
+			weapon_overheated = false
+			overheat_cooldown_timer = 0.0
+			weapon_heat = 0.0
+			_heat_cool_delay = 0.0
+	elif weapon_heat > 0.0:
+		if _heat_cool_delay > 0.0:
+			_heat_cool_delay = maxf(0.0, _heat_cool_delay - delta)
+		else:
+			weapon_heat = maxf(0.0, weapon_heat - heat_cool_rate * delta)
+
+
+func _reset_mounted_heat() -> void:
+	weapon_heat = 0.0
+	weapon_overheated = false
+	overheat_cooldown_timer = 0.0
+	_heat_cool_delay = 0.0
 
 
 func get_occupant_count() -> int:
@@ -461,6 +520,7 @@ func _vanish_in_water_and_schedule_respawn() -> void:
 	is_destroyed = true
 	_respawn_timer = respawn_delay
 	_water_submerge_timer = 0.0
+	_reset_mounted_heat()
 	hp = 0
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
@@ -473,6 +533,7 @@ func _vanish_in_water_and_schedule_respawn() -> void:
 func _on_destroyed(attacker_id: int) -> void:
 	is_destroyed = true
 	_respawn_timer = respawn_delay
+	_reset_mounted_heat()
 	var wreck_pos: Vector3 = global_position if is_inside_tree() else position
 	for s in seats:
 		if s.occupant_id >= 0:
@@ -544,6 +605,7 @@ func _respawn_vehicle() -> void:
 	marked_timer = 0.0
 	_respawn_timer = 0.0
 	_last_xray_state = -1
+	_reset_mounted_heat()
 	hp = max_hp
 	_damage_smoke_timer = 0.0
 	_water_submerge_timer = 0.0
@@ -600,6 +662,7 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 		_water_submerge_timer = 0.0
 	if _driver_fire_cd > 0.0:
 		_driver_fire_cd = maxf(0.0, _driver_fire_cd - delta)
+	_step_mounted_heat(delta)
 	sync_occupants(heroes_by_id, delta, context)
 	var occ_count: int = get_occupant_count()
 	var can_park_sleep: bool = (occ_count == 0) and (linear_velocity.length_squared() < 0.01) and (angular_velocity.length_squared() < 0.01)
@@ -851,6 +914,8 @@ func _process(delta: float) -> void:
 			has_turret_seat = true
 			break
 	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+		if has_mounted_overheat and weapon_overheated and overheat_cooldown_timer > 0.0:
+			overheat_cooldown_timer = maxf(0.0, overheat_cooldown_timer - delta)
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())
 		if sample != null:
 			global_position = sample.position
@@ -910,6 +975,15 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap: Diction
 	is_destroyed = (hp <= 0)
 	if was_destroyed and not is_destroyed:
 		_clear_engineer_armor()
+		_reset_mounted_heat()
+	var was_overheated: bool = weapon_overheated
+	weapon_heat = clampf(float(snap.get("heat", weapon_heat)), 0.0, 1.0)
+	weapon_overheated = bool(snap.get("overheated", false))
+	if weapon_overheated:
+		if not was_overheated:
+			overheat_cooldown_timer = float(snap.get("overheat_cd", OVERHEAT_LOCKOUT_SEC))
+	else:
+		overheat_cooldown_timer = 0.0
 	visible = hp > 0
 	collision_layer = 8 if not is_destroyed else 0
 	snapshot_interpolator.push_snapshot(
@@ -935,6 +1009,8 @@ func build_snapshot_dict() -> Dictionary:
 		"vel": linear_velocity,
 		"turret_yaw": turret_yaw,
 		"hp": hp if not is_destroyed else 0,
+		"heat": weapon_heat,
+		"overheated": weapon_overheated,
 	}
 
 

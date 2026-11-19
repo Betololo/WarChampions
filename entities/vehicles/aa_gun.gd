@@ -11,6 +11,9 @@ func _setup_vehicle_stats_and_seats() -> void:
 	max_hp = 320
 	hp = 320
 	freeze = true
+	has_mounted_overheat = true
+	heat_per_shot = 0.15
+	heat_cool_rate = 0.30
 	_add_seat(SeatType.GUNNER, Vector3(0.0, 0.88, 0.52), false, false, false, "sit", true)
 
 
@@ -32,6 +35,8 @@ func _drive_physics(driver: HeroCharacter, _delta: float, context: Dictionary) -
 	turret_yaw = cmd.aim_yaw
 	turret_pitch = cmd.aim_pitch
 	if cmd.has_button(InputCmd.BTN_FIRE) and _driver_fire_cd <= 0.0:
+		if not try_consume_mounted_heat():
+			return
 		_driver_fire_cd = FLAK_COOLDOWN
 		var aim_basis := Basis.from_euler(Vector3(cmd.aim_pitch, turret_yaw, 0.0))
 		var fire_dir: Vector3 = -aim_basis.z.normalized()

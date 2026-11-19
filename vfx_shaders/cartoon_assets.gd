@@ -132,6 +132,12 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _sprite_hp_cross()
 		"icon_ammo":
 			return _sprite_bullet()
+		"icon_mounted_mg":
+			return _sprite_mounted_weapon("mg")
+		"icon_mounted_aa":
+			return _sprite_mounted_weapon("aa")
+		"icon_mounted_plane":
+			return _sprite_mounted_weapon("plane")
 		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3", "portrait_royal_4":
 			return _sprite_portrait(0, int(key.right(1)))
 		"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3", "portrait_national_4":
@@ -720,6 +726,65 @@ static func _sprite_bullet() -> ImageTexture:
 						col = col.darkened(0.10)
 				img.set_pixel(x, y, col)
 	return ImageTexture.create_from_image(img)
+
+
+static func _sprite_mounted_weapon(kind: String) -> ImageTexture:
+	var img := _new_img(80, 44, Color(0, 0, 0, 0))
+	var hi := Color(0.95, 0.97, 1.0)
+	var mid := Color(0.68, 0.74, 0.82)
+	var dark := Color(0.32, 0.36, 0.44)
+	var brass := Color(0.96, 0.82, 0.28)
+
+	match kind:
+		"aa":
+			# Angled twin-barrel Anti-Aircraft Flak gun silhouette + gun shield
+			_draw_line(img, Vector2(18, 30), Vector2(68, 10), 5.5, hi)
+			_draw_line(img, Vector2(22, 34), Vector2(72, 16), 4.5, mid)
+			# Flared flak muzzle brakes
+			_draw_circle(img, 69.0, 9.5, 3.0, brass)
+			_draw_circle(img, 73.0, 15.5, 2.6, brass)
+			# Breech block & gun shield
+			_draw_rect(img, 14, 22, 22, 12, mid)
+			_draw_rect(img, 18, 24, 14, 8, hi)
+			_draw_rect(img, 36, 13, 6, 22, dark)
+			_draw_rect(img, 37, 14, 4, 20, mid)
+			# Tripod / pedestal base
+			_draw_rect(img, 16, 34, 26, 5, dark)
+			_draw_line(img, Vector2(22, 37), Vector2(10, 41), 3.0, mid)
+			_draw_line(img, Vector2(36, 37), Vector2(48, 41), 3.0, mid)
+		"plane":
+			# Fighter nose cowling + twin aircraft MG barrels + propeller silhouette
+			_draw_rect(img, 10, 16, 26, 14, mid)
+			_draw_rect(img, 12, 17, 22, 6, hi)
+			# Twin aircraft MG barrels extending forward
+			_draw_rect(img, 36, 14, 34, 4, hi)
+			_draw_rect(img, 36, 24, 34, 4, hi)
+			_draw_rect(img, 68, 13, 5, 6, brass)
+			_draw_rect(img, 68, 23, 5, 6, brass)
+			# Swept wing root & cockpit canopy hint
+			_draw_triangle(img, Vector2(16, 16), Vector2(28, 8), Vector2(34, 16), dark)
+			_draw_rect(img, 6, 6, 4, 32, mid)
+			_draw_circle(img, 8.0, 22.0, 4.0, brass)
+		_:
+			# Heavy Mounted MG silhouette: spade grips, receiver, perforated barrel shroud, ammo box & pintle
+			_draw_rect(img, 8, 14, 5, 13, dark)
+			_draw_rect(img, 13, 13, 28, 12, hi)
+			_draw_rect(img, 13, 21, 28, 4, mid)
+			# Perforated cooling shroud & extended heavy barrel
+			_draw_rect(img, 41, 15, 22, 7, mid)
+			for vx in [44, 49, 54, 59]:
+				_draw_rect(img, vx, 17, 2, 3, dark)
+			_draw_rect(img, 63, 17, 11, 3, hi)
+			_draw_rect(img, 72, 15, 3, 7, brass)
+			# Top sight & ammo feed box + pintle tripod
+			_draw_rect(img, 21, 9, 8, 4, dark)
+			_draw_rect(img, 20, 25, 14, 11, brass)
+			_draw_rect(img, 22, 27, 10, 7, dark)
+			_draw_line(img, Vector2(36, 25), Vector2(26, 40), 3.0, mid)
+			_draw_line(img, Vector2(36, 25), Vector2(48, 40), 3.0, mid)
+
+	var outlined: Image = _apply_cartoon_outline(img, Color(0.06, 0.07, 0.10, 1.0), 2)
+	return ImageTexture.create_from_image(outlined)
 
 
 static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
