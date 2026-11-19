@@ -265,16 +265,17 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 						var seg_d: Vector3 = arc_pts[arc_pts.size() - 1] - arc_pts[arc_pts.size() - 2]
 						if seg_d.length_squared() > 0.0001:
 							impact_dir = seg_d.normalized()
-					(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, impact_dir, hit_pos, false)
 					if weapon_kind == WeaponKind.STICK_GRENADE and not caber_spent:
 						_trigger_caber_explosion(hit_pos, context)
-					if not is_veh:
-						NetworkManager.broadcast_game_event("hit_vfx", {
-							"pos": hit_pos,
-							"kind": "spark",
-							"attacker_id": owner_hero.entity_id,
-							"damage": obj_dmg,
-						})
+					else:
+						(obj as Node).apply_damage_server(obj_dmg, owner_hero.entity_id, impact_dir, hit_pos, false)
+						if not is_veh:
+							NetworkManager.broadcast_game_event("hit_vfx", {
+								"pos": hit_pos,
+								"kind": "spark",
+								"attacker_id": owner_hero.entity_id,
+								"damage": obj_dmg,
+							})
 			elif bool(trace.get("hit", false)):
 				NetworkManager.broadcast_game_event("hit_vfx", {
 					"pos": hit_pos,
@@ -409,11 +410,12 @@ func _apply_hero_hit(
 			})
 			return
 
-	var dealt: int = victim.apply_damage_server(dmg, owner_hero.entity_id, false)
-
-	# Stick Grenade (Caber) first live hit triggers 60 AoE + 60 self-damage explosion
+	# Stick Grenade (Caber) first live hit triggers clean 110 AoE + 55% (61) self-damage explosion (no extra 35 base hit)
 	if weapon_kind == WeaponKind.STICK_GRENADE and not caber_spent:
 		_trigger_caber_explosion(hit_pos, context)
+		return
+
+	var dealt: int = victim.apply_damage_server(dmg, owner_hero.entity_id, false)
 
 	# Burning Bullets (SMG/Pistol) or Poisoned Blade (Knife)
 	if victim.status_effects != null and owner_hero.status_effects != null:
@@ -455,7 +457,9 @@ func _trigger_caber_explosion(exp_pos: Vector3, context: Dictionary) -> void:
 	})
 
 	var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-	var caber_radius: float = 5.5
+	var caber_radius: float = 6.0
+	const CABER_AOE_BASE: float = 110.0
+	var xp_cb: Callable = context.get("on_damage_dealt", Callable())
 	for hid_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
 		if h == null or h.is_defeated or h.team == owner_hero.team:
@@ -465,8 +469,28 @@ func _trigger_caber_explosion(exp_pos: Vector3, context: Dictionary) -> void:
 		var eff_dist: float = maxf(0.0, dist - h.capsule_radius)
 		if eff_dist <= caber_radius:
 			var falloff: float = clampf(1.0 - (eff_dist / caber_radius) * 0.72, 0.25, 1.0)
-			var aoe_dmg: int = maxi(1, int(roundf(60.0 * falloff)))
-			h.apply_damage_server(aoe_dmg, owner_hero.entity_id, true)
+			var aoe_dmg: int = maxi(1, int(roundf(CABER_AOE_BASE * falloff)))
+			if h.status_effects != null and h.status_effects.can_eat_grenades():
+				var heal_amt: int = maxi(1, int(roundf(float(aoe_dmg) * 0.55)))
+				h.heal_server(heal_amt)
+				NetworkManager.broadcast_game_event("eat_grenades", {
+					"hero_id": h.entity_id,
+					"pos": h_pos,
+					"heal": heal_amt,
+				})
+				continue
+			var aoe_dealt: int = h.apply_damage_server(aoe_dmg, owner_hero.entity_id, true)
+			if aoe_dealt > 0:
+				if xp_cb.is_valid():
+					xp_cb.call(owner_hero, h, aoe_dealt)
+				NetworkManager.broadcast_game_event("hit_vfx", {
+					"pos": h_pos + Vector3(0.0, 1.35, 0.0),
+					"kind": "spark",
+					"attacker_id": owner_hero.entity_id,
+					"victim_id": h.entity_id,
+					"damage": aoe_dealt,
+					"headshot": false,
+				})
 			var horiz_vec := Vector3(h_pos.x - exp_pos.x, 0.0, h_pos.z - exp_pos.z)
 			var horiz_dir: Vector3 = horiz_vec.normalized() if horiz_vec.length_squared() > 0.001 else Vector3.FORWARD
 			var kb_dir: Vector3 = (horiz_dir * 0.78 + Vector3.UP * 0.62).normalized()
@@ -485,7 +509,7 @@ func _trigger_caber_explosion(exp_pos: Vector3, context: Dictionary) -> void:
 			var v_pos: Vector3 = (v as Node3D).global_position if (v as Node3D).is_inside_tree() else (v as Node3D).position
 			if v_pos.distance_to(exp_pos) <= caber_radius + 1.5:
 				var v_dir: Vector3 = (v_pos - exp_pos).normalized()
-				var v_dmg: int = int(roundf(60.0 * veh_mult))
+				var v_dmg: int = int(roundf(CABER_AOE_BASE * veh_mult))
 				v.apply_damage_server(v_dmg, owner_hero.entity_id, v_dir, exp_pos, true)
 
 	if owner_hero.is_inside_tree():
@@ -496,7 +520,8 @@ func _trigger_caber_explosion(exp_pos: Vector3, context: Dictionary) -> void:
 			if sticky.owner_team != owner_hero.team and sticky.global_position.distance_to(exp_pos) <= caber_radius:
 				sticky.destroy_by_enemy()
 
-	owner_hero.apply_damage_server(60, owner_hero.entity_id, true, false, false)
+	var self_dmg: int = int(roundf(CABER_AOE_BASE * 0.55))
+	owner_hero.apply_damage_server(self_dmg, owner_hero.entity_id, true, false, false)
 	if not owner_hero.is_defeated:
 		var self_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
 		var self_vec := Vector3(self_pos.x - exp_pos.x, 0.0, self_pos.z - exp_pos.z)

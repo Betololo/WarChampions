@@ -59,6 +59,7 @@ func _ready() -> void:
 	await _test_phase12b_task1_engineer_build_channel()
 	await _test_phase12b_task2_mortar_anim_and_aoe()
 	await _test_phase12b_task3_perf_optimizations()
+	await _test_phase13_task1_lod_demolisher_gunner()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -6286,9 +6287,9 @@ func _test_phase11_task4_demolisher() -> void:
 	var fw0 := HitscanWeapon.new(); fw0.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 0)
 	var fw1 := HitscanWeapon.new(); fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
 	var fw2 := HitscanWeapon.new(); fw2.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 2)
-	if not (is_equal_approx(fw0.damage_max, 10.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.ammo_per_shot == 1 and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 21.0)):
+	if not (is_equal_approx(fw0.damage_max, 15.0) and is_equal_approx(fw0.fire_interval, 0.10) and fw0.ammo_per_shot == 1 and fw0.mag_size == 100 and is_equal_approx(fw0.max_range_m, 21.0)):
 		stats_ok = false
-	if not (is_equal_approx(fw1.damage_max, 10.0) and is_equal_approx(fw1.fire_interval, 0.25) and fw1.ammo_per_shot == 5 and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 21.0)):
+	if not (is_equal_approx(fw1.damage_max, 15.0) and is_equal_approx(fw1.fire_interval, 0.10) and fw1.ammo_per_shot == 2 and fw1.mag_size == 100 and is_equal_approx(fw1.max_range_m, 21.0)):
 		stats_ok = false
 	if not (is_equal_approx(fw2.damage_max, 40.0) and is_equal_approx(fw2.fire_interval, 0.50) and fw2.mag_size == 100 and is_equal_approx(fw2.max_range_m, 32.0) and not fw2.is_automatic and is_equal_approx(fw2.bullet_speed_mps, 45.0)):
 		stats_ok = false
@@ -6370,8 +6371,8 @@ func _test_phase11_task4_demolisher() -> void:
 	caber.fire_server(c_cmd, c_ctx)
 	var caber_first_ok: bool = (
 		caber.caber_spent
-		and demo.hp == demo_hp0 - 60
-		and caber_vic.hp == vic_hp0 - 95 # 35 melee + 60 AoE
+		and demo.hp == demo_hp0 - 61
+		and caber_vic.hp == vic_hp0 - 110
 	)
 	var demo_hp1: int = demo.hp
 	var vic_hp1: int = caber_vic.hp
@@ -6379,37 +6380,37 @@ func _test_phase11_task4_demolisher() -> void:
 	var caber_second_ok: bool = (demo.hp == demo_hp1 and caber_vic.hp == vic_hp1 - 35)
 	demo.respawn_at(Vector3.ZERO, 0.0)
 	var caber_reset_ok: bool = (not caber.caber_spent and demo.hp == demo.max_hp)
-	_assert(caber_first_ok and caber_second_ok and caber_reset_ok, "Phase 11.4c: Stick Grenade first hit triggers 60 AoE + 60 self-damage, subsequent hit deals 35 only, and respawn resets caber_spent")
+	_assert(caber_first_ok and caber_second_ok and caber_reset_ok, "Phase 11.4c: Stick Grenade first hit triggers clean 110 AoE + 61 self-damage, subsequent hit deals 35 only, and respawn resets caber_spent")
 
-	# 4. Demolisher Skills: Riot Shield (150 HP), Haste, TNT Rope (no timeout + deferred cd), Temp Shield (3s), 3x Vehicle Damage
+	# 4. Demolisher Skills: Riot Shield (550 HP), Haste, TNT Rope (no timeout + deferred cd), Temp Shield (3s), 3x Vehicle Damage
 	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
 	var d_ctx: Dictionary = {"heroes_by_id": {11401: demo, 11402: demo_nat, 11403: caber_vic}, "projectiles_root": arena}
 	var d_cmd := InputCmd.new()
 	d_cmd.aim_yaw = 0.0
 
-	# Skill 0: Carried Frontal Riot Shield (150 HP) + auto-equips STICK_GRENADE (slot 2), deferred CD until stowed/broken
+	# Skill 0: Carried Frontal Riot Shield (550 HP) + auto-equips STICK_GRENADE (slot 2), deferred CD until stowed/broken
 	demo.selected_weapon_slot = 0
 	var s0_ok: bool = dsm.try_activate_skill(0, d_cmd, d_ctx)
 	var shield_equip_ok: bool = (
 		s0_ok
 		and demo.selected_weapon_slot == 2
 		and demo.status_effects.carried_shield_active
-		and demo.status_effects.carried_shield_hp == 150
+		and demo.status_effects.carried_shield_hp == 550
 		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0
 		and is_equal_approx(dsm.skill_cooldowns[0], 0.0)
 	)
-	var shield_abs: int = demo.status_effects.damage_carried_shield(80)
-	var shield_dmg_ok: bool = (shield_abs == 80 and demo.status_effects.carried_shield_hp == 70 and demo.status_effects.carried_shield_active)
-	var shield_brk: int = demo.status_effects.damage_carried_shield(80)
+	var shield_abs: int = demo.status_effects.damage_carried_shield(300)
+	var shield_dmg_ok: bool = (shield_abs == 300 and demo.status_effects.carried_shield_hp == 250 and demo.status_effects.carried_shield_active)
+	var shield_brk: int = demo.status_effects.damage_carried_shield(300)
 	var shield_break_ok: bool = (
-		shield_brk == 70
+		shield_brk == 250
 		and demo.status_effects.carried_shield_hp == 0
 		and not demo.status_effects.carried_shield_active
 		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) == 0
 		and is_equal_approx(dsm.skill_cooldowns[0], 16.0)
 	)
 	dsm.skill_cooldowns[0] = 0.0
-	_assert(shield_equip_ok and shield_dmg_ok and shield_break_ok, "Phase 11.4d: Skill 0 equips Carried Riot Shield (150 HP) + slot 2, absorbs frontal dmg, and starts 16s CD on break")
+	_assert(shield_equip_ok and shield_dmg_ok and shield_break_ok, "Phase 11.4d: Skill 0 equips Carried Riot Shield (550 HP) + slot 2, absorbs frontal dmg, and starts 16s CD on break")
 
 	# Skill 1: Haste (1.38x move, 1.50x fire rate, 1.60x reload for 6.0s)
 	var s1_ok: bool = dsm.try_activate_skill(1, d_cmd, d_ctx)
@@ -6454,7 +6455,7 @@ func _test_phase11_task4_demolisher() -> void:
 	)
 	_assert(rope_held_ok and rope_thrown_ok, "Phase 11.4f: Skill 2 TNT Rope holds indefinitely, blocks normal firing, and starts 15s cooldown on throw_tnt_rope")
 
-	# Skill 3 (4th slot): Kit de 5 Coletes (spawns ArmorKitEntity with 5 vests, +70 permanent vest shield, CD deferred until empty)
+	# Skill 3 (4th slot): Kit de 5 Coletes (spawns ArmorKitEntity with 5 vests, +70 permanent vest shield, immediate 17s CD on drop)
 	demo.hp = 85
 	demo.shield = 0
 	demo.status_effects.permanent_vest_shield = 0
@@ -6464,9 +6465,9 @@ func _test_phase11_task4_demolisher() -> void:
 	for ch in arena.get_children():
 		if ch is DemolisherSkills.ArmorKitEntity:
 			spawned_kit = ch as DemolisherSkills.ArmorKitEntity
-	var kit_spawn_ok: bool = (s3_ok and spawned_kit != null and spawned_kit.charges == 5 and is_equal_approx(dsm.skill_cooldowns[3], 0.0))
+	var kit_spawn_ok: bool = (s3_ok and spawned_kit != null and spawned_kit.charges == 5 and is_equal_approx(dsm.skill_cooldowns[3], 17.0))
 	spawned_kit.step_kit(0.02, d_ctx)
-	var vest_gained_ok: bool = (demo.shield == 70 and demo.status_effects.permanent_vest_shield == 70 and spawned_kit.charges == 4 and is_equal_approx(dsm.skill_cooldowns[3], 0.0))
+	var vest_gained_ok: bool = (demo.shield == 70 and demo.status_effects.permanent_vest_shield == 70 and spawned_kit.charges == 4 and is_equal_approx(dsm.skill_cooldowns[3], 17.0))
 	demo.heal_server(10)
 	for _s in range(6):
 		demo.status_effects._physics_process(1.0)
@@ -6478,7 +6479,7 @@ func _test_phase11_task4_demolisher() -> void:
 	var kit_emptied_ok: bool = (spawned_kit.is_queued_for_deletion() and is_equal_approx(dsm.skill_cooldowns[3], 17.0))
 	demo.shield = 0
 	demo.status_effects.permanent_vest_shield = 0
-	_assert(kit_spawn_ok and vest_gained_ok and vest_persisted_ok and kit_emptied_ok, "Phase 11.4g: Skill 3 Kit de 5 Coletes grants +70 permanent vest shield and triggers 17s CD when emptied")
+	_assert(kit_spawn_ok and vest_gained_ok and vest_persisted_ok and kit_emptied_ok, "Phase 11.4g: Skill 3 Kit de 5 Coletes starts immediate 17s CD, grants +70 permanent vest shield, and despawns when emptied")
 
 	# Skill 4 (5th slot): Quebra-Tanques (3x Vehicle damage multiplier)
 	var tank := VehicleTank.new()
@@ -6638,7 +6639,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	var al_hp0: int = ally_h.hp
 	fw0.fire_server(f_cmd, ctx)
 	var flame0_hit_ok: bool = (
-		enemy_a.hp == ea_hp0 - 10
+		enemy_a.hp == ea_hp0 - 15
 		and enemy_a.status_effects.is_burning()
 		and is_equal_approx(enemy_a.status_effects.burn_timer, 3.0)
 		and enemy_water.hp == ew_hp0
@@ -6662,7 +6663,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		]
 	)
 
-	# 2. FlameWeapon arch 1 (Fire Starter): 20/s ammo (5 ammo / 0.25s), 10 dmg + FirePatchEntity (6.0s, 20 entry + burn) + fire_patch_vfx
+	# 2. FlameWeapon arch 1 (Fire Starter): 20/s ammo (2 ammo / 0.10s), 15 dmg + FirePatchEntity (6.0s, 20 entry + burn) + fire_patch_vfx
 	demo.respawn_at(Vector3(0.0, 0.0, 0.0), 0.0)
 	enemy_a.respawn_at(Vector3(0.0, 0.0, -10.0), 0.0)
 	enemy_a.is_in_water = false
@@ -6670,11 +6671,11 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 	fw1.configure(demo, WeaponBase.WeaponKind.FLAMETHROWER, 1)
 	demo.add_child(fw1)
 	var fs_consumed: int = 0
-	for _i in range(4):
+	for _i in range(10):
 		if fw1.try_consume_fire(f_cmd):
 			fs_consumed += 1
-		fw1.step_timers(0.25, f_cmd)
-	var fs_ammo_ok: bool = (fs_consumed == 4 and fw1.ammo_in_mag == 80)
+		fw1.step_timers(0.10, f_cmd)
+	var fs_ammo_ok: bool = (fs_consumed == 10 and fw1.ammo_in_mag == 80)
 
 	var fp_vfx_events: Array[Dictionary] = []
 	var on_fp_evt := func(ev_type: String, payload: Dictionary) -> void:
@@ -6694,7 +6695,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		if p is DemolisherSkills.FirePatchEntity:
 			newest_fp = p as DemolisherSkills.FirePatchEntity
 	var fs_patch_ok: bool = (
-		enemy_a.hp == ea_pre_fs - 10
+		enemy_a.hp == ea_pre_fs - 15
 		and enemy_a.status_effects.is_burning()
 		and spawned_patches.size() == pre_fp_nodes + 1
 		and newest_fp != null
@@ -6709,7 +6710,7 @@ func _test_phase11_task5_demolisher_weapons() -> void:
 		newest_fp.queue_free()
 	NetworkManager.game_event_received.disconnect(on_fp_evt)
 	fw1.queue_free()
-	_assert(fs_ammo_ok and fs_patch_ok, "Phase 11.5b: FlameWeapon arch 1 Fire Starter (20/s ammo = 5/0.25s, 10 dmg + FirePatchEntity 6s / 20 entry dmg + fire_patch_vfx)")
+	_assert(fs_ammo_ok and fs_patch_ok, "Phase 11.5b: FlameWeapon arch 1 Fire Starter (20/s ammo = 2/0.10s, 15 dmg + FirePatchEntity 6s / 20 entry dmg + fire_patch_vfx)")
 
 	# 3. FlameWeapon arch 2 (Fire Breath): FIREBALL 45 m/s, 40 dmg + 3s Afterburn, 0 dmg/0 burn in water/fire-immunity
 	enemy_a.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
@@ -7709,17 +7710,18 @@ func _test_phase11_polish_task8() -> void:
 				stick_count += 1
 				max_stick_dist = maxf(max_stick_dist, (ch as MeshInstance3D).position.length())
 	var cowboy_pose_ok: bool = (
-		demo._held_weapon_root.position.x >= 0.35
-		and demo._held_weapon_root.position.y >= 0.60
+		demo._held_weapon_root.position.x >= 0.70
+		and demo._held_weapon_root.position.y >= 0.48
 		and tnt_bundle != null
-		and is_equal_approx(tnt_bundle.rotation.x, 0.0)
+		and tnt_bundle.rotation.x > 0.0
+		and is_equal_approx(tnt_bundle.rotation.y, 0.0)
 		and is_equal_approx(tnt_bundle.rotation.z, 0.0)
 		and stick_count == 4
 		and max_stick_dist >= 0.50
 	)
 	_assert(
 		cowboy_pose_ok,
-		"Phase 11.T8a: Cowboy TNT Rope lifts weapon root (%.2f, %.2f), spins around Y, and mounts 4 sticks at %.2fm >= 0.50m" % [
+		"Phase 11.T8a: Cowboy TNT Rope extends arm laterally (%.2f, %.2f), spins CCW around +X in vertical Y-Z plane, and mounts 4 sticks at %.2fm >= 0.50m" % [
 			demo._held_weapon_root.position.x, demo._held_weapon_root.position.y, max_stick_dist
 		]
 	)
@@ -7872,14 +7874,14 @@ func _test_phase12_task1_fixes() -> void:
 	await get_tree().physics_frame
 	var hp_08_pre: int = enemy.hp
 	fw0.fire_server(aim_fwd, f_ctx)
-	var pb0_ok: bool = (enemy.hp == hp_08_pre - 10 and enemy.status_effects.is_burning())
+	var pb0_ok: bool = (enemy.hp == hp_08_pre - 15 and enemy.status_effects.is_burning())
 
 	enemy.respawn_at(Vector3(-0.55, 0.0, -1.5), 0.0)
 	await get_tree().physics_frame
 	var hp_15_pre: int = enemy.hp
-	var fs_fire_ok: bool = fw1.try_consume_fire(aim_fwd) and fw1.ammo_in_mag == 95
+	var fs_fire_ok: bool = fw1.try_consume_fire(aim_fwd) and fw1.ammo_in_mag == 98
 	fw1.fire_server(aim_fwd, f_ctx)
-	var pb1_ok: bool = (fs_fire_ok and enemy.hp == hp_15_pre - 10 and enemy.status_effects.is_burning())
+	var pb1_ok: bool = (fs_fire_ok and enemy.hp == hp_15_pre - 15 and enemy.status_effects.is_burning())
 
 	# Vehicle corner hit: tank center at (1.9, 0.2, -3.2), front-left corner within ~0.8m in front of shooter
 	cap_tank.global_position = Vector3(1.9, 0.2, -3.2)
@@ -7898,7 +7900,7 @@ func _test_phase12_task1_fixes() -> void:
 
 	_assert(
 		is_equal_approx(fw0.max_range_m, 21.0) and is_equal_approx(fw1.max_range_m, 21.0) and pb0_ok and pb1_ok and veh_corner_ok and fb_pb_ok,
-		"Phase 12.1b: Flame 21m/10dmg/5ammo, point-blank 0.8m(%s)/1.5m(%s), tank corner(%s), Fire Breath 0.6m(%s)" % [
+		"Phase 12.1b: Flame 21m/15dmg/2ammo@0.10s, point-blank 0.8m(%s)/1.5m(%s), tank corner(%s), Fire Breath 0.6m(%s)" % [
 			str(pb0_ok), str(pb1_ok), str(veh_corner_ok), str(fb_pb_ok)
 		]
 	)
@@ -8019,7 +8021,7 @@ func _test_phase12_task2_demolisher_rework() -> void:
 	}
 	await get_tree().physics_frame
 
-	# 1. Skill 3: Kit de 5 Coletes (+70 permanent vest shield, CD deferred until all 5 vests consumed)
+	# 1. Skill 3: Kit de 5 Coletes (+70 permanent vest shield, immediate 17s CD on drop, replacing old kit despawns it)
 	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
 	demo.global_position = Vector3.ZERO
 	ally.global_position = Vector3(20.0, 0.0, 0.0)
@@ -8028,18 +8030,16 @@ func _test_phase12_task2_demolisher_rework() -> void:
 	demo.shield = 0
 	demo.status_effects.permanent_vest_shield = 0
 	var s3_ok: bool = dsm.try_activate_skill(3, InputCmd.new(), ctx)
-	var s3_dup_blocked: bool = not dsm.try_activate_skill(3, InputCmd.new(), ctx)
 	var kit: DemolisherSkills.ArmorKitEntity = null
 	for ch in arena.get_children():
 		if ch is DemolisherSkills.ArmorKitEntity:
 			kit = ch as DemolisherSkills.ArmorKitEntity
 	var kit_init_ok: bool = (
 		s3_ok
-		and s3_dup_blocked
 		and kit != null
 		and kit.charges == 5
-		and is_equal_approx(dsm.skill_cooldowns[3], 0.0)
-		and dsm._defers_cooldown_until_exit(3)
+		and is_equal_approx(dsm.skill_cooldowns[3], 17.0)
+		and not dsm._defers_cooldown_until_exit(3)
 	)
 
 	kit.step_kit(0.02, ctx)
@@ -8048,7 +8048,7 @@ func _test_phase12_task2_demolisher_rework() -> void:
 		and demo.status_effects.permanent_vest_shield == 70
 		and enemy.shield == 0
 		and kit.charges == 4
-		and is_equal_approx(dsm.skill_cooldowns[3], 0.0)
+		and is_equal_approx(dsm.skill_cooldowns[3], 17.0)
 	)
 	for _t in range(6):
 		demo.status_effects._physics_process(1.0)
@@ -8069,10 +8069,10 @@ func _test_phase12_task2_demolisher_rework() -> void:
 	)
 	_assert(
 		kit_init_ok and first_vest_ok and no_decay_ok and vest_damaged_ok and fifth_empties_ok,
-		"Phase 12.2a: Skill 3 Kit de 5 Coletes grants +70 permanent-until-damaged shield, blocks enemy pickup, and starts 17s CD on 5th vest"
+		"Phase 12.2a: Skill 3 Kit de 5 Coletes grants +70 permanent-until-damaged shield, blocks enemy pickup, and starts immediate 17s CD on drop"
 	)
 
-	# 2. Skill 0: Carried Frontal Riot Shield + Weapon 3 (STICK_GRENADE) Combo + Swing Gap + Frontal Block vs Flank
+	# 2. Skill 0: Carried Frontal Riot Shield (550 HP) + Weapon 3 (STICK_GRENADE) Combo + Swing Gap + Frontal Block vs Flank
 	demo.respawn_at(Vector3.ZERO, 0.0)
 	enemy.respawn_at(Vector3(0.0, 0.0, -6.0), PI)
 	enemy_demo.respawn_at(Vector3(0.0, 0.0, -6.0), PI)
@@ -8088,7 +8088,7 @@ func _test_phase12_task2_demolisher_rework() -> void:
 		s0_act_ok
 		and demo.selected_weapon_slot == 2
 		and demo.status_effects.carried_shield_active
-		and demo.status_effects.carried_shield_hp == 150
+		and demo.status_effects.carried_shield_hp == 550
 		and (demo.active_buffs & NetSerializer.BUFF_CARRIED_SHIELD) != 0
 		and is_equal_approx(dsm.skill_cooldowns[0], 0.0)
 		and demo._held_riot_shield != null and demo._held_riot_shield.visible
@@ -8101,12 +8101,12 @@ func _test_phase12_task2_demolisher_rework() -> void:
 	shoot_south.aim_yaw = PI
 	shoot_south.aim_pitch = 0.0
 	enemy_smg.fire_server(shoot_south, ctx)
-	var frontal_gun_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp < 150 and demo.status_effects.carried_shield_hp > 0)
+	var frontal_gun_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp < 550 and demo.status_effects.carried_shield_hp > 0)
 
 	var sh_before_flame: int = demo.status_effects.carried_shield_hp
 	var ed_flame: FlameWeapon = enemy_demo.weapons[0] as FlameWeapon
 	ed_flame.fire_server(shoot_south, ctx)
-	var frontal_flame_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp == sh_before_flame - 10 and not demo.status_effects.is_burning())
+	var frontal_flame_ok: bool = (demo.hp == demo_hp0 and demo.status_effects.carried_shield_hp == sh_before_flame - 15 and not demo.status_effects.is_burning())
 
 	var sh_before_proj: int = demo.status_effects.carried_shield_hp
 	var f_rocket := ProjectileEntity.spawn_server_projectile(
@@ -8151,7 +8151,7 @@ func _test_phase12_task2_demolisher_rework() -> void:
 		and absf(demo._held_riot_shield.rotation.y) < 0.02
 	)
 
-	demo.status_effects.damage_carried_shield(500)
+	demo.status_effects.damage_carried_shield(600)
 	demo._animate_character(0.016)
 	var break_cd_ok: bool = (
 		not demo.status_effects.carried_shield_active
@@ -9984,6 +9984,264 @@ func _test_phase12b_task3_perf_optimizations() -> void:
 		]
 	)
 
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+
+func _test_phase13_task1_lod_demolisher_gunner() -> void:
+	print("--- Phase 13 Task 1: LOD Crawl/Sky-Drop Fix, Demolisher 1a-1f & Gunner Explosive Absorb ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_shape := BoxShape3D.new()
+	floor_shape.size = Vector3(400.0, 1.0, 400.0)
+	floor_col.shape = floor_shape
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	# Low 0.75m curb at z=-5.0 (blocks +0.45 feet ray, leaves +1.05 & +1.55 clear)
+	var curb_body := StaticBody3D.new()
+	curb_body.collision_layer = 1
+	var curb_col := CollisionShape3D.new()
+	var curb_box := BoxShape3D.new()
+	curb_box.size = Vector3(6.0, 0.75, 0.4)
+	curb_col.shape = curb_box
+	curb_col.position = Vector3(0.0, 0.375, -5.0)
+	curb_body.add_child(curb_col)
+	arena.add_child(curb_body)
+
+	# Tall 2.8m wall at x=15.0, z=-5.0 (blocks all 3 heights)
+	var wall_body := StaticBody3D.new()
+	wall_body.collision_layer = 1
+	var wall_col := CollisionShape3D.new()
+	var wall_box := BoxShape3D.new()
+	wall_box.size = Vector3(6.0, 2.8, 0.4)
+	wall_col.shape = wall_box
+	wall_col.position = Vector3(15.0, 1.4, -5.0)
+	wall_body.add_child(wall_col)
+	arena.add_child(wall_body)
+
+	var cam := Camera3D.new()
+	arena.add_child(cam)
+	cam.global_position = Vector3(0.0, 3.0, 0.0)
+	cam.current = true
+
+	var remote_bot := HeroCharacter.new()
+	remote_bot.setup_identity(13101, "RemoteBot", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	arena.add_child(remote_bot)
+	remote_bot.global_position = Vector3(0.0, 0.0, -140.0)
+	await get_tree().physics_frame
+
+	# 1. LOD > 100m & behind camera defeat -> respawn_at -> giant delta never crawls or sky-spikes
+	remote_bot.is_defeated = true
+	remote_bot._animate_character(0.5)
+	remote_bot._animate_character(0.5)
+	var defeated_low_y: bool = remote_bot._hips_pivot.position.y < 0.25 and remote_bot._is_defeat_pose_done
+	remote_bot.respawn_at(Vector3(0.0, 0.0, 140.0), 0.0) # Behind camera & >100m away
+	remote_bot._animate_character(10.0) # Huge frame spike must be clamped cleanly
+	var lod_respawn_ok: bool = (
+		defeated_low_y
+		and remote_bot._hips_pivot.position.y >= 0.70 and remote_bot._hips_pivot.position.y <= 0.82
+		and is_equal_approx(remote_bot._hips_pivot.rotation.x, 0.0)
+		and is_equal_approx(remote_bot._defeat_elapsed, 0.0)
+		and is_equal_approx(remote_bot._airborne_fall_time, 0.0)
+		and not remote_bot._is_defeat_pose_done
+	)
+	_assert(
+		lod_respawn_ok,
+		"Phase 13.1a: Remote hero >100m & behind camera stands upright after respawn_at + 10s delta spike (hips_y=%.2f, rot_x=%.2f)" % [
+			remote_bot._hips_pivot.position.y, remote_bot._hips_pivot.rotation.x
+		]
+	)
+
+	# 2. Demolisher 1a: Skill 3 immediate 17s CD + replacing active box despawns old kit & emits armor_kit_removed
+	var demo := HeroCharacter.new()
+	demo.setup_identity(13102, "P13Demo", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_DEMOLISHER, 0, true, false)
+	arena.add_child(demo)
+	var enemy_demo := HeroCharacter.new()
+	enemy_demo.setup_identity(13103, "P13EDemo", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_DEMOLISHER, 0, false, false)
+	arena.add_child(enemy_demo)
+	var enemy_gunner := HeroCharacter.new()
+	enemy_gunner.setup_identity(13104, "P13EGunner", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	arena.add_child(enemy_gunner)
+	var enemy_eng := HeroCharacter.new()
+	enemy_eng.setup_identity(13105, "P13EEng", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_ENGINEER, 0, false, false)
+	arena.add_child(enemy_eng)
+	var enemy_cmdo := HeroCharacter.new()
+	enemy_cmdo.setup_identity(13106, "P13ECmdo", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	arena.add_child(enemy_cmdo)
+	await get_tree().physics_frame
+
+	var ctx: Dictionary = {
+		"heroes_by_id": {
+			13102: demo,
+			13103: enemy_demo,
+			13104: enemy_gunner,
+			13105: enemy_eng,
+			13106: enemy_cmdo,
+		},
+		"projectiles_root": arena,
+	}
+
+	var removed_kits: Array[int] = []
+	var eat_events: Array[Dictionary] = []
+	var evt_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "armor_kit_removed":
+			removed_kits.append(int(payload.get("kit_id", 0)))
+		elif ev_type == "eat_grenades":
+			eat_events.append(payload)
+	NetworkManager.game_event_received.connect(evt_cb)
+
+	var dsm: DemolisherSkills = demo.skill_manager as DemolisherSkills
+	demo.global_position = Vector3.ZERO
+	dsm.try_activate_skill(3, InputCmd.new(), ctx)
+	var first_kit: DemolisherSkills.ArmorKitEntity = dsm._active_armor_kit
+	var first_uid: int = first_kit.kit_uid if first_kit != null else -1
+	var imm_cd_ok: bool = (first_kit != null and is_equal_approx(dsm.skill_cooldowns[3], 17.0))
+	dsm.skill_cooldowns[3] = 0.0
+	demo.global_position = Vector3(4.0, 0.0, 0.0)
+	dsm.try_activate_skill(3, InputCmd.new(), ctx)
+	var second_kit: DemolisherSkills.ArmorKitEntity = dsm._active_armor_kit
+	var replace_kit_ok: bool = (
+		first_kit != null and first_kit.is_queued_for_deletion()
+		and not first_kit.is_in_group("armor_kits")
+		and second_kit != null and second_kit != first_kit
+		and removed_kits.has(first_uid)
+	)
+	_assert(imm_cd_ok and replace_kit_ok, "Phase 13.1b: Skill 3 starts 17s CD immediately and replacing box despawns old kit + emits armor_kit_removed")
+
+	# 3. Demolisher 1b: TRAPPER_STICKY stays armed > 50s without auto-detonating
+	var sticky := ProjectileEntity.spawn_server_projectile(
+		ProjectileEntity.ProjectileKind.TRAPPER_STICKY,
+		demo.entity_id, demo.team,
+		Vector3(0.0, 0.1, 10.0), Vector3.ZERO, ctx, 40.0, arena
+	)
+	sticky._is_stuck = true
+	sticky._stuck = true
+	for _s in range(120):
+		sticky._physics_process(0.5)
+	_assert(not sticky._exploded and not sticky.is_queued_for_deletion(), "Phase 13.1c: TRAPPER_STICKY stays persistently armed for >60s without auto-detonation")
+
+	# 4. Demolisher 1c: Flamethrower multi-height LOS over 0.75m curb, blocked by 2.8m wall, 15 dmg + FlameStreamVFX
+	demo.global_position = Vector3(0.0, 0.0, -2.0)
+	enemy_demo.respawn_at(Vector3(0.0, 0.0, -8.0), 0.0)
+	var fw0: FlameWeapon = demo.weapons[0] as FlameWeapon
+	var f_cmd := InputCmd.new()
+	f_cmd.aim_yaw = 0.0
+	f_cmd.aim_pitch = 0.0
+	var ed_hp_pre: int = enemy_demo.hp
+	fw0.fire_server(f_cmd, ctx)
+	var curb_hit_ok: bool = (enemy_demo.hp == ed_hp_pre - 15 and enemy_demo.status_effects.is_burning())
+
+	demo.global_position = Vector3(15.0, 0.0, -2.0)
+	enemy_demo.respawn_at(Vector3(15.0, 0.0, -8.0), 0.0)
+	var wall_hp_pre: int = enemy_demo.hp
+	fw0.fire_server(f_cmd, ctx)
+	var wall_block_ok: bool = (enemy_demo.hp == wall_hp_pre and not enemy_demo.status_effects.is_burning())
+
+	var fs_vfx: StatusEffectsVFX.FlameStreamVFX = StatusEffectsVFX.update_continuous_flame_stream(
+		arena, demo.entity_id, Vector3(0.0, 1.3, -2.0), Vector3.FORWARD, 18.0, true
+	)
+	var stream_ok: bool = (fs_vfx != null and fs_vfx.get_child_count() >= 10 and is_equal_approx(fs_vfx.duration, 0.24))
+	StatusEffectsVFX.stop_continuous_flame_stream(demo.entity_id)
+	_assert(
+		curb_hit_ok and wall_block_ok and stream_ok,
+		"Phase 13.1d: Flamethrower multi-height LOS hits 15 dmg over 0.75m curb (%s), blocked by 2.8m wall (%s), continuous FlameStreamVFX (%s)" % [
+			str(curb_hit_ok), str(wall_block_ok), str(stream_ok)
+		]
+	)
+
+	# 5. Demolisher 1e: Lateral CCW vertical TNT Rope clear of head
+	demo.respawn_at(Vector3.ZERO, 0.0)
+	dsm.skill_cooldowns[2] = 0.0
+	dsm.try_activate_skill(2, InputCmd.new(), ctx)
+	demo._animate_character(0.10)
+	var tnt_bundle := demo._held_weapon_root.get_node_or_null("TntRope") as Node3D
+	var min_stick_x_torso: float = 99.0
+	if tnt_bundle != null:
+		for ch in tnt_bundle.get_children():
+			if ch is MeshInstance3D and String(ch.name).begins_with("DynamiteStick"):
+				var p_torso: Vector3 = demo._held_weapon_root.transform * (tnt_bundle.transform * (ch as MeshInstance3D).position)
+				min_stick_x_torso = minf(min_stick_x_torso, p_torso.x)
+	var lasso_clear_ok: bool = (
+		demo._held_weapon_root.position.x >= 0.75
+		and tnt_bundle != null and tnt_bundle.rotation.x > 0.0
+		and min_stick_x_torso >= 0.70
+	)
+	_assert(lasso_clear_ok, "Phase 13.1e: TNT Rope extends laterally (x=%.2f), spins CCW around +X, sticks stay >= 0.70m clear of head (min_x=%.2f)" % [
+		demo._held_weapon_root.position.x, min_stick_x_torso
+	])
+	demo.status_effects.clear_tnt_rope()
+
+	# 6. Demolisher 1f: Caber 110 AoE vs enemy Demolisher + 61 (55%) self-dmg
+	demo.respawn_at(Vector3.ZERO, 0.0)
+	enemy_demo.respawn_at(Vector3(0.0, 0.0, -1.8), 0.0)
+	enemy_gunner.respawn_at(Vector3(30.0, 0.0, 30.0), 0.0)
+	enemy_eng.respawn_at(Vector3(30.0, 0.0, 0.0), 0.0)
+	enemy_cmdo.respawn_at(Vector3(30.0, 0.0, 5.0), 0.0)
+	await get_tree().physics_frame
+	var caber: HitscanWeapon = demo.weapons[2] as HitscanWeapon
+	var demo_pre_caber: int = demo.hp
+	var ed_pre_caber: int = enemy_demo.hp
+	caber.fire_server(f_cmd, ctx)
+	var caber_110_ok: bool = (
+		caber.caber_spent
+		and enemy_demo.hp == ed_pre_caber - 110
+		and demo.hp == demo_pre_caber - 61
+	)
+	_assert(caber_110_ok, "Phase 13.1f: Caber deals 110 AoE to enemy Demolisher (hp %d->%d) and 61 (55%%) self-dmg (hp %d->%d)" % [
+		ed_pre_caber, enemy_demo.hp, demo_pre_caber, demo.hp
+	])
+
+	# 7. Item 4: Gunner "I Eat Grenades" absorbs Mortar, Troop Trap & Stick Grenade (0 dmg, 0 knockback, +55% heal)
+	enemy_gunner.respawn_at(Vector3(20.0, 0.0, 0.0), 0.0)
+	enemy_gunner.hp = 40
+	enemy_gunner.status_effects.activate_eat_grenades(8.0)
+	var esm_eng: EngineerSkills = enemy_eng.skill_manager as EngineerSkills
+	# Test Engineer Mortar absorption (make Engineer Royal so Gunner is enemy)
+	enemy_eng.team = NetworkManager.TEAM_ROYAL
+	var g_hp_before_mortar: int = enemy_gunner.hp
+	var g_vel_before_mortar: Vector3 = enemy_gunner.velocity
+	esm_eng._detonate_mortar({"pos": Vector3(20.0, 0.0, 0.0)}, ctx)
+	var expected_mortar_heal: int = maxi(1, int(roundf(float(EngineerSkills.MORTAR_MAX_DAMAGE) * 0.55)))
+	var mortar_absorb_ok: bool = (
+		enemy_gunner.hp == mini(enemy_gunner.max_hp, g_hp_before_mortar + expected_mortar_heal)
+		and enemy_gunner.velocity == g_vel_before_mortar
+	)
+
+	# Test Commando Troop Trap absorption (make Commando Royal)
+	enemy_cmdo.team = NetworkManager.TEAM_ROYAL
+	enemy_gunner.hp = 50
+	var trap := CommandoSkills.TroopTrapEntity.new()
+	trap.owner_id = enemy_cmdo.entity_id
+	trap.owner_team = enemy_cmdo.team
+	trap.damage = 65
+	arena.add_child(trap)
+	trap.global_position = Vector3(20.0, 0.0, 0.0)
+	trap._explode(ctx["heroes_by_id"] as Dictionary)
+	var expected_trap_heal: int = maxi(1, int(roundf(65.0 * 0.55)))
+	var trap_absorb_ok: bool = (enemy_gunner.hp == mini(enemy_gunner.max_hp, 50 + expected_trap_heal))
+
+	# Test Demolisher Stick Grenade absorption
+	demo.respawn_at(Vector3(20.0, 0.0, 1.8), 0.0)
+	enemy_gunner.hp = 40
+	await get_tree().physics_frame
+	caber.fire_server(f_cmd, ctx)
+	var caber_absorb_ok: bool = (enemy_gunner.hp == mini(enemy_gunner.max_hp, 40 + 61) and eat_events.size() >= 3)
+
+	_assert(
+		mortar_absorb_ok and trap_absorb_ok and caber_absorb_ok,
+		"Phase 13.1g: Gunner 'I Eat Grenades' absorbs Mortar (%s), Troop Trap (%s) & Stick Grenade (%s) with 0 dmg and +55%% heal" % [
+			str(mortar_absorb_ok), str(trap_absorb_ok), str(caber_absorb_ok)
+		]
+	)
+
+	NetworkManager.game_event_received.disconnect(evt_cb)
 	arena.queue_free()
 	await _flush_deferred()
 	await get_tree().process_frame

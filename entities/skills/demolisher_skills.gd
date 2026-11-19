@@ -19,7 +19,7 @@ func _ready() -> void:
 
 
 func _defers_cooldown_until_exit(slot_idx: int) -> bool:
-	return slot_idx == 0 or slot_idx == 2 or slot_idx == 3
+	return slot_idx == 0 or slot_idx == 2
 
 
 func start_carried_shield_exit_cooldown() -> void:
@@ -30,9 +30,6 @@ func start_carried_shield_exit_cooldown() -> void:
 
 func _on_armor_kit_emptied() -> void:
 	_active_armor_kit = null
-	if skill_cooldowns.size() > 3 and skill_max_cooldowns.size() > 3:
-		skill_cooldowns[3] = skill_max_cooldowns[3]
-		skill_activated.emit(3, skill_cooldowns[3])
 
 
 func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bool:
@@ -466,7 +463,7 @@ class ArmorKitEntity extends Node3D:
 			_halo_ring.scale = Vector3(pulse_r, 0.35, pulse_r)
 		if _is_visual_only or not NetworkManager.is_server_authority():
 			return
-		if charges <= 0:
+		if is_queued_for_deletion() or charges <= 0:
 			return
 
 		for hid_key in _pickup_cooldowns.keys():
@@ -532,14 +529,14 @@ func _execute_class_skill(slot_idx: int, _rank: int, cmd: InputCmd, context: Dic
 		return false
 
 	match slot_idx:
-		0: # Escudo Balístico (Em Mãos): equips carried 150 HP frontal shield + STICK_GRENADE (slot 2)
+		0: # Escudo Balístico (Em Mãos): equips carried 550 HP frontal shield + STICK_GRENADE (slot 2)
 			if owner_hero.current_vehicle_id >= 0:
 				return false
 			if owner_hero.status_effects.carried_shield_active:
 				owner_hero.status_effects.deactivate_carried_shield(true)
 				return false
 			owner_hero.force_server_weapon_slot(2, cmd.tick if cmd != null else -1)
-			owner_hero.status_effects.activate_carried_shield(150)
+			owner_hero.status_effects.activate_carried_shield(550)
 			return true
 
 		1: # Haste (Adrenalina): 1.38x move, 1.50x fire rate, 1.60x reload for 6.0s
@@ -554,8 +551,16 @@ func _execute_class_skill(slot_idx: int, _rank: int, cmd: InputCmd, context: Dic
 			return true
 
 		3: # Kit de 5 Coletes: drops ground 5-vest ArmorKitEntity (+70 permanent-until-damaged shield)
-			if _active_armor_kit != null and is_instance_valid(_active_armor_kit) and not _active_armor_kit.is_queued_for_deletion() and _active_armor_kit.charges > 0:
-				return false
+			if _active_armor_kit != null and is_instance_valid(_active_armor_kit) and not _active_armor_kit.is_queued_for_deletion():
+				var old_kit_id: int = _active_armor_kit.kit_uid
+				_active_armor_kit.set_physics_process(false)
+				_active_armor_kit.remove_from_group("armor_kits")
+				_active_armor_kit.queue_free()
+				_active_armor_kit = null
+				NetworkManager.broadcast_game_event("armor_kit_removed", {
+					"kit_id": old_kit_id,
+					"kit_uid": old_kit_id,
+				})
 			var kit := ArmorKitEntity.new()
 			kit.owner_id = owner_hero.entity_id
 			kit.owner_team = owner_hero.team

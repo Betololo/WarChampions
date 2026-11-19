@@ -24,6 +24,7 @@ var heroes_by_id: Dictionary = {}
 var vehicles_by_id: Dictionary = {}
 var bot_brains: Dictionary = {}
 var _prev_interact_state: Dictionary = {}
+var _last_flame_sfx_msec: Dictionary = {}
 var _prev_local_parachuting: bool = false
 var _last_local_level: int = 5
 var _royal_spawn_idx: int = 0
@@ -443,9 +444,11 @@ func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
 	_prev_interact_state.clear()
+	_last_flame_sfx_msec.clear()
 	StatusEffectContainer.clear_sixth_sense_cache()
 	StatusEffectsVFX.clear_pools(projectiles_root)
 	StatusEffectsVFX.clear_all_build_previews()
+	StatusEffectsVFX.clear_all_flame_streams()
 	if hud != null:
 		hud.set_local_hero(null)
 		hud.clear_killfeed()
@@ -873,6 +876,8 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 		"shot_vfx":
 			var shooter_id: int = int(payload.get("shooter_id", -1))
 			var w_kind: int = int(payload.get("weapon_kind", 0))
+			var w_arch: int = int(payload.get("archetype", 0))
+			var is_continuous_flame: bool = (w_kind == WeaponBase.WeaponKind.FLAMETHROWER and w_arch != 2)
 			var shooter: HeroCharacter = heroes_by_id.get(shooter_id, null)
 			var origin_fallback: Vector3 = payload.get("origin", Vector3.ZERO)
 			var is_vehicle_shot: bool = bool(payload.get("vehicle_shot", false))
@@ -890,24 +895,40 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				var dist_m: float = 0.0
 				if not is_local_shooter and local_hero != null:
 					dist_m = local_hero.global_position.distance_to(muzzle_pos)
-				SoundSynthesizer.play_weapon_fire(w_kind, dist_m, is_local_shooter, muzzle_pos)
+				var play_sfx_now: bool = true
+				if is_continuous_flame:
+					var now_ms: int = Time.get_ticks_msec()
+					var prev_ms: int = int(_last_flame_sfx_msec.get(shooter_id, -10000))
+					if now_ms - prev_ms < 200:
+						play_sfx_now = false
+					else:
+						_last_flame_sfx_msec[shooter_id] = now_ms
+				if play_sfx_now:
+					SoundSynthesizer.play_weapon_fire(w_kind, dist_m, is_local_shooter, muzzle_pos)
 				if shooter != null and not is_vehicle_shot:
 					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot, hand)
-				StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
+				if not is_continuous_flame:
+					StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
 
-			var arcs: Array = payload.get("arcs", [])
-			if not arcs.is_empty():
-				for arc_var in arcs:
-					if arc_var is PackedVector3Array or arc_var is Array:
-						var arc_pts: PackedVector3Array = arc_var if arc_var is PackedVector3Array else PackedVector3Array(arc_var)
-						if arc_pts.size() >= 2 and muzzle_pos.distance_to(arc_pts[arc_pts.size() - 1]) > 1.5 and muzzle_pos.distance_to(arc_pts[0]) < 3.0:
-							arc_pts = arc_pts.duplicate()
-							arc_pts[0] = muzzle_pos
-						StatusEffectsVFX.spawn_curved_tracer(projectiles_root, arc_pts, w_kind)
+			if is_continuous_flame and projectiles_root != null:
+				var hit_arr: Array = payload.get("hits", [])
+				var end_pt: Vector3 = hit_arr[0] as Vector3 if (not hit_arr.is_empty() and hit_arr[0] is Vector3) else (muzzle_pos + aim_dir * 21.0)
+				var stream_len: float = clampf(muzzle_pos.distance_to(end_pt), 0.5, 22.0)
+				StatusEffectsVFX.update_continuous_flame_stream(projectiles_root, shooter_id, muzzle_pos, aim_dir, stream_len, w_arch == 1)
 			else:
-				for hp_var in payload.get("hits", []):
-					if hp_var is Vector3:
-						StatusEffectsVFX.spawn_bullet_tracer(projectiles_root, muzzle_pos, hp_var as Vector3, w_kind)
+				var arcs: Array = payload.get("arcs", [])
+				if not arcs.is_empty():
+					for arc_var in arcs:
+						if arc_var is PackedVector3Array or arc_var is Array:
+							var arc_pts: PackedVector3Array = arc_var if arc_var is PackedVector3Array else PackedVector3Array(arc_var)
+							if arc_pts.size() >= 2 and muzzle_pos.distance_to(arc_pts[arc_pts.size() - 1]) > 1.5 and muzzle_pos.distance_to(arc_pts[0]) < 3.0:
+								arc_pts = arc_pts.duplicate()
+								arc_pts[0] = muzzle_pos
+							StatusEffectsVFX.spawn_curved_tracer(projectiles_root, arc_pts, w_kind)
+				else:
+					for hp_var in payload.get("hits", []):
+						if hp_var is Vector3:
+							StatusEffectsVFX.spawn_bullet_tracer(projectiles_root, muzzle_pos, hp_var as Vector3, w_kind)
 		"proj_vfx":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
 				var vp := ProjectileEntity.new()
@@ -1006,11 +1027,12 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				for ch in projectiles_root.get_children():
 					if ch is DemolisherSkills.ArmorKitEntity and (ch as DemolisherSkills.ArmorKitEntity).kit_uid == upd_uid:
 						(ch as DemolisherSkills.ArmorKitEntity).set_charges_visual(upd_charges)
-		"armor_kit_empty":
+		"armor_kit_empty", "armor_kit_removed":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
-				var empty_uid: int = int(payload.get("kit_uid", 0))
+				var empty_uid: int = int(payload.get("kit_id", payload.get("kit_uid", 0)))
 				for ch in projectiles_root.get_children():
 					if ch is DemolisherSkills.ArmorKitEntity and (ch as DemolisherSkills.ArmorKitEntity).kit_uid == empty_uid:
+						ch.remove_from_group("armor_kits")
 						ch.queue_free()
 		"armor_kit_vfx":
 			var kit_pos: Vector3 = payload.get("pos", Vector3.ZERO)

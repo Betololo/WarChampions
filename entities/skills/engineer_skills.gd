@@ -581,6 +581,15 @@ func _detonate_mortar(strike: Dictionary, context: Dictionary) -> void:
 		if dist <= MORTAR_RADIUS:
 			var falloff: float = clampf(1.0 - maxf(0.0, dist / MORTAR_RADIUS - 0.35) / 0.65 * 0.55, 0.45, 1.0)
 			var dmg: int = maxi(1, int(roundf(float(MORTAR_MAX_DAMAGE) * falloff)))
+			if h.team != attacker_team and h.status_effects != null and h.status_effects.can_eat_grenades():
+				var heal_amt: int = maxi(1, int(roundf(float(dmg) * 0.55)))
+				h.heal_server(heal_amt)
+				NetworkManager.broadcast_game_event("eat_grenades", {
+					"hero_id": h.entity_id,
+					"pos": hpos,
+					"heal": heal_amt,
+				})
+				continue
 			h.apply_damage_server(dmg, attacker_id, true)
 			var push_dir: Vector3 = (hpos - strike_pos)
 			push_dir.y = 0.0

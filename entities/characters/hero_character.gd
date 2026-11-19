@@ -125,8 +125,8 @@ var _cached_vehicle_ref: VehicleBase = null
 var _cached_vehicle_id: int = -1
 var _cached_class_menu: CanvasLayer = null
 var _cached_hud_ctrl: Node = null
-var _ik_lod_accum: float = 0.0
-var _ik_lod_parity: int = 0
+var _lod_simplify_arm_ik: bool = false
+var _is_defeat_pose_done: bool = false
 var _overhead_buff_row: Node3D = null
 var _overhead_buff_slots: Array[Sprite3D] = []
 var _speed_trail_timer: float = 0.0
@@ -1156,10 +1156,11 @@ func _process(delta: float) -> void:
 func _animate_character(delta: float) -> void:
 	if _hips_pivot == null:
 		return
+	var anim_dt: float = minf(delta, 0.05)
 	_step_mortar_anim_state(delta)
 	_rebuild_held_weapon_mesh()
 	if _is_tnt_rope_held():
-		_tnt_spin_angle = wrapf(_tnt_spin_angle + delta * 5.5, 0.0, TAU)
+		_tnt_spin_angle = wrapf(_tnt_spin_angle + anim_dt * 5.5, 0.0, TAU)
 	else:
 		_tnt_spin_angle = 0.0
 	if _parachute_rig != null:
@@ -1173,37 +1174,29 @@ func _animate_character(delta: float) -> void:
 	_cycle_anim_timer = maxf(0.0, _cycle_anim_timer - delta)
 	_skill_anim_timer = maxf(0.0, _skill_anim_timer - delta)
 
+	_lod_simplify_arm_ik = false
 	if not is_local_player and is_inside_tree() and get_viewport() != null:
 		var lod_cam: Camera3D = get_viewport().get_camera_3d()
 		if lod_cam != null:
 			var hero_wpos: Vector3 = visual_root.global_position if visual_root != null else global_position
 			var cam_dist_sq: float = lod_cam.global_position.distance_squared_to(hero_wpos)
-			if cam_dist_sq > 9025.0 or (cam_dist_sq > 144.0 and lod_cam.is_position_behind(hero_wpos)):
-				_ik_lod_accum += delta
-				return
-			if cam_dist_sq > 2025.0:
-				_ik_lod_accum += delta
-				_ik_lod_parity = (_ik_lod_parity + 1) & 1
-				if _ik_lod_parity == 1:
-					return
-				delta = _ik_lod_accum
-				_ik_lod_accum = 0.0
-			else:
-				_ik_lod_accum = 0.0
+			_lod_simplify_arm_ik = (cam_dist_sq > 6400.0)
 
 	if not is_defeated:
 		_defeat_elapsed = 0.0
+		_is_defeat_pose_done = false
 	else:
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
 		_defeat_elapsed += delta
 		var slump_t: float = clampf((_defeat_elapsed - 0.45) / 0.40, 0.0, 1.0)
 		var kneel_t: float = clampf(_defeat_elapsed / 0.45, 0.0, 1.0)
+		_is_defeat_pose_done = (slump_t >= 1.0)
 
 		# Multi-stage collapse defeat: drop to knees (0..0.45s) then slump flat onto ground (0.45s+)
 		_hips_pivot.position.y = lerpf(0.35, 0.12, slump_t)
 		var base_rot_x: float = lerpf(lerpf(0.0, -0.45, kneel_t), -1.15, slump_t)
-		_hips_pivot.rotation.x = base_rot_x if not defeat_explosive or _defeat_elapsed > 0.45 else _hips_pivot.rotation.x + 8.0 * delta
+		_hips_pivot.rotation.x = base_rot_x if not defeat_explosive or _defeat_elapsed > 0.45 else _hips_pivot.rotation.x + 8.0 * anim_dt
 		_torso_pivot.rotation.x = lerpf(0.0, -0.22, slump_t)
 		_head_pivot.rotation.x = lerpf(0.0, -0.42, slump_t)
 
@@ -1303,7 +1296,7 @@ func _animate_character(delta: float) -> void:
 	if not is_local_player and not is_bot and not NetworkManager.is_server_authority():
 		if not is_on_floor() and (active_flags & NetSerializer.SNAP_GROUNDED) == 0 and not is_in_water and not is_parachuting:
 			if velocity.y < -0.5:
-				_airborne_fall_time += delta
+				_airborne_fall_time += anim_dt
 			else:
 				_airborne_fall_time = 0.0
 		elif is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0 or is_in_water or is_parachuting:
@@ -1323,25 +1316,27 @@ func _animate_character(delta: float) -> void:
 		var flutter: float = sin(Time.get_ticks_msec() * 0.001 * flutter_freq) * flutter_amp
 
 		# Arched belly-to-earth skydiving freefall pose
-		_hips_pivot.position.y = lerpf(_hips_pivot.position.y, 0.68, 12.0 * delta)
-		_hips_pivot.rotation.x = lerpf(_hips_pivot.rotation.x, -0.62, 10.0 * delta)
-		_torso_pivot.rotation.x = lerpf(_torso_pivot.rotation.x, -0.25 + flutter, 10.0 * delta)
-		_torso_pivot.rotation.y = lerpf(_torso_pivot.rotation.y, 0.0, 10.0 * delta)
-		_head_pivot.rotation.x = lerpf(_head_pivot.rotation.x, 0.55, 10.0 * delta)
+		var fall_w12: float = minf(1.0, 12.0 * anim_dt)
+		var fall_w10: float = minf(1.0, 10.0 * anim_dt)
+		_hips_pivot.position.y = lerpf(_hips_pivot.position.y, 0.68, fall_w12)
+		_hips_pivot.rotation.x = lerpf(_hips_pivot.rotation.x, -0.62, fall_w10)
+		_torso_pivot.rotation.x = lerpf(_torso_pivot.rotation.x, -0.25 + flutter, fall_w10)
+		_torso_pivot.rotation.y = lerpf(_torso_pivot.rotation.y, 0.0, fall_w10)
+		_head_pivot.rotation.x = lerpf(_head_pivot.rotation.x, 0.55, fall_w10)
 
 		# Wings: arms spread out wide to the sides
-		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(0.20, 0.0, 1.35 + flutter), 12.0 * delta)
-		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(0.20, 0.0, -1.35 - flutter), 12.0 * delta)
-		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.35, 0.0, 0.25), 12.0 * delta)
-		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.35, 0.0, -0.25), 12.0 * delta)
+		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(0.20, 0.0, 1.35 + flutter), fall_w12)
+		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(0.20, 0.0, -1.35 - flutter), fall_w12)
+		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.35, 0.0, 0.25), fall_w12)
+		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.35, 0.0, -0.25), fall_w12)
 
 		# Legs bent backward
-		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, -0.55 + flutter * 0.5, 10.0 * delta)
-		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.55 - flutter * 0.5, 10.0 * delta)
+		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, -0.55 + flutter * 0.5, fall_w10)
+		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.55 - flutter * 0.5, fall_w10)
 		if _calf_l_pivot != null:
-			_calf_l_pivot.rotation.x = lerpf(_calf_l_pivot.rotation.x, -0.70, 10.0 * delta)
+			_calf_l_pivot.rotation.x = lerpf(_calf_l_pivot.rotation.x, -0.70, fall_w10)
 		if _calf_r_pivot != null:
-			_calf_r_pivot.rotation.x = lerpf(_calf_r_pivot.rotation.x, -0.70, 10.0 * delta)
+			_calf_r_pivot.rotation.x = lerpf(_calf_r_pivot.rotation.x, -0.70, fall_w10)
 		return
 
 	_hips_pivot.rotation.x = 0.0
@@ -1352,37 +1347,38 @@ func _animate_character(delta: float) -> void:
 
 	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
 	if horiz_speed > 0.4 and (is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0):
-		_walk_phase += horiz_speed * delta * 2.1
+		_walk_phase += horiz_speed * anim_dt * 2.1
 	else:
-		_walk_phase = lerpf(_walk_phase, 0.0, 8.0 * delta)
+		_walk_phase = lerpf(_walk_phase, 0.0, minf(1.0, 8.0 * anim_dt))
 
 	var stride: float = sin(_walk_phase) * clampf(horiz_speed / 7.0, 0.0, 1.0)
 	var bob: float = absf(sin(_walk_phase * 2.0)) * 0.012 * clampf(horiz_speed / 7.0, 0.0, 1.0)
 
 	var target_hips_y: float = 0.52 if is_crouching else (0.76 + bob)
-	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, 14.0 * delta)
+	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, minf(1.0, 14.0 * anim_dt))
 
 	if is_parachuting:
 		_build_anim_time = 0.0
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
-		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, 0.35, 10.0 * delta)
-		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.25, 10.0 * delta)
+		var para_w10: float = minf(1.0, 10.0 * anim_dt)
+		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, 0.35, para_w10)
+		_leg_r_pivot.rotation.x = lerpf(_leg_r_pivot.rotation.x, -0.25, para_w10)
 		if _calf_l_pivot != null:
 			_calf_l_pivot.rotation.x = 0.0
 		if _calf_r_pivot != null:
 			_calf_r_pivot.rotation.x = 0.0
-		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(2.65, 0.0, 0.25), 10.0 * delta)
-		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(2.65, 0.0, -0.25), 10.0 * delta)
-		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
-		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), 10.0 * delta)
+		_arm_l_pivot.rotation = _arm_l_pivot.rotation.lerp(Vector3(2.65, 0.0, 0.25), para_w10)
+		_arm_r_pivot.rotation = _arm_r_pivot.rotation.lerp(Vector3(2.65, 0.0, -0.25), para_w10)
+		_forearm_l_pivot.rotation = _forearm_l_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), para_w10)
+		_forearm_r_pivot.rotation = _forearm_r_pivot.rotation.lerp(Vector3(0.25, 0.0, 0.0), para_w10)
 		_torso_pivot.rotation.x = 0.12
 		_torso_pivot.rotation.y = 0.0
 	elif is_emoting:
 		_build_anim_time = 0.0
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
-		emote_timer += delta
+		emote_timer += anim_dt
 		_leg_l_pivot.rotation.x = 0.0
 		_leg_r_pivot.rotation.x = 0.0
 		if _calf_l_pivot != null:
@@ -1395,10 +1391,10 @@ func _animate_character(delta: float) -> void:
 		_forearm_r_pivot.rotation = Vector3(0.8, 0.0, 0.0)
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
 	elif is_engineer_building():
-		_pose_build_animation(delta)
+		_pose_build_animation(anim_dt)
 	elif is_engineer_mortar_deployed():
 		_build_anim_time = 0.0
-		_pose_mortar_animation(delta)
+		_pose_mortar_animation(anim_dt)
 	else:
 		_build_anim_time = 0.0
 		var is_grounded_anim: bool = is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0
@@ -1915,14 +1911,14 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 				var throw_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				_held_weapon_root.position = Vector3(0.25, 0.34 + throw_phase * 0.24, -0.20 - throw_phase * 0.26)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.5 - throw_phase * 0.9, 0.20, 0.0)
-			-99: # Cowboy overhead lasso TNT Rope spinning beside right shoulder/head
-				_held_weapon_root.position = Vector3(0.44, 0.72, -0.04)
-				_held_weapon_root.rotation = Vector3(0.12 * cos(_tnt_spin_angle), 0.0, -0.22 + 0.12 * sin(_tnt_spin_angle))
+			-99: # Cowboy lasso TNT Rope extended laterally right, spinning CCW in vertical Y-Z plane
+				_held_weapon_root.position = Vector3(0.82, 0.56, -0.02)
+				_held_weapon_root.rotation = Vector3.ZERO
 				if _tnt_rope_bundle != null and is_instance_valid(_tnt_rope_bundle):
-					_tnt_rope_bundle.rotation = Vector3(0.0, _tnt_spin_angle, 0.0)
+					_tnt_rope_bundle.rotation = Vector3(_tnt_spin_angle, 0.0, 0.0)
 				right_target = _held_weapon_root.transform * Vector3.ZERO
 				custom_right_target = true
-				right_pole = Vector3(0.85, 0.25, 0.35)
+				right_pole = Vector3(0.65, -0.35, 0.35)
 				left_target = Vector3(-0.26, 0.18, -0.14)
 				custom_left_target = true
 			_: # SMG, Shotgun, Sniper (BFH iconic across-chest 2-handed rifle carry, tightening on fire!)
@@ -2016,6 +2012,11 @@ func _pose_arm_ik(arm_pivot: Node3D, forearm_pivot: Node3D, target_torso: Vector
 		return
 	var s_pos: Vector3 = arm_pivot.position
 	var diff: Vector3 = target_torso - s_pos
+	if _lod_simplify_arm_ik:
+		var simple_dir: Vector3 = diff.normalized() if diff.length_squared() > 0.00001 else Vector3.DOWN
+		arm_pivot.basis = _aim_segment_basis(simple_dir, pole_hint)
+		forearm_pivot.basis = Basis.IDENTITY
+		return
 	var max_reach: float = _upper_arm_len + _forearm_len - 0.006
 	var dist: float = clampf(diff.length(), 0.06, max_reach)
 	var dir_n: Vector3 = diff.normalized() if diff.length_squared() > 0.00001 else Vector3.DOWN
@@ -2098,7 +2099,17 @@ func _physics_process(delta: float) -> void:
 						trigger_weapon_fire_visual(cw.weapon_kind, true)
 						SoundSynthesizer.play_weapon_fire(cw.weapon_kind, 0.0)
 						var aim_dir: Vector3 = -(Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
-						StatusEffectsVFX.spawn_muzzle_flash(get_parent(), get_muzzle_world_position(), aim_dir, cw.weapon_kind)
+						if cw.weapon_kind == WeaponBase.WeaponKind.FLAMETHROWER and cw.archetype != 2:
+							StatusEffectsVFX.update_continuous_flame_stream(
+								get_parent(),
+								entity_id,
+								get_muzzle_world_position(),
+								aim_dir,
+								cw.max_range_m,
+								cw.archetype == 1
+							)
+						else:
+							StatusEffectsVFX.spawn_muzzle_flash(get_parent(), get_muzzle_world_position(), aim_dir, cw.weapon_kind)
 		NetworkManager.send_input_to_server(cmd)
 	elif NetworkManager.is_active_host_authority():
 		simulate_movement(latest_server_input, delta)
@@ -2699,6 +2710,7 @@ func reconcile_with_server(state: Dictionary) -> void:
 		collision_layer = 0
 	elif was_defeated and not is_defeated:
 		collision_layer = 2
+		_reset_stand_rig_pose()
 		reset_weapons_full()
 	stats_changed.emit()
 
@@ -2787,6 +2799,7 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 	var def: bool = (flags & NetSerializer.SNAP_DEFEATED) != 0 or hp <= 0
 	is_defeated = def
 	if was_def and not def:
+		_reset_stand_rig_pose()
 		set_caber_spent_visual(false)
 	collision_layer = 0 if def else 2
 	var rot := Quaternion(Vector3.UP, yaw)
@@ -2898,6 +2911,25 @@ func reset_weapons_full() -> void:
 		})
 
 
+func _reset_stand_rig_pose() -> void:
+	_defeat_elapsed = 0.0
+	_airborne_fall_time = 0.0
+	_is_defeat_pose_done = false
+	if _hips_pivot != null:
+		_hips_pivot.position = Vector3(0.0, 0.76, 0.0)
+		_hips_pivot.rotation = Vector3.ZERO
+	if _torso_pivot != null:
+		_torso_pivot.rotation = Vector3.ZERO
+	if _leg_l_pivot != null:
+		_leg_l_pivot.rotation = Vector3.ZERO
+	if _leg_r_pivot != null:
+		_leg_r_pivot.rotation = Vector3.ZERO
+	if _calf_l_pivot != null:
+		_calf_l_pivot.rotation = Vector3.ZERO
+	if _calf_r_pivot != null:
+		_calf_r_pivot.rotation = Vector3.ZERO
+
+
 func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	global_position = spawn_pos
 	velocity = Vector3.ZERO
@@ -2913,8 +2945,7 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	collision_layer = 2
 	reset_weapons_full()
 	_pending_forced_slot = -1
-	_defeat_elapsed = 0.0
-	_airborne_fall_time = 0.0
+	_reset_stand_rig_pose()
 	_knockback_stun_timer = 0.0
 	is_parachuting = false
 	is_crouching = false

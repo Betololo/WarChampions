@@ -440,13 +440,14 @@ func _physics_process(delta: float) -> void:
 	age_sec += delta
 	var is_visual_only: bool = bool(get_meta("visual_only", false)) or not NetworkManager.is_server_authority()
 
-	lifetime -= delta
-	if lifetime <= 0.0:
-		if not is_visual_only:
-			_detonate()
-		else:
-			queue_free()
-		return
+	if kind != ProjectileKind.TRAPPER_STICKY:
+		lifetime -= delta
+		if lifetime <= 0.0:
+			if not is_visual_only:
+				_detonate()
+			else:
+				queue_free()
+			return
 
 	if _is_stuck:
 		if _stuck_target != null and is_instance_valid(_stuck_target) and _stuck_target.is_inside_tree():

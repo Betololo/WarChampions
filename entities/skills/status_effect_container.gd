@@ -72,8 +72,8 @@ var haste_reload_mult: float = 1.0
 
 var permanent_vest_shield: int = 0
 var carried_shield_active: bool = false
-var carried_shield_hp: int = 150
-var carried_shield_max_hp: int = 150
+var carried_shield_hp: int = 550
+var carried_shield_max_hp: int = 550
 var carried_shield_swing_timer: float = 0.0
 
 var vehicle_triple_dmg_timer: float = 0.0
@@ -748,7 +748,7 @@ func apply_vest_shield(amount: int = 70) -> void:
 	_sync_flags()
 
 
-func activate_carried_shield(hp_amt: int = 150) -> void:
+func activate_carried_shield(hp_amt: int = 550) -> void:
 	carried_shield_max_hp = maxi(1, hp_amt)
 	carried_shield_hp = carried_shield_max_hp
 	carried_shield_active = true

@@ -74,6 +74,15 @@ class TroopTrapEntity extends Node3D:
 			if h != null and not h.is_defeated and h.team != owner_team:
 				var d: float = h.global_position.distance_to(global_position)
 				if d <= 7.5:
+					if h.status_effects != null and h.status_effects.can_eat_grenades():
+						var heal_amt: int = maxi(1, int(roundf(float(damage) * 0.55)))
+						h.heal_server(heal_amt)
+						NetworkManager.broadcast_game_event("eat_grenades", {
+							"hero_id": h.entity_id,
+							"pos": h.global_position,
+							"heal": heal_amt,
+						})
+						continue
 					h.apply_damage_server(damage, owner_id, true)
 					h.apply_knockback((h.global_position - global_position + Vector3(0.0, 0.8, 0.0)).normalized() * 20.0)
 					NetworkManager.broadcast_game_event("hit_vfx", {

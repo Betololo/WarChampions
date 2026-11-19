@@ -1935,7 +1935,7 @@ static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
 		lasso_loop.rings = 14
 		lasso_loop.ring_segments = 8
 		_prim_cache[torus_key] = lasso_loop
-	var hand_loop := add_part(bundle, lasso_loop, Vector3(0.0, -0.02, -0.04), Vector3(0.18, 0.0, 0.0), rope_mat, dummy, "LassoLoop")
+	var hand_loop := add_part(bundle, lasso_loop, Vector3(0.0, 0.0, -0.05), Vector3(0.0, 0.0, PI * 0.5), rope_mat, dummy, "LassoLoop")
 	hand_loop.visibility_range_end = 220.0
 
 	# 4-stick dynamite bundle mounted at the OUTER TIP of the rope (z = -0.68)

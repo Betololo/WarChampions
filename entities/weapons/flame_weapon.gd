@@ -2,13 +2,26 @@ class_name FlameWeapon
 extends WeaponBase
 
 ## Demolisher Slot 0 primary weapons:
-## 0: Flamethrower (21.0m cone, 10 ammo/s, 10 dmg/tick + 3.0s Afterburn)
-## 1: Fire Starter (21.0m cone + FirePatchEntity ground hazards, 5 ammo/0.25s = 20 ammo/s, 10 dmg/shot + 3.0s Afterburn)
+## 0: Flamethrower (21.0m volumetric cone, 10 ammo/s, 15 dmg/tick + 3.0s Afterburn)
+## 1: Fire Starter (21.0m volumetric cone + FirePatchEntity ground hazards, 2 ammo/0.10s = 20 ammo/s, 15 dmg/tick + 3.0s Afterburn)
 ## 2: Fire Breath (0.50s semi/auto, 10 ammo/shot, 45 m/s FIREBALL projectile, ~30.6m max reach)
 
 const AFTERBURN_DPS: float = 10.0
 const AFTERBURN_DURATION: float = 3.0
 const FLAME_CONE_MIN_DOT: float = 0.65
+
+var _fire_patch_cooldown: float = 0.0
+
+
+func step_timers(delta: float, cmd: InputCmd) -> void:
+	super.step_timers(delta, cmd)
+	if _fire_patch_cooldown > 0.0:
+		_fire_patch_cooldown = maxf(0.0, _fire_patch_cooldown - delta)
+
+
+func reset_weapon() -> void:
+	super.reset_weapon()
+	_fire_patch_cooldown = 0.0
 
 
 func fire_server(cmd: InputCmd, context: Dictionary) -> void:
@@ -76,7 +89,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	var dmg_amt: int = maxi(1, int(roundf(damage_max)))
 	var xp_cb: Callable = context.get("on_damage_dealt", Callable())
 
-	# 1. Enemy Heroes in flame cone (respecting water/fire immunity, close-range cylinder & Layer-1 LOS)
+	# 1. Enemy Heroes in volumetric flame cone/cylinder (respecting water/fire immunity & multi-height Layer-1 LOS)
 	for hid_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
 		if h == null or not is_instance_valid(h) or h.is_defeated:
@@ -89,33 +102,10 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		if is_immune:
 			continue
 
-		var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
-		var h_center: Vector3 = h_pos + Vector3(0.0, 1.05, 0.0)
-		var to_h: Vector3 = h_center - cone_origin
-		var dist: float = to_h.length()
-		if dist > max_range_m + h.capsule_radius:
+		var hero_hit: Dictionary = _find_hero_flame_hit_point(h, cone_origin, cam_fwd, space_state, excludes_base)
+		if not bool(hero_hit.get("hit", false)):
 			continue
-
-		var in_close_zone: bool = false
-		if dist <= 1.35 and to_h.dot(cam_fwd) >= -0.15:
-			in_close_zone = true
-		elif dist <= 3.0:
-			var proj: float = to_h.dot(cam_fwd)
-			if proj >= -0.15:
-				var ray_pt: Vector3 = cone_origin + cam_fwd * maxf(0.0, proj)
-				var horiz_dist: float = Vector2(h_center.x - ray_pt.x, h_center.z - ray_pt.z).length()
-				if horiz_dist <= 1.25 and absf(h_center.y - ray_pt.y) <= 1.8:
-					in_close_zone = true
-
-		var eff_dir: Vector3 = cam_fwd if dist <= 3.0 else dir
-		if not in_close_zone and dist > 0.55 and (to_h / dist).dot(eff_dir) < FLAME_CONE_MIN_DOT:
-			continue
-
-		if space_state != null and dist > 0.25:
-			var occ_q := PhysicsRayQueryParameters3D.create(cone_origin, h_center, 1, excludes_base)
-			var occ_hit: Dictionary = space_state.intersect_ray(occ_q)
-			if not occ_hit.is_empty():
-				continue
+		var h_center: Vector3 = hero_hit["pos"] as Vector3
 
 		if h.status_effects != null and h.status_effects.has_method("is_frontal_carried_shield_block") and h.status_effects.is_frontal_carried_shield_block(cone_origin):
 			h.status_effects.damage_carried_shield(dmg_amt)
@@ -194,8 +184,9 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		if not wall_hit.is_empty():
 			stream_end = wall_hit["position"] as Vector3
 
-	if arch == 1 and space_state != null:
-		_try_spawn_or_refresh_fire_patch(origin, dir, space_state, excludes_base, context)
+	if arch == 1 and space_state != null and _fire_patch_cooldown <= 0.0:
+		if _try_spawn_or_refresh_fire_patch(origin, dir, space_state, excludes_base, context):
+			_fire_patch_cooldown = 0.24
 
 	fired.emit(weapon_kind, origin, stream_end)
 	NetworkManager.broadcast_game_event("shot_vfx", {
@@ -206,6 +197,38 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 		"dir": dir,
 		"hits": [stream_end],
 	})
+
+
+func _find_hero_flame_hit_point(
+	h: HeroCharacter,
+	cone_origin: Vector3,
+	cam_fwd: Vector3,
+	space_state: PhysicsDirectSpaceState3D,
+	excludes_base: Array[RID]
+) -> Dictionary:
+	var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
+	var y_offsets: PackedFloat32Array = PackedFloat32Array([0.45, 0.85, 1.10]) if h.is_crouching else PackedFloat32Array([0.45, 1.05, 1.55])
+	for y_off in y_offsets:
+		var pt: Vector3 = h_pos + Vector3(0.0, y_off, 0.0)
+		var to_pt: Vector3 = pt - cone_origin
+		var proj: float = to_pt.dot(cam_fwd)
+		if proj < -0.35 or proj > max_range_m + h.capsule_radius:
+			continue
+		var ray_pt: Vector3 = cone_origin + cam_fwd * clampf(proj, 0.0, max_range_m)
+		var horiz_dist: float = Vector2(pt.x - ray_pt.x, pt.z - ray_pt.z).length()
+		var perp_dist: float = pt.distance_to(ray_pt)
+		var in_close_cyl: bool = (proj <= 3.8 and horiz_dist <= 1.5 + h.capsule_radius * 0.5 and absf(pt.y - ray_pt.y) <= 1.9)
+		var cone_t: float = clampf(maxf(0.0, proj) / maxf(max_range_m, 0.01), 0.0, 1.0)
+		var cone_r: float = lerpf(0.9, 2.4, cone_t) + h.capsule_radius * 0.5
+		var in_cone: bool = (proj >= 0.0 and perp_dist <= cone_r)
+		if not in_close_cyl and not in_cone:
+			continue
+		if space_state != null and cone_origin.distance_to(pt) > 0.25:
+			var occ_q := PhysicsRayQueryParameters3D.create(cone_origin, pt, 1, excludes_base)
+			if not space_state.intersect_ray(occ_q).is_empty():
+				continue
+		return {"hit": true, "pos": pt}
+	return {"hit": false, "pos": Vector3.ZERO}
 
 
 func _is_hostile_vehicle(vb: VehicleBase, heroes_by_id: Dictionary) -> bool:
@@ -354,7 +377,7 @@ func _try_spawn_or_refresh_fire_patch(
 	space_state: PhysicsDirectSpaceState3D,
 	excludes: Array[RID],
 	context: Dictionary
-) -> void:
+) -> bool:
 	var aim_end: Vector3 = origin + dir * max_range_m
 	var patch_pos: Vector3 = Vector3.ZERO
 	var found_surface: bool = false
@@ -362,7 +385,7 @@ func _try_spawn_or_refresh_fire_patch(
 	var aim_q := PhysicsRayQueryParameters3D.create(origin, aim_end, 1, excludes)
 	var aim_hit: Dictionary = space_state.intersect_ray(aim_q)
 	if aim_hit.is_empty():
-		return
+		return false
 
 	var hit_n: Vector3 = aim_hit.get("normal", Vector3.UP)
 	var hit_p: Vector3 = aim_hit["position"] as Vector3
@@ -381,14 +404,14 @@ func _try_spawn_or_refresh_fire_patch(
 				found_surface = true
 
 	if not found_surface:
-		return
+		return false
 	# Non-water surface check (water surface is HeroCharacter.WATER_LEVEL = 0.0; submerged terrain is below -0.25)
 	if patch_pos.y < HeroCharacter.WATER_LEVEL - 0.25:
-		return
+		return false
 
 	var patch_root: Node = context.get("projectiles_root", owner_hero.get_parent()) as Node
 	if patch_root == null:
-		return
+		return false
 
 	# Refresh existing friendly patch nearby instead of stacking overlapping nodes
 	var existing_patches: Array[Node] = []
@@ -414,7 +437,7 @@ func _try_spawn_or_refresh_fire_patch(
 				"owner_id": owner_hero.entity_id,
 				"radius": fp_existing.radius,
 			})
-			return
+			return true
 
 	var fp := DemolisherSkills.FirePatchEntity.new()
 	fp.owner_id = owner_hero.entity_id
@@ -436,3 +459,4 @@ func _try_spawn_or_refresh_fire_patch(
 		"owner_id": owner_hero.entity_id,
 		"radius": fp.radius,
 	})
+	return true

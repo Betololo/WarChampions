@@ -225,15 +225,15 @@ func _load_weapon_stats() -> void:
 			match f_arch:
 				1:
 					weapon_name = "Fire Starter"
-					base_damage_max = 10.0
-					base_damage_min = 10.0
+					base_damage_max = 15.0
+					base_damage_min = 15.0
 					falloff_start_m = 21.0
 					falloff_end_m = 21.0
 					max_range_m = 21.0
-					base_fire_interval = 0.25
+					base_fire_interval = 0.10
 					reload_duration = 2.2
 					is_automatic = true
-					ammo_per_shot = 5
+					ammo_per_shot = 2
 				2:
 					weapon_name = "Fire Breath"
 					base_damage_max = 40.0
@@ -250,8 +250,8 @@ func _load_weapon_stats() -> void:
 					bullet_speed_mps = 45.0
 				_:
 					weapon_name = "Flamethrower"
-					base_damage_max = 10.0
-					base_damage_min = 10.0
+					base_damage_max = 15.0
+					base_damage_min = 15.0
 					falloff_start_m = 21.0
 					falloff_end_m = 21.0
 					max_range_m = 21.0

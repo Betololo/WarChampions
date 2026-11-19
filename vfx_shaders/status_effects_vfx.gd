@@ -36,6 +36,7 @@ static var _shared_mats: Dictionary = {}
 static var _shared_burst_mats: Dictionary = {}
 static var _pool_managers: Dictionary = {}
 static var _active_build_previews: Dictionary = {}
+static var _active_flame_streams: Dictionary = {}
 
 
 class VfxPoolEntry extends RefCounted:
@@ -248,6 +249,81 @@ class MortarShellArcVFX extends Node3D:
 			queue_free()
 
 
+class FlameStreamVFX extends Node3D:
+	const TONGUE_COUNT: int = 12
+	var hero_id: int = -1
+	var duration: float = 0.24
+	var elapsed: float = 0.0
+	var stream_len: float = 18.0
+	var is_fire_starter: bool = false
+	var _phase: float = 0.0
+	var _tongues: Array[MeshInstance3D] = []
+	var _base_angles: PackedFloat32Array = PackedFloat32Array()
+
+	func build_stream(p_len: float, p_fire_starter: bool) -> void:
+		stream_len = clampf(p_len, 0.5, 22.0)
+		is_fire_starter = p_fire_starter
+		if _tongues.is_empty():
+			StatusEffectsVFX.warm_shared_meshes()
+			var jet_mesh: CylinderMesh = StatusEffectsVFX._get_shared_flame_jet()
+			var col_core := Color(0.55, 0.88, 1.0, 0.72) if is_fire_starter else Color(1.0, 0.96, 0.68, 0.72)
+			var col_mid := Color(1.0, 0.64, 0.14, 0.62)
+			var col_tip := Color(0.96, 0.26, 0.05, 0.46)
+			for i in range(TONGUE_COUNT):
+				var t: float = float(i) / float(TONGUE_COUNT - 1)
+				var col: Color = col_core.lerp(col_mid, t * 2.0) if t < 0.45 else col_mid.lerp(col_tip, (t - 0.45) / 0.55)
+				var mi := MeshInstance3D.new()
+				mi.mesh = jet_mesh
+				mi.material_override = StatusEffectsVFX._get_shared_mat(col, true)
+				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				add_child(mi)
+				_tongues.append(mi)
+				_base_angles.append(float(i) * 2.39996)
+		_refresh_tongues()
+
+	func refresh_stream(p_len: float, p_fire_starter: bool) -> void:
+		elapsed = 0.0
+		duration = 0.24
+		stream_len = clampf(p_len, 0.5, 22.0)
+		if p_fire_starter != is_fire_starter and not _tongues.is_empty():
+			is_fire_starter = p_fire_starter
+			var col_core := Color(0.55, 0.88, 1.0, 0.72) if is_fire_starter else Color(1.0, 0.96, 0.68, 0.72)
+			_tongues[0].material_override = StatusEffectsVFX._get_shared_mat(col_core, true)
+		_refresh_tongues()
+
+	func _refresh_tongues() -> void:
+		var count: int = _tongues.size()
+		if count <= 0:
+			return
+		var seg_h: float = clampf((stream_len / float(count)) * 2.8, 0.95, 3.6)
+		var fade: float = clampf((duration - elapsed) / 0.06, 0.0, 1.0)
+		for i in range(count):
+			var mi: MeshInstance3D = _tongues[i]
+			if mi == null or not is_instance_valid(mi):
+				continue
+			var raw_t: float = fposmod(float(i) / float(count) + _phase * 0.28, 1.0)
+			var z_dist: float = raw_t * maxf(0.4, stream_len - seg_h * 0.25) + seg_h * 0.35
+			var swirl_ang: float = _base_angles[i] + _phase * 1.4
+			var swirl_r: float = lerpf(0.05, 0.52, raw_t) * minf(1.0, stream_len / 6.0)
+			var lift_y: float = 0.36 * raw_t * raw_t
+			mi.position = Vector3(cos(swirl_ang) * swirl_r, sin(swirl_ang) * swirl_r + lift_y, -z_dist)
+			mi.rotation = Vector3(-PI * 0.5, 0.0, swirl_ang)
+			var rad: float = lerpf(0.20, 1.18, raw_t) * fade
+			mi.scale = Vector3(maxf(0.04, rad), maxf(0.2, seg_h * fade), maxf(0.04, rad))
+
+	func _process(delta: float) -> void:
+		elapsed += delta
+		_phase += delta * 14.0
+		if elapsed >= duration:
+			queue_free()
+			return
+		_refresh_tongues()
+
+	func _exit_tree() -> void:
+		if StatusEffectsVFX._active_flame_streams.get(hero_id, null) == self:
+			StatusEffectsVFX._active_flame_streams.erase(hero_id)
+
+
 static func _get_xray_material() -> ShaderMaterial:
 	if _xray_mat == null:
 		_xray_mat = ShaderMaterial.new()
@@ -420,6 +496,7 @@ static func clear_pools(parent: Node = null) -> void:
 			(m as VfxPoolManager).clear_all_entries()
 			(m as VfxPoolManager).queue_free()
 	_pool_managers.clear()
+	clear_all_flame_streams()
 
 
 static func _is_beyond_vfx_distance(parent: Node, world_pos: Vector3, max_dist: float = 110.0) -> bool:
@@ -541,6 +618,22 @@ static func _is_stealthed_hero_near_enemy(hero: HeroCharacter, local_hero: HeroC
 static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroCharacter, delta: float, vehicles_by_id: Dictionary = {}, heroes_by_id: Dictionary = {}) -> void:
 	if hero == null or hero.visual_root == null:
 		return
+
+	var active_fs: Variant = _active_flame_streams.get(hero.entity_id, null)
+	if active_fs is FlameStreamVFX and is_instance_valid(active_fs):
+		var fs_node := active_fs as FlameStreamVFX
+		var cur_w: WeaponBase = hero.weapons[hero.selected_weapon_slot] as WeaponBase if (hero.selected_weapon_slot >= 0 and hero.selected_weapon_slot < hero.weapons.size()) else null
+		var holding_continuous_flame: bool = (
+			not hero.is_defeated
+			and hero.current_vehicle_id < 0
+			and cur_w != null
+			and cur_w.weapon_kind == WeaponBase.WeaponKind.FLAMETHROWER
+			and cur_w.archetype != 2
+		)
+		if not holding_continuous_flame:
+			stop_continuous_flame_stream(hero.entity_id)
+		else:
+			fs_node.position = hero.get_muzzle_world_position()
 
 	if hero.current_vehicle_id >= 0 and vehicles_by_id.has(hero.current_vehicle_id):
 		var v: VehicleBase = vehicles_by_id[hero.current_vehicle_id] as VehicleBase
@@ -1023,62 +1116,6 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 	if mgr == null:
 		return
 	if weapon_kind == 8:
-		var jet_vec: Vector3 = end_p - start_p
-		var jet_len: float = jet_vec.length()
-		if jet_len < 0.15:
-			return
-		var jet_dir: Vector3 = jet_vec / jet_len
-		var up_ref: Vector3 = Vector3.UP if absf(jet_dir.dot(Vector3.UP)) < 0.96 else Vector3.RIGHT
-		var right_v: Vector3 = jet_dir.cross(up_ref).normalized()
-		var up_v: Vector3 = right_v.cross(jet_dir).normalized()
-		var jet_basis := Basis(right_v, jet_dir, up_v)
-
-		const FLAME_STAGES: int = 4
-		var col_core := Color(1.0, 0.94, 0.62, 0.55)
-		var col_mid := Color(1.0, 0.56, 0.10, 0.48)
-		var col_tip := Color(0.95, 0.24, 0.04, 0.35)
-		var jet_mesh: CylinderMesh = _get_shared_flame_jet()
-		var seg_h: float = clampf((jet_len / float(FLAME_STAGES)) * 1.95, 0.9, 4.6)
-
-		for i in range(FLAME_STAGES):
-			var t: float = float(i) / float(FLAME_STAGES - 1)
-			var stage_col: Color = col_core.lerp(col_mid, t * 2.0) if t < 0.5 else col_mid.lerp(col_tip, (t - 0.5) * 2.0)
-			var f_mat: StandardMaterial3D = _get_shared_mat(stage_col, true)
-
-			var f_entry: VfxPoolEntry = mgr._acquire_entry(mgr._tracer_free, mgr.MAX_TRACERS, 2, func() -> VfxPoolEntry:
-				var e := VfxPoolEntry.new()
-				e.kind = 2
-				var mi := MeshInstance3D.new()
-				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-				e.node = mi
-				e.mesh_node = mi
-				return e
-			)
-			var stage := f_entry.mesh_node
-			f_entry.kind = 2
-			stage.mesh = jet_mesh
-			stage.material_override = f_mat
-
-			var swirl_ang: float = randf_range(0.0, TAU)
-			var swirl_vec: Vector3 = right_v * cos(swirl_ang) + up_v * sin(swirl_ang)
-			var min_d: float = minf(jet_len * 0.5, seg_h * 0.48)
-			var max_d: float = maxf(min_d, jet_len - seg_h * 0.35)
-			var start_d: float = clampf(jet_len * (float(i) / float(FLAME_STAGES)) * 0.78, min_d, max_d)
-			var end_d: float = clampf(jet_len * ((float(i) + 0.72) / float(FLAME_STAGES)), start_d, maxf(start_d, jet_len - seg_h * 0.25))
-			var p0: Vector3 = start_p + jet_dir * start_d + swirl_vec * (0.03 + 0.12 * t)
-			var p1: Vector3 = start_p + jet_dir * end_d + swirl_vec * (0.08 + 0.34 * t) + Vector3(0.0, 0.45 * (0.30 + 0.70 * t), 0.0)
-
-			var r0: float = lerpf(0.18, 0.62, t)
-			var r1: float = lerpf(0.30, 1.05, t)
-			var stage_rot_y: float = randf_range(0.0, TAU)
-			stage.basis = jet_basis.rotated(jet_dir, stage_rot_y)
-			stage.position = p0
-			stage.scale = Vector3(r0, seg_h, r0)
-			f_entry.start_pos = p0
-			f_entry.end_pos = p1
-			f_entry.start_scale = Vector3(r0, seg_h, r0)
-			f_entry.end_scale = Vector3(r1, seg_h * 1.18, r1)
-			f_entry.duration = 0.18
 		return
 
 	var cum_dist := PackedFloat32Array()
@@ -1852,3 +1889,56 @@ static func clear_all_build_previews() -> void:
 		if prev is Node and is_instance_valid(prev):
 			(prev as Node).queue_free()
 	_active_build_previews.clear()
+
+
+static func update_continuous_flame_stream(
+	parent: Node,
+	hero_id: int,
+	muzzle_world: Vector3,
+	dir: Vector3,
+	max_len: float,
+	is_fire_starter: bool = false
+) -> FlameStreamVFX:
+	if parent == null:
+		return null
+	if _is_beyond_vfx_distance(parent, muzzle_world, 110.0):
+		return null
+
+	var stream: FlameStreamVFX = _active_flame_streams.get(hero_id, null) as FlameStreamVFX
+	if stream == null or not is_instance_valid(stream) or stream.is_queued_for_deletion():
+		stream = FlameStreamVFX.new()
+		stream.name = "FlameStream_%d" % hero_id
+		stream.hero_id = hero_id
+		parent.add_child(stream)
+		_active_flame_streams[hero_id] = stream
+		stream.build_stream(max_len, is_fire_starter)
+	elif stream.get_parent() != parent:
+		if stream.get_parent() != null:
+			stream.get_parent().remove_child(stream)
+		parent.add_child(stream)
+		stream.refresh_stream(max_len, is_fire_starter)
+	else:
+		stream.refresh_stream(max_len, is_fire_starter)
+
+	stream.position = muzzle_world
+	var d_norm: Vector3 = dir.normalized() if dir.length_squared() > 0.0001 else Vector3.FORWARD
+	var up_hint: Vector3 = Vector3.RIGHT if absf(d_norm.dot(Vector3.UP)) > 0.96 else Vector3.UP
+	var right_v: Vector3 = d_norm.cross(up_hint).normalized()
+	var up_v: Vector3 = right_v.cross(d_norm).normalized()
+	stream.basis = Basis(right_v, up_v, -d_norm)
+	return stream
+
+
+static func stop_continuous_flame_stream(hero_id: int) -> void:
+	var prev: Variant = _active_flame_streams.get(hero_id, null)
+	_active_flame_streams.erase(hero_id)
+	if prev is Node and is_instance_valid(prev):
+		(prev as Node).queue_free()
+
+
+static func clear_all_flame_streams() -> void:
+	for k in _active_flame_streams.keys():
+		var prev: Variant = _active_flame_streams[k]
+		if prev is Node and is_instance_valid(prev):
+			(prev as Node).queue_free()
+	_active_flame_streams.clear()
