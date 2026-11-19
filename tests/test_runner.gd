@@ -6,6 +6,7 @@ var _failed: int = 0
 
 func _ready() -> void:
 	print("=== War Champions Automated Verification Suite ===")
+	InputCmd.reset_default_hotkeys()
 	_test_input_cmd_15_bytes_roundtrip()
 	_test_world_snapshot_24_players_roundtrip()
 	_test_input_ring_buffer_wraparound()
@@ -4259,6 +4260,7 @@ func _test_phase8_task1_skill_icons_and_guide() -> void:
 
 	# 4. ClassSelectMenu "skills" guide navigation from Hub & Armory + card rendering
 	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = ""
 	add_child(menu)
 	await _flush_deferred()
 
@@ -7034,6 +7036,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	)
 
 	# 2. HUDController Demolisher portraits, 5 skill icons/tooltips, Água widget tooltip, and Caber label
+	InputCmd.reset_default_hotkeys()
 	var hud := HUDController.new()
 	add_child(hud)
 	var h_demo_r := HeroCharacter.new()
