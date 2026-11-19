@@ -1964,6 +1964,46 @@ static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
 	}
 
 
+## Builds the Engineer's steel crescent wrench / hammer tool held during Skill 0..2 build channels.
+static func populate_build_wrench_root(root: Node3D) -> Dictionary:
+	for c in root.get_children():
+		root.remove_child(c)
+		c.queue_free()
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var tool := Node3D.new()
+	tool.name = "BuildWrench"
+	root.add_child(tool)
+
+	var grip_mat := make_sculpted_mat(Color(0.84, 0.44, 0.12), "", 0.65)
+	var steel_mat := make_sculpted_mat(Color(0.56, 0.60, 0.66), "", 0.28, 0.78)
+	var dark_steel_mat := make_sculpted_mat(Color(0.24, 0.27, 0.32), "", 0.36, 0.68)
+	var brass_mat := make_sculpted_mat(Color(0.84, 0.66, 0.22), "", 0.32, 0.62)
+	var parts: Array[MeshInstance3D] = []
+
+	_add_cyl_part(tool, 0.022, 0.024, 0.17, Vector3(0.0, 0.02, 0.0), Vector3.ZERO, grip_mat, 10, parts, "WrenchGrip")
+	_add_cyl_part(tool, 0.026, 0.026, 0.022, Vector3(0.0, -0.072, 0.0), Vector3.ZERO, dark_steel_mat, 10, parts, "WrenchPommel")
+	_add_box_part(tool, Vector3(0.032, 0.24, 0.018), Vector3(0.0, 0.20, 0.0), Vector3.ZERO, steel_mat, parts, "WrenchShank")
+	_add_cyl_part(tool, 0.044, 0.044, 0.024, Vector3(0.0, 0.34, 0.0), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 12, parts, "WrenchCollar")
+	_add_box_part(tool, Vector3(0.022, 0.072, 0.022), Vector3(-0.029, 0.39, 0.0), Vector3(0.0, 0.0, 0.20), steel_mat, parts, "WrenchJawL")
+	_add_box_part(tool, Vector3(0.022, 0.072, 0.022), Vector3(0.029, 0.39, 0.0), Vector3(0.0, 0.0, -0.20), steel_mat, parts, "WrenchJawR")
+	_add_cyl_part(tool, 0.015, 0.015, 0.036, Vector3(0.0, 0.325, 0.012), Vector3(0.0, 0.0, PI * 0.5), brass_mat, 10, parts, "WrenchWormGear")
+	_add_box_part(tool, Vector3(0.034, 0.044, 0.078), Vector3(0.0, 0.34, 0.024), Vector3.ZERO, dark_steel_mat, parts, "WrenchHammerPoll")
+
+	for mi in parts:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 220.0
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return {
+		"tool": tool,
+		"grip": Vector3.ZERO,
+		"foregrip": Vector3.ZERO,
+		"muzzle": Vector3(0.0, 0.40, 0.0),
+		"two_handed": false,
+	}
+
+
 ## Builds Demolisher's carried 1.15m x 1.35m tactical ballistic riot shield with viewport, team trim & bolts.
 static func build_carried_riot_shield(is_royal: bool) -> Node3D:
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

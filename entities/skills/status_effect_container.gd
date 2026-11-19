@@ -295,6 +295,8 @@ func _sync_buffs() -> void:
 		b |= NetSerializer.BUFF_TNT_ROPE
 	if invuln_timer > 0.0:
 		b |= NetSerializer.BUFF_ENGINEER_INVULN
+	if owner_hero.skill_manager != null and owner_hero.skill_manager.has_method("get_active_buff_flags"):
+		b |= int(owner_hero.skill_manager.get_active_buff_flags())
 	owner_hero.active_buffs = b
 
 

@@ -40,6 +40,8 @@ const BUFF_CARRIED_SHIELD: int = 1 << 13
 const BUFF_VEHICLE_BUSTER: int = 1 << 14
 const BUFF_TNT_ROPE: int = 1 << 15
 const BUFF_ENGINEER_INVULN: int = 1 << 16
+const BUFF_ENGINEER_BUILD: int = 1 << 17
+const BUFF_ENGINEER_MORTAR: int = 1 << 18
 
 
 static func _pack_angle_u16(radians: float) -> int:

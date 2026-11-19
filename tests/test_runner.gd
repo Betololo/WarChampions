@@ -56,6 +56,7 @@ func _ready() -> void:
 	await _test_phase12_task3_hotkeys_drag_minimap()
 	await _test_phase12_task4_field_engineer()
 	await _test_phase12_task5_menus_5classes_integration()
+	await _test_phase12b_task1_engineer_build_channel()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -9294,3 +9295,215 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 
 	reg_arena.queue_free()
 	await _flush_deferred()
+
+
+func _test_phase12b_task1_engineer_build_channel() -> void:
+	print("--- Phase 12B Task 1: Engineer Build Lock, Wrench Pose, Rising Blueprint & HUD Progress ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	# Ground plane so Engineer stands grounded for movement/jump lock verification
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(80.0, 1.0, 80.0)
+	floor_col.shape = floor_box
+	floor_col.position = Vector3(0.0, -0.5, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var eng := HeroCharacter.new()
+	eng.setup_identity(451, "EngBuildTest", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 0, true, false)
+	eng.position = Vector3(0.0, 0.05, 0.0)
+	eng.aim_yaw = 0.25
+	arena.add_child(eng)
+	await _flush_deferred()
+
+	var sm: EngineerSkills = eng.skill_manager as EngineerSkills
+	var ctx: Dictionary = {
+		"heroes_by_id": {451: eng},
+		"vehicles": [],
+		"vehicles_by_id": {},
+		"projectiles_root": arena,
+		"vehicles_root": arena,
+	}
+
+	var build_starts: Array[Dictionary] = []
+	var build_stops: Array[Dictionary] = []
+	var ev_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "eng_build_start":
+			build_starts.append(payload)
+		elif ev_type == "eng_build_stop":
+			build_stops.append(payload)
+	NetworkManager.game_event_received.connect(ev_cb)
+
+	# 1. Start Skill 0 (Trincheira) -> BUFF_ENGINEER_BUILD replicated & survives StatusEffectContainer tick
+	var sk_cmd := InputCmd.new()
+	sk_cmd.buttons = InputCmd.BTN_SKILL_1
+	sm.step_server(0.05, sk_cmd, ctx)
+	sk_cmd.buttons = 0
+	var bits_reserved_ok: bool = (
+		NetSerializer.BUFF_ENGINEER_BUILD == (1 << 17)
+		and NetSerializer.BUFF_ENGINEER_MORTAR == (1 << 18)
+		and NetSerializer.INPUT_CMD_BYTES == 15
+	)
+	var buff_immediate_ok: bool = (
+		(eng.active_buffs & NetSerializer.BUFF_ENGINEER_BUILD) != 0
+		and eng.is_engineer_building()
+	)
+	eng.status_effects._physics_process(0.1)
+	var buff_survives_sync_ok: bool = (eng.active_buffs & NetSerializer.BUFF_ENGINEER_BUILD) != 0
+
+	# 2. Movement + Jump + Server & Client-Prediction Fire Locks
+	eng.velocity = Vector3(5.0, 0.0, 0.0)
+	var move_cmd := InputCmd.new()
+	move_cmd.move_dir = Vector2(1.0, 0.0)
+	move_cmd.aim_yaw = eng.aim_yaw
+	move_cmd.buttons = InputCmd.BTN_JUMP | InputCmd.BTN_FIRE
+	for _i in range(12):
+		eng.simulate_movement(move_cmd, 1.0 / 60.0)
+	var horiz_after_lock: float = Vector2(eng.velocity.x, eng.velocity.z).length()
+	var move_jump_locked_ok: bool = horiz_after_lock < 1.5 and eng.velocity.y <= 0.05
+
+	var srv_weapon: WeaponBase = eng.weapons[0] as WeaponBase
+	var srv_fire_blocked_ok: bool = not srv_weapon.try_consume_fire(move_cmd)
+
+	# Non-host client HeroCharacter with only active_buffs replicated (no local SkillManager build state)
+	var cli_eng := HeroCharacter.new()
+	cli_eng.setup_identity(452, "ClientEng", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 0, true, false)
+	arena.add_child(cli_eng)
+	await _flush_deferred()
+	cli_eng.active_buffs = NetSerializer.BUFF_ENGINEER_BUILD
+	var cli_w: WeaponBase = cli_eng.weapons[0] as WeaponBase
+	var cli_build_fire_blocked_ok: bool = not cli_w.try_consume_fire(move_cmd)
+	cli_eng.active_buffs = NetSerializer.BUFF_ENGINEER_MORTAR
+	var cli_mortar_fire_blocked_ok: bool = not cli_w.try_consume_fire(move_cmd)
+
+	# 3. Wrench prop (-98), hidden left weapon root & animated kneeling hammer swing
+	eng._animate_character(0.05)
+	var wrench_equipped_ok: bool = (
+		eng._shown_weapon_kind == -98
+		and eng._build_tool_node != null
+		and is_instance_valid(eng._build_tool_node)
+		and eng._held_weapon_root_l != null
+		and not eng._held_weapon_root_l.visible
+	)
+	var rot_t1: Vector3 = eng._held_weapon_root.rotation
+	eng._animate_character(0.18)
+	var rot_t2: Vector3 = eng._held_weapon_root.rotation
+	var wrench_anim_ok: bool = (not rot_t1.is_equal_approx(rot_t2)) and eng._hips_pivot.position.y < 0.72
+
+	# 4. Rising blueprint preview + exact spawn alignment even if aim_yaw changes mid-build
+	var start_ev_ok: bool = (
+		not build_starts.is_empty()
+		and int(build_starts[0].get("slot", -1)) == 0
+		and is_equal_approx(float(build_starts[0].get("duration", 0.0)), 3.0)
+	)
+	var expected_pos: Vector3 = build_starts[0].get("pos", Vector3.ZERO)
+	var expected_yaw: float = float(build_starts[0].get("yaw", 0.0))
+	var preview: Node3D = StatusEffectsVFX.spawn_build_preview(arena, eng.entity_id, 0, expected_pos, expected_yaw, 3.0)
+	var preview_node := preview as StatusEffectsVFX.BuildPreviewVFX
+	var preview_rise_ok: bool = preview_node != null and is_equal_approx(preview_node.scaffold.scale.y, 0.05)
+	if preview_node != null:
+		preview_node._process(1.5)
+		preview_rise_ok = preview_rise_ok and preview_node.scaffold.scale.y > 0.45 and preview_node.scaffold.scale.y < 0.65
+		preview_node._process(1.5)
+		preview_rise_ok = preview_rise_ok and is_equal_approx(preview_node.scaffold.scale.y, 1.0)
+
+	# Turn Hero away mid-build and complete channel -> trench must still spawn at expected_pos/yaw!
+	eng.aim_yaw = -1.9
+	for _i in range(32):
+		sm.step_server(0.1, sk_cmd, ctx)
+	StatusEffectsVFX.stop_build_preview(eng.entity_id)
+	await _flush_deferred()
+	var trench: EngineerSkills.TrenchEntity = sm._active_trench
+	var exact_trench_align_ok: bool = (
+		trench != null
+		and is_instance_valid(trench)
+		and trench.position.distance_to(expected_pos) < 0.001
+		and absf(angle_difference(trench.rotation.y, expected_yaw)) < 0.001
+	)
+	var build_stopped_ok: bool = (
+		not eng.is_engineer_building()
+		and (eng.active_buffs & NetSerializer.BUFF_ENGINEER_BUILD) == 0
+		and not build_stops.is_empty()
+		and ((not is_instance_valid(preview_node)) or preview_node.is_queued_for_deletion())
+		and StatusEffectsVFX._active_build_previews.is_empty()
+	)
+	eng._animate_character(0.05)
+	var weapon_restored_ok: bool = (
+		eng._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+		and eng._held_weapon_root_l != null
+		and eng._held_weapon_root_l.visible
+	)
+
+	# 5. Skill 1 (Torreta MG) exact spawn alignment + defeat cancellation cleans preview
+	eng.aim_yaw = 0.7
+	sk_cmd.buttons = InputCmd.BTN_SKILL_2
+	sm.step_server(0.05, sk_cmd, ctx)
+	sk_cmd.buttons = 0
+	var s1_pos: Vector3 = build_starts[build_starts.size() - 1].get("pos", Vector3.ZERO)
+	var s1_yaw: float = float(build_starts[build_starts.size() - 1].get("yaw", 0.0))
+	var preview1: Node3D = StatusEffectsVFX.spawn_build_preview(arena, eng.entity_id, 1, s1_pos, s1_yaw, 2.0)
+	eng.aim_yaw = -2.2
+	for _i in range(22):
+		sm.step_server(0.1, sk_cmd, ctx)
+	var turret: VehicleShieldedMG = sm._active_turret
+	var exact_turret_align_ok: bool = (
+		turret != null
+		and is_instance_valid(turret)
+		and turret.position.distance_to(s1_pos) < 0.001
+		and absf(angle_difference(turret.rotation.y, s1_yaw)) < 0.001
+	)
+	StatusEffectsVFX.clear_all_build_previews()
+	await _flush_deferred()
+	var preview1_cleared_ok: bool = (
+		((not is_instance_valid(preview1)) or preview1.is_queued_for_deletion())
+		and StatusEffectsVFX._active_build_previews.is_empty()
+	)
+
+	# 6. HUD Build Progress Bar (Trincheira / Torreta / Blindar + defeat auto-hide)
+	var hud := HUDController.new()
+	arena.add_child(hud)
+	hud.set_local_hero(eng)
+	hud.start_build_progress(0, 3.0)
+	hud._process(1.5)
+	var hud_s0_ok: bool = (
+		hud._build_panel.visible
+		and hud._build_label.text == "CONSTRUINDO TRINCHEIRA..."
+		and is_equal_approx(hud._build_bar.value, 0.5)
+	)
+	hud.start_build_progress(1, 2.0)
+	var hud_s1_ok: bool = hud._build_panel.visible and hud._build_label.text == "CONSTRUINDO TORRETA MG..."
+	hud.start_build_progress(2, 2.0)
+	var hud_s2_ok: bool = hud._build_panel.visible and hud._build_label.text == "BLINDANDO VEÍCULO..."
+	eng.is_defeated = true
+	hud._process(0.016)
+	var hud_defeat_hide_ok: bool = not hud._build_panel.visible
+	hud.start_build_progress(0, 3.0)
+	hud.stop_build_progress()
+	var hud_stop_hide_ok: bool = not hud._build_panel.visible
+
+	NetworkManager.game_event_received.disconnect(ev_cb)
+
+	_assert(
+		bits_reserved_ok and buff_immediate_ok and buff_survives_sync_ok
+		and move_jump_locked_ok and srv_fire_blocked_ok and cli_build_fire_blocked_ok and cli_mortar_fire_blocked_ok
+		and wrench_equipped_ok and wrench_anim_ok
+		and start_ev_ok and preview_rise_ok and exact_trench_align_ok and build_stopped_ok and weapon_restored_ok
+		and exact_turret_align_ok and preview1_cleared_ok
+		and hud_s0_ok and hud_s1_ok and hud_s2_ok and hud_defeat_hide_ok and hud_stop_hide_ok,
+		"Phase 12B.1: Engineer Build Lock, Wrench Pose, Blueprint & HUD (bits=%s buf=%s sync=%s mv=%s sf=%s cbf=%s cmf=%s wr=%s wa=%s ev=%s pr=%s ta=%s bs=%s wrs=%s tua=%s p1c=%s h0=%s h1=%s h2=%s hd=%s hs=%s)" % [
+			str(bits_reserved_ok), str(buff_immediate_ok), str(buff_survives_sync_ok),
+			str(move_jump_locked_ok), str(srv_fire_blocked_ok), str(cli_build_fire_blocked_ok), str(cli_mortar_fire_blocked_ok),
+			str(wrench_equipped_ok), str(wrench_anim_ok),
+			str(start_ev_ok), str(preview_rise_ok), str(exact_trench_align_ok), str(build_stopped_ok), str(weapon_restored_ok),
+			str(exact_turret_align_ok), str(preview1_cleared_ok),
+			str(hud_s0_ok), str(hud_s1_ok), str(hud_s2_ok), str(hud_defeat_hide_ok), str(hud_stop_hide_ok)
+		]
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame

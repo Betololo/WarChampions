@@ -33,6 +33,36 @@ const BUFF_ICON_TABLE: Array[Array] = [
 static var _xray_mat: ShaderMaterial = null
 static var _shared_meshes: Dictionary = {}
 static var _shared_mats: Dictionary = {}
+static var _active_build_previews: Dictionary = {}
+
+
+class BuildPreviewVFX extends Node3D:
+	var hero_id: int = -1
+	var slot: int = -1
+	var duration: float = 2.0
+	var elapsed: float = 0.0
+	var scaffold: Node3D = null
+	var _spark_timer: float = 0.0
+
+	func _process(delta: float) -> void:
+		elapsed = minf(duration, elapsed + delta)
+		var frac: float = clampf(elapsed / maxf(0.05, duration), 0.0, 1.0)
+		if scaffold != null and is_instance_valid(scaffold):
+			scaffold.scale = Vector3(1.0, lerpf(0.05, 1.0, frac), 1.0)
+		_spark_timer += delta
+		if _spark_timer >= 0.22:
+			_spark_timer = 0.0
+			if not DisplayServer.get_name().contains("headless") and get_parent() != null:
+				var spark_pos: Vector3 = global_position + global_transform.basis * Vector3(
+					randf_range(-0.9, 0.9),
+					lerpf(0.25, 1.6, frac),
+					randf_range(-0.6, 0.6)
+				)
+				StatusEffectsVFX.spawn_cartoon_burst(get_parent(), spark_pos, "spark", 0.35)
+
+	func _exit_tree() -> void:
+		if StatusEffectsVFX._active_build_previews.get(hero_id, null) == self:
+			StatusEffectsVFX._active_build_previews.erase(hero_id)
 
 
 static func _get_xray_material() -> ShaderMaterial:
@@ -1320,3 +1350,108 @@ static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: flo
 		tw.chain().tween_callback(root.queue_free)
 
 	return root
+
+
+static func _add_wireframe_box_outline(
+	parent_n: Node3D,
+	center: Vector3,
+	sz: Vector3,
+	frame_mat: Material,
+	fill_mat: Material,
+	thickness: float = 0.05
+) -> void:
+	var box: BoxMesh = _get_shared_box()
+	var dummy: Array[MeshInstance3D] = []
+	if fill_mat != null:
+		_vfx_part(parent_n, box, fill_mat, center, sz, Vector3.ZERO, dummy)
+
+	var hx: float = sz.x * 0.5
+	var hy: float = sz.y * 0.5
+	var hz: float = sz.z * 0.5
+	for sx in [-1.0, 1.0]:
+		for sz_s in [-1.0, 1.0]:
+			_vfx_part(parent_n, box, frame_mat, center + Vector3(sx * hx, 0.0, sz_s * hz), Vector3(thickness, sz.y, thickness), Vector3.ZERO, dummy)
+	for sy in [-1.0, 1.0]:
+		for sz_s in [-1.0, 1.0]:
+			_vfx_part(parent_n, box, frame_mat, center + Vector3(0.0, sy * hy, sz_s * hz), Vector3(sz.x, thickness, thickness), Vector3.ZERO, dummy)
+		for sx in [-1.0, 1.0]:
+			_vfx_part(parent_n, box, frame_mat, center + Vector3(sx * hx, sy * hy, 0.0), Vector3(thickness, thickness, sz.z), Vector3.ZERO, dummy)
+
+
+static func spawn_build_preview(
+	parent: Node,
+	hero_id: int,
+	slot: int,
+	pos: Vector3,
+	yaw: float,
+	duration: float
+) -> Node3D:
+	if parent == null:
+		return null
+	stop_build_preview(hero_id)
+	warm_shared_meshes()
+
+	var root := BuildPreviewVFX.new()
+	root.name = "BuildPreview_%d_%d" % [hero_id, slot]
+	root.hero_id = hero_id
+	root.slot = slot
+	root.duration = maxf(0.1, duration)
+	root.position = pos
+	root.rotation.y = yaw
+	root.add_to_group("build_previews")
+
+	var scaffold := Node3D.new()
+	scaffold.name = "Scaffold"
+	scaffold.scale = Vector3(1.0, 0.05, 1.0)
+	root.add_child(scaffold)
+	root.scaffold = scaffold
+
+	var fill_mat: StandardMaterial3D = _get_shared_mat(Color(0.22, 0.88, 1.0, 0.24), true)
+	var cyan_wire: StandardMaterial3D = _get_shared_mat(Color(0.32, 0.96, 1.0, 0.92), true)
+	var gold_wire: StandardMaterial3D = _get_shared_mat(Color(1.0, 0.86, 0.24, 0.90), true)
+	var box: BoxMesh = _get_shared_box()
+	var torus: TorusMesh = _get_shared_torus()
+	var dummy: Array[MeshInstance3D] = []
+
+	match slot:
+		0: # Trincheira blueprint scaffold
+			_add_wireframe_box_outline(scaffold, Vector3(0.0, 1.375, -0.95), Vector3(5.0, 2.75, 0.42), cyan_wire, fill_mat, 0.055)
+			for sx in [-1.0, 1.0]:
+				_add_wireframe_box_outline(scaffold, Vector3(sx * 2.23, 1.50, -0.88), Vector3(0.54, 3.00, 0.68), gold_wire, fill_mat, 0.055)
+				_add_wireframe_box_outline(scaffold, Vector3(sx * 2.24, 0.875, 0.10), Vector3(0.32, 1.75, 1.48), cyan_wire, fill_mat, 0.05)
+			_add_wireframe_box_outline(scaffold, Vector3(0.0, 0.775, -0.10), Vector3(4.12, 1.55, 1.28), gold_wire, fill_mat, 0.05)
+			_vfx_part(root, box, gold_wire, Vector3(0.0, 0.04, 0.0), Vector3(5.15, 0.04, 0.05), Vector3.ZERO, dummy)
+		1: # Torreta MG blueprint scaffold (tripod + pedestal + shield + barrel)
+			for leg_i in range(3):
+				var ang: float = float(leg_i) * (TAU / 3.0) + PI * 0.5
+				var lx: float = cos(ang) * 0.45
+				var lz: float = sin(ang) * 0.45
+				_vfx_part(scaffold, box, gold_wire, Vector3(lx, 0.48, lz), Vector3(0.07, 1.05, 0.07), Vector3(lz * 0.65, 0.0, -lx * 0.65), dummy)
+			_vfx_part(scaffold, box, cyan_wire, Vector3(0.0, 0.62, 0.0), Vector3(0.16, 1.24, 0.16), Vector3.ZERO, dummy)
+			_add_wireframe_box_outline(scaffold, Vector3(0.0, 1.36, -0.24), Vector3(1.10, 0.72, 0.10), cyan_wire, fill_mat, 0.045)
+			_add_wireframe_box_outline(scaffold, Vector3(0.0, 1.38, -0.62), Vector3(0.12, 0.12, 0.90), gold_wire, fill_mat, 0.035)
+			_vfx_part(root, torus, cyan_wire, Vector3(0.0, 0.06, 0.0), Vector3(1.9, 0.45, 1.9), Vector3.ZERO, dummy)
+		_: # Blindar Veículo blueprint plates + ring
+			_vfx_part(root, torus, gold_wire, Vector3(0.0, 0.10, 0.0), Vector3(4.2, 0.55, 4.2), Vector3.ZERO, dummy)
+			for sx in [-1.0, 1.0]:
+				_add_wireframe_box_outline(scaffold, Vector3(sx * 1.45, 0.90, 0.0), Vector3(0.10, 0.85, 2.60), gold_wire, fill_mat, 0.045)
+			_add_wireframe_box_outline(scaffold, Vector3(0.0, 0.90, -1.65), Vector3(2.20, 0.75, 0.10), cyan_wire, fill_mat, 0.045)
+
+	parent.add_child(root)
+	_active_build_previews[hero_id] = root
+	return root
+
+
+static func stop_build_preview(hero_id: int) -> void:
+	var prev: Variant = _active_build_previews.get(hero_id, null)
+	_active_build_previews.erase(hero_id)
+	if prev is Node and is_instance_valid(prev):
+		(prev as Node).queue_free()
+
+
+static func clear_all_build_previews() -> void:
+	for k in _active_build_previews.keys():
+		var prev: Variant = _active_build_previews[k]
+		if prev is Node and is_instance_valid(prev):
+			(prev as Node).queue_free()
+	_active_build_previews.clear()

@@ -460,7 +460,7 @@ func _get_haste_reload_mult() -> float:
 func _is_fire_blocked_by_tnt_rope() -> bool:
 	if owner_hero == null:
 		return false
-	if (owner_hero.active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0:
+	if (owner_hero.active_buffs & (NetSerializer.BUFF_TNT_ROPE | NetSerializer.BUFF_ENGINEER_BUILD | NetSerializer.BUFF_ENGINEER_MORTAR)) != 0:
 		return true
 	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("is_tnt_rope_active") and bool(owner_hero.status_effects.is_tnt_rope_active()):
 		return true

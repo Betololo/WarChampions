@@ -551,6 +551,13 @@ var _mortar_targeting_active: bool = false
 var _mortar_target_callback: Callable = Callable()
 var _mortar_banner_lbl: Label = null
 
+var _build_panel: PanelContainer = null
+var _build_label: Label = null
+var _build_bar: ProgressBar = null
+var _build_active: bool = false
+var _build_elapsed: float = 0.0
+var _build_duration: float = 1.0
+
 var _last_ping_ms: int = -1
 var _last_sim_lat_ms: int = -1
 var _last_royal_tickets: int = -1
@@ -644,6 +651,7 @@ func set_local_hero(hero: HeroCharacter) -> void:
 	_crosshair_bloom = 0.0
 	_crosshair_spread_px = 6.0
 	_apply_crosshair_spread(_crosshair_spread_px)
+	stop_build_progress()
 	_refresh_hotbar_icons()
 
 
@@ -1408,6 +1416,59 @@ func _build_hud() -> void:
 	_defeat_lbl.visible = false
 	add_child(_defeat_lbl)
 
+	# 10b. Engineer Build Channel Progress Bar (centered)
+	_build_panel = PanelContainer.new()
+	_build_panel.anchor_left = 0.5
+	_build_panel.anchor_right = 0.5
+	_build_panel.anchor_top = 0.57
+	_build_panel.anchor_bottom = 0.57
+	_build_panel.offset_left = -165.0
+	_build_panel.offset_right = 165.0
+	_build_panel.offset_top = 0.0
+	_build_panel.offset_bottom = 52.0
+	_build_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var build_sb := StyleBoxFlat.new()
+	build_sb.bg_color = Color(0.05, 0.08, 0.12, 0.84)
+	build_sb.border_color = Color(0.32, 0.90, 1.0, 0.82)
+	build_sb.set_border_width_all(2)
+	build_sb.set_corner_radius_all(6)
+	build_sb.content_margin_left = 10.0
+	build_sb.content_margin_right = 10.0
+	build_sb.content_margin_top = 5.0
+	build_sb.content_margin_bottom = 6.0
+	_build_panel.add_theme_stylebox_override("panel", build_sb)
+	_build_panel.visible = false
+	add_child(_build_panel)
+
+	var build_vbox := VBoxContainer.new()
+	build_vbox.add_theme_constant_override("separation", 4)
+	build_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_panel.add_child(build_vbox)
+
+	_build_label = Label.new()
+	_build_label.text = "CONSTRUINDO TRINCHEIRA..."
+	_build_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_style_label(_build_label, 14, Color(0.86, 0.96, 1.0))
+	build_vbox.add_child(_build_label)
+
+	_build_bar = ProgressBar.new()
+	_build_bar.custom_minimum_size = Vector2(300.0, 12.0)
+	_build_bar.min_value = 0.0
+	_build_bar.max_value = 1.0
+	_build_bar.value = 0.0
+	_build_bar.show_percentage = false
+	_build_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var build_bar_bg := StyleBoxFlat.new()
+	build_bar_bg.bg_color = Color(0.10, 0.14, 0.20, 0.92)
+	build_bar_bg.set_corner_radius_all(3)
+	var build_bar_fill := StyleBoxFlat.new()
+	build_bar_fill.bg_color = Color(0.28, 0.88, 1.0, 0.96)
+	build_bar_fill.set_corner_radius_all(3)
+	_build_bar.add_theme_stylebox_override("background", build_bar_bg)
+	_build_bar.add_theme_stylebox_override("fill", build_bar_fill)
+	build_vbox.add_child(_build_bar)
+
 	# 11. Bottom-Center Vehicle Health Panel (just above hotbar, clear of [E] prompt)
 	_veh_hp_panel = PanelContainer.new()
 	_veh_hp_panel.anchor_left = 0.5
@@ -1568,6 +1629,7 @@ func refresh_hotkey_labels() -> void:
 
 func _hide_local_hud_overlays() -> void:
 	_cancel_hotbar_drag()
+	stop_build_progress()
 	if _mortar_targeting_active:
 		set_mortar_targeting_mode(false)
 	if _poison_tint_rect != null:
@@ -1761,6 +1823,35 @@ func swap_hotbar_slots(category: String, vis_a: int, vis_b: int) -> bool:
 
 func is_mortar_targeting_active() -> bool:
 	return _mortar_targeting_active
+
+
+func start_build_progress(slot: int, duration: float) -> void:
+	_build_active = true
+	_build_elapsed = 0.0
+	_build_duration = maxf(0.05, duration)
+	if _build_label != null:
+		match slot:
+			0:
+				_build_label.text = "CONSTRUINDO TRINCHEIRA..."
+			1:
+				_build_label.text = "CONSTRUINDO TORRETA MG..."
+			2:
+				_build_label.text = "BLINDANDO VEÍCULO..."
+			_:
+				_build_label.text = "CONSTRUINDO..."
+	if _build_bar != null:
+		_build_bar.value = 0.0
+	if _build_panel != null:
+		_build_panel.visible = true
+
+
+func stop_build_progress() -> void:
+	_build_active = false
+	_build_elapsed = 0.0
+	if _build_bar != null:
+		_build_bar.value = 0.0
+	if _build_panel != null:
+		_build_panel.visible = false
 
 
 func set_mortar_targeting_mode(active: bool, callback: Callable = Callable(), notify_cancel: bool = true) -> void:
@@ -2032,6 +2123,13 @@ func _process(delta: float) -> void:
 
 	if _mortar_targeting_active and (_local_hero.is_defeated or _local_hero.current_vehicle_id >= 0):
 		set_mortar_targeting_mode(false)
+	if _build_active:
+		if _local_hero.is_defeated:
+			stop_build_progress()
+		else:
+			_build_elapsed = minf(_build_duration, _build_elapsed + delta)
+			if _build_bar != null:
+				_build_bar.value = clampf(_build_elapsed / _build_duration, 0.0, 1.0)
 
 	if _poison_tint_rect != null:
 		var is_poisoned: bool = (_local_hero.active_flags & NetSerializer.SNAP_POISONED) != 0 and not _local_hero.is_defeated

@@ -196,6 +196,9 @@ var _build_timer: float = 0.0
 var _build_total: float = 0.0
 var _build_target_veh: VehicleBase = null
 var _build_started_on_foot: bool = true
+var _pending_build_pos: Vector3 = Vector3.ZERO
+var _pending_build_yaw: float = 0.0
+var _pending_build_has_pos: bool = false
 var _mortar_pending_hero_aim: bool = false
 var _pending_mortars: Array[Dictionary] = []
 var _last_context: Dictionary = {}
@@ -235,6 +238,24 @@ func is_building() -> bool:
 	return _active_build_slot >= 0
 
 
+func get_active_buff_flags() -> int:
+	var flags: int = 0
+	if _active_build_slot >= 0:
+		flags |= NetSerializer.BUFF_ENGINEER_BUILD
+	if _mortar_pending_hero_aim:
+		flags |= NetSerializer.BUFF_ENGINEER_MORTAR
+	return flags
+
+
+func _sync_hero_buffs() -> void:
+	if owner_hero == null:
+		return
+	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("_sync_buffs"):
+		owner_hero.status_effects._sync_buffs()
+	else:
+		owner_hero.active_buffs = (owner_hero.active_buffs & ~(NetSerializer.BUFF_ENGINEER_BUILD | NetSerializer.BUFF_ENGINEER_MORTAR)) | get_active_buff_flags()
+
+
 func get_build_progress_fraction() -> float:
 	if _active_build_slot < 0 or _build_total <= 0.0:
 		return 0.0
@@ -245,6 +266,7 @@ func _clear_mortar_targeting(broadcast: bool = true) -> void:
 	if not _mortar_pending_hero_aim:
 		return
 	_mortar_pending_hero_aim = false
+	_sync_hero_buffs()
 	if broadcast and owner_hero != null:
 		NetworkManager.broadcast_game_event("mortar_mode", {
 			"hero_id": owner_hero.entity_id,
@@ -296,12 +318,44 @@ func _physics_process(delta: float) -> void:
 		_step_pending_mortars(delta, _last_context)
 
 
+func _start_build_channel(slot_idx: int, duration: float, deploy_pos: Vector3, deploy_yaw: float, target_veh: VehicleBase = null) -> void:
+	_active_build_slot = slot_idx
+	_build_total = duration
+	_build_timer = duration
+	_build_target_veh = target_veh
+	_build_started_on_foot = (owner_hero == null or owner_hero.current_vehicle_id < 0)
+	_pending_build_pos = deploy_pos
+	_pending_build_yaw = deploy_yaw
+	_pending_build_has_pos = true
+	_sync_hero_buffs()
+	if owner_hero != null:
+		NetworkManager.broadcast_game_event("eng_build_start", {
+			"hero_id": owner_hero.entity_id,
+			"slot": slot_idx,
+			"duration": duration,
+			"pos": deploy_pos,
+			"yaw": deploy_yaw,
+			"team": owner_hero.team,
+			"veh_id": target_veh.id if target_veh != null else -1,
+		})
+
+
 func _cancel_build_channel() -> void:
+	var was_building: bool = (_active_build_slot >= 0)
 	_active_build_slot = -1
 	_build_timer = 0.0
 	_build_total = 0.0
 	_build_target_veh = null
 	_build_started_on_foot = true
+	_pending_build_pos = Vector3.ZERO
+	_pending_build_yaw = 0.0
+	_pending_build_has_pos = false
+	if was_building:
+		_sync_hero_buffs()
+		if owner_hero != null:
+			NetworkManager.broadcast_game_event("eng_build_stop", {
+				"hero_id": owner_hero.entity_id,
+			})
 
 
 func _step_active_build(delta: float, context: Dictionary) -> void:
@@ -317,13 +371,16 @@ func _step_active_build(delta: float, context: Dictionary) -> void:
 
 	var finished_slot: int = _active_build_slot
 	var target_veh: VehicleBase = _build_target_veh
+	var build_pos: Vector3 = _pending_build_pos
+	var build_yaw: float = _pending_build_yaw
+	var has_build_pos: bool = _pending_build_has_pos
 	_cancel_build_channel()
 
 	match finished_slot:
 		0:
-			_complete_trench_spawn(context)
+			_complete_trench_spawn(context, build_pos, build_yaw, has_build_pos)
 		1:
-			_complete_turret_spawn(context)
+			_complete_turret_spawn(context, build_pos, build_yaw, has_build_pos)
 		2:
 			_complete_vehicle_armor(target_veh, context)
 
@@ -338,10 +395,8 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 				return false
 			if _active_trench != null and is_instance_valid(_active_trench) and not _active_trench.is_queued_for_deletion() and not _active_trench.is_destroyed:
 				return false
-			_active_build_slot = 0
-			_build_total = 3.0
-			_build_timer = 3.0
-			_build_started_on_foot = true
+			var deploy0: Dictionary = _get_deploy_origin_and_yaw(3.4)
+			_start_build_channel(0, 3.0, deploy0["pos"] as Vector3, float(deploy0["yaw"]))
 			return true
 
 		1: # Metralhadora Montada c/ Escudo (2.0s build, max 1 active, 18s CD starts ONLY after destroyed)
@@ -349,21 +404,17 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 				return false
 			if _active_turret != null and is_instance_valid(_active_turret) and not _active_turret.is_queued_for_deletion() and not _active_turret.is_destroyed:
 				return false
-			_active_build_slot = 1
-			_build_total = 2.0
-			_build_timer = 2.0
-			_build_started_on_foot = true
+			var deploy1: Dictionary = _get_deploy_origin_and_yaw(2.6)
+			_start_build_channel(1, 2.0, deploy1["pos"] as Vector3, float(deploy1["yaw"]))
 			return true
 
 		2: # Blindar Veiculo (2.0s channel on occupied or nearest <= 7.0m allied/empty vehicle)
 			var veh: VehicleBase = _find_armor_target_vehicle(context)
 			if veh == null or veh.is_armored:
 				return false
-			_active_build_slot = 2
-			_build_total = 2.0
-			_build_timer = 2.0
-			_build_target_veh = veh
-			_build_started_on_foot = (owner_hero.current_vehicle_id < 0)
+			var vpos: Vector3 = veh.global_position if veh.is_inside_tree() else veh.position
+			var vyaw: float = veh.global_rotation.y if veh.is_inside_tree() else veh.rotation.y
+			_start_build_channel(2, 2.0, vpos, vyaw, veh)
 			return true
 
 		3: # Morteiro via Minimapa
@@ -378,6 +429,7 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 			if _mortar_pending_hero_aim:
 				return false
 			_mortar_pending_hero_aim = true
+			_sync_hero_buffs()
 			NetworkManager.broadcast_game_event("mortar_mode", {
 				"hero_id": owner_hero.entity_id,
 				"active": true,
@@ -394,16 +446,20 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 
 func cancel_mortar_mode() -> void:
 	_mortar_pending_hero_aim = false
+	_sync_hero_buffs()
 
 
 func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 	if owner_hero == null or owner_hero.is_defeated:
 		_mortar_pending_hero_aim = false
+		_sync_hero_buffs()
 		return false
 	if skill_cooldowns.size() > 3 and skill_cooldowns[3] > 0.0:
 		_mortar_pending_hero_aim = false
+		_sync_hero_buffs()
 		return false
 	_mortar_pending_hero_aim = false
+	_sync_hero_buffs()
 
 	var strike_pos := Vector3(target_xz.x, target_xz.y, target_xz.z)
 	if owner_hero.is_inside_tree() and owner_hero.get_world_3d() != null:
@@ -545,15 +601,21 @@ func _get_deploy_origin_and_yaw(forward_dist: float) -> Dictionary:
 	return {"pos": spawn_pos, "yaw": owner_hero.aim_yaw}
 
 
-func _complete_trench_spawn(context: Dictionary) -> void:
+func _complete_trench_spawn(context: Dictionary, build_pos: Vector3 = Vector3.ZERO, build_yaw: float = 0.0, has_build_pos: bool = false) -> void:
 	if owner_hero == null or owner_hero.is_defeated:
 		return
 	var root: Node = context.get("projectiles_root", owner_hero.get_parent())
 	if root == null:
 		return
-	var deploy: Dictionary = _get_deploy_origin_and_yaw(3.4)
-	var spawn_pos: Vector3 = deploy["pos"] as Vector3
-	var yaw: float = float(deploy["yaw"])
+	var spawn_pos: Vector3
+	var yaw: float
+	if has_build_pos:
+		spawn_pos = build_pos
+		yaw = build_yaw
+	else:
+		var deploy: Dictionary = _get_deploy_origin_and_yaw(3.4)
+		spawn_pos = deploy["pos"] as Vector3
+		yaw = float(deploy["yaw"])
 
 	var trench := TrenchEntity.new()
 	_next_deploy_id += 1
@@ -581,15 +643,21 @@ func _complete_trench_spawn(context: Dictionary) -> void:
 	})
 
 
-func _complete_turret_spawn(context: Dictionary) -> void:
+func _complete_turret_spawn(context: Dictionary, build_pos: Vector3 = Vector3.ZERO, build_yaw: float = 0.0, has_build_pos: bool = false) -> void:
 	if owner_hero == null or owner_hero.is_defeated:
 		return
 	var root: Node = context.get("vehicles_root", context.get("projectiles_root", owner_hero.get_parent()))
 	if root == null:
 		return
-	var deploy: Dictionary = _get_deploy_origin_and_yaw(2.6)
-	var spawn_pos: Vector3 = deploy["pos"] as Vector3
-	var yaw: float = float(deploy["yaw"])
+	var spawn_pos: Vector3
+	var yaw: float
+	if has_build_pos:
+		spawn_pos = build_pos
+		yaw = build_yaw
+	else:
+		var deploy: Dictionary = _get_deploy_origin_and_yaw(2.6)
+		spawn_pos = deploy["pos"] as Vector3
+		yaw = float(deploy["yaw"])
 
 	var vehicles_arr: Array = context.get("vehicles", [])
 	var vehicles_by_id: Dictionary = context.get("vehicles_by_id", {})

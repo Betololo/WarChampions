@@ -140,6 +140,8 @@ var _weapon_parts_by_name: Dictionary = {}
 var _caber_head_spent: bool = false
 var _tnt_rope_bundle: Node3D = null
 var _tnt_spin_angle: float = 0.0
+var _build_tool_node: Node3D = null
+var _build_anim_time: float = 0.0
 var _held_riot_shield: Node3D = null
 var _held_riot_shield_base_pos: Vector3 = Vector3(-0.08, 0.26, -0.56)
 var _skill_anim_timer: float = 0.0
@@ -702,6 +704,20 @@ func is_carried_shield_active() -> bool:
 	return false
 
 
+func is_engineer_building() -> bool:
+	if is_defeated:
+		return false
+	if (active_buffs & NetSerializer.BUFF_ENGINEER_BUILD) != 0:
+		return true
+	if skill_manager != null and skill_manager.has_method("is_building"):
+		return bool(skill_manager.is_building())
+	return false
+
+
+func _is_build_tool_held() -> bool:
+	return is_engineer_building()
+
+
 func _is_tnt_rope_held() -> bool:
 	if (active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0:
 		return true
@@ -713,6 +729,28 @@ func _is_tnt_rope_held() -> bool:
 func _rebuild_held_weapon_mesh() -> void:
 	if _held_weapon_root == null:
 		return
+	if _is_build_tool_held():
+		if _shown_weapon_kind == -98 and _build_tool_node != null and is_instance_valid(_build_tool_node):
+			return
+		_shown_weapon_kind = -98
+		_shown_weapon_arch = 0
+		_cycle_anim_timer = 0.0
+		_cycle_anim_duration = 0.0
+		_weapon_cycle_progress = 0.0
+		_weapon_reload_progress = 0.0
+		_weapon_parts_by_name.clear()
+		_tnt_rope_bundle = null
+		var b_info: Dictionary = HeroMeshBuilder.populate_build_wrench_root(_held_weapon_root)
+		_build_tool_node = b_info.get("tool", null) as Node3D
+		_weapon_grip_local = b_info.get("grip", Vector3.ZERO)
+		_weapon_foregrip_local = b_info.get("foregrip", Vector3.ZERO)
+		_weapon_muzzle_local = b_info.get("muzzle", Vector3(0.0, 0.40, 0.0))
+		_weapon_two_handed = false
+		if _held_weapon_root_l != null:
+			_held_weapon_root_l.visible = false
+		return
+
+	_build_tool_node = null
 	if _is_tnt_rope_held():
 		if _shown_weapon_kind == -99 and _tnt_rope_bundle != null and is_instance_valid(_tnt_rope_bundle):
 			return
@@ -1081,7 +1119,7 @@ func _animate_character(delta: float) -> void:
 			_held_weapon_root.visible = can_shoot_seat
 		if _held_weapon_root_l != null:
 			var is_dual_in_veh: bool = (_shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or _shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
-			_held_weapon_root_l.visible = can_shoot_seat and is_dual_in_veh
+			_held_weapon_root_l.visible = can_shoot_seat and is_dual_in_veh and not _is_build_tool_held()
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
 		if current_seat_pose == "sit":
@@ -1189,6 +1227,7 @@ func _animate_character(delta: float) -> void:
 	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, 14.0 * delta)
 
 	if is_parachuting:
+		_build_anim_time = 0.0
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
 		_leg_l_pivot.rotation.x = lerpf(_leg_l_pivot.rotation.x, 0.35, 10.0 * delta)
@@ -1204,6 +1243,7 @@ func _animate_character(delta: float) -> void:
 		_torso_pivot.rotation.x = 0.12
 		_torso_pivot.rotation.y = 0.0
 	elif is_emoting:
+		_build_anim_time = 0.0
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
 		emote_timer += delta
@@ -1218,7 +1258,10 @@ func _animate_character(delta: float) -> void:
 		_forearm_l_pivot.rotation = Vector3(0.4, 0.0, 0.0)
 		_forearm_r_pivot.rotation = Vector3(0.8, 0.0, 0.0)
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
+	elif is_engineer_building():
+		_pose_build_animation(delta)
 	else:
+		_build_anim_time = 0.0
 		var is_grounded_anim: bool = is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0
 		if is_crouching:
 			_leg_l_pivot.rotation.x = 1.10 + stride * 0.42
@@ -1251,6 +1294,45 @@ func _animate_character(delta: float) -> void:
 		if _skill_anim_timer > 0.0:
 			var s_t: float = 1.0 - clampf(_skill_anim_timer / maxf(0.05, _skill_anim_duration), 0.0, 1.0)
 			_pose_skill_animation(s_t)
+
+
+func _pose_build_animation(delta: float) -> void:
+	_build_anim_time += delta
+	if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+		_held_riot_shield.visible = false
+	if _held_weapon_root_l != null:
+		_held_weapon_root_l.visible = false
+
+	var swing: float = sin(_build_anim_time * 9.0)
+	var strike: float = 0.5 + 0.5 * swing
+
+	# Kneeling / crouched stance leaning forward toward construction site
+	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, 0.50, minf(1.0, 14.0 * delta))
+	_leg_l_pivot.rotation.x = 1.05
+	_leg_r_pivot.rotation.x = 0.45
+	if _calf_l_pivot != null:
+		_calf_l_pivot.rotation.x = -1.45
+	if _calf_r_pivot != null:
+		_calf_r_pivot.rotation.x = -1.15
+	_leg_l_pivot.rotation.z = 0.0
+	_leg_r_pivot.rotation.z = 0.0
+
+	_torso_pivot.rotation.x = -0.32 - maxf(0.0, -swing) * 0.08
+	_torso_pivot.rotation.y = 0.12 + swing * 0.06
+	_head_pivot.rotation.x = clampf(aim_pitch * 0.25 + 0.18, -0.35, 0.45)
+
+	var right_target := Vector3(0.22, lerpf(0.56, 0.18, strike), lerpf(-0.24, -0.46, strike))
+	var right_pole := Vector3(0.75, -0.35, 0.45)
+	_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, right_pole)
+
+	if _held_weapon_root != null:
+		_held_weapon_root.visible = true
+		_held_weapon_root.position = right_target
+		_held_weapon_root.rotation = Vector3(lerpf(0.25, -1.25, strike), 0.12, -0.15)
+
+	var left_target := Vector3(-0.18, 0.20, -0.34)
+	var left_pole := Vector3(-0.75, -0.45, 0.45)
+	_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, left_pole)
 
 
 func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
@@ -1773,6 +1855,10 @@ func _sample_local_input() -> InputCmd:
 
 	cmd.selected_weapon_slot = selected_weapon_slot
 	cmd.view_interp_tick_delta = NetworkManager.get_view_interp_tick_delta()
+	if is_engineer_building() and current_vehicle_id < 0:
+		cmd.move_dir = Vector2.ZERO
+		cmd.set_button(InputCmd.BTN_JUMP, false)
+		cmd.set_button(InputCmd.BTN_FIRE, false)
 	return cmd
 
 
@@ -1860,8 +1946,9 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	else:
 		floor_snap_length = 0.3
 
+	var eng_building: bool = is_engineer_building() and current_vehicle_id < 0
 	var jump_held: bool = cmd.has_button(InputCmd.BTN_JUMP)
-	var jump_just_pressed: bool = jump_held and not prev_jump_held
+	var jump_just_pressed: bool = jump_held and not prev_jump_held and not eng_building
 	prev_jump_held = jump_held
 
 	is_crouching = cmd.has_button(InputCmd.BTN_CROUCH) and not is_parachuting
@@ -1929,8 +2016,9 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 			velocity.y = lerpf(velocity.y, PARACHUTE_MAX_FALL, minf(1.0, 14.0 * delta))
 
 	# Horizontal movement aligned to aim_yaw
+	var move_input: Vector2 = Vector2.ZERO if eng_building else cmd.move_dir
 	var basis_yaw := Basis(Vector3.UP, aim_yaw)
-	var wish_dir: Vector3 = (basis_yaw * Vector3(cmd.move_dir.x, 0.0, cmd.move_dir.y))
+	var wish_dir: Vector3 = (basis_yaw * Vector3(move_input.x, 0.0, move_input.y))
 	wish_dir.y = 0.0
 	if wish_dir.length_squared() > 0.0001:
 		wish_dir = wish_dir.normalized()
@@ -2111,6 +2199,7 @@ func clear_vehicle_state() -> void:
 	visual_error_offset = Vector3.ZERO
 	_last_vfx_key = ""
 	_speed_trail_timer = 0.0
+	_build_anim_time = 0.0
 	if _body_collision != null:
 		_body_collision.disabled = false
 	if hero_camera != null:
@@ -2473,6 +2562,7 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	visual_error_offset = Vector3.ZERO
 	_last_vfx_key = ""
 	_speed_trail_timer = 0.0
+	_build_anim_time = 0.0
 	if visual_root != null:
 		visual_root.global_position = spawn_pos
 	if hero_camera != null:

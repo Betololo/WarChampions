@@ -433,6 +433,7 @@ func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
 	_prev_interact_state.clear()
+	StatusEffectsVFX.clear_all_build_previews()
 	if hud != null:
 		hud.set_local_hero(null)
 		hud.clear_killfeed()
@@ -471,7 +472,7 @@ func _clear_match_entities() -> void:
 	for rvid in remove_vids:
 		vehicles_by_id.erase(rvid)
 	if is_inside_tree():
-		for grp in ["trenches", "client_trenches", "mortar_rings", "deployed_turrets"]:
+		for grp in ["trenches", "client_trenches", "mortar_rings", "deployed_turrets", "build_previews"]:
 			for g_node in get_tree().get_nodes_in_group(grp):
 				if is_instance_valid(g_node):
 					if g_node is VehicleBase:
@@ -1143,6 +1144,21 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				av_node.hp = int(payload.get("hp", av_node.hp))
 				av_node.attach_engineer_armor_visuals()
 			SoundSynthesizer.play_sfx("build_construct", 0.0, int(payload.get("hero_id", -1)) == NetworkManager.local_peer_id, av_node.global_position if av_node != null else Vector3.ZERO)
+		"eng_build_start":
+			var eb_hero_id: int = int(payload.get("hero_id", -1))
+			var eb_slot: int = int(payload.get("slot", -1))
+			var eb_dur: float = float(payload.get("duration", 2.0))
+			var eb_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			var eb_yaw: float = float(payload.get("yaw", 0.0))
+			if projectiles_root != null:
+				StatusEffectsVFX.spawn_build_preview(projectiles_root, eb_hero_id, eb_slot, eb_pos, eb_yaw, eb_dur)
+			if eb_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("start_build_progress"):
+				hud.start_build_progress(eb_slot, eb_dur)
+		"eng_build_stop":
+			var ebs_hero_id: int = int(payload.get("hero_id", -1))
+			StatusEffectsVFX.stop_build_preview(ebs_hero_id)
+			if ebs_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("stop_build_progress"):
+				hud.stop_build_progress()
 
 
 func _get_live_vehicles_array() -> Array[VehicleBase]:

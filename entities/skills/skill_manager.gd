@@ -121,6 +121,10 @@ func _defers_cooldown_until_exit(_slot_idx: int) -> bool:
 	return false
 
 
+func get_active_buff_flags() -> int:
+	return 0
+
+
 func _record_aoe_effect(radius: float, target_ids: Array[int], origin: Vector3 = Vector3.ZERO) -> void:
 	_last_aoe_radius = radius
 	_last_aoe_origin = origin
