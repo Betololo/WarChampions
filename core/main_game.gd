@@ -1059,21 +1059,39 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 					h.skill_manager.upgrade_skill(int(payload.get("slot", -1)))
 		"mortar_mode":
 			var m_hero_id: int = int(payload.get("hero_id", -1))
+			var active_m: bool = bool(payload.get("active", false))
+			var m_hero: HeroCharacter = heroes_by_id.get(m_hero_id, null)
+			if m_hero != null and is_instance_valid(m_hero) and m_hero.has_method("trigger_mortar_visual"):
+				m_hero.trigger_mortar_visual("deploy" if active_m else "stow")
 			if m_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("set_mortar_targeting_mode"):
-				var active_m: bool = bool(payload.get("active", false))
 				hud.set_mortar_targeting_mode(active_m, func(world_pos: Vector3) -> void:
 					NetworkManager.send_mortar_target(world_pos.x, world_pos.z)
 				)
+		"mortar_cancel":
+			var mc_hero_id: int = int(payload.get("hero_id", -1))
+			var mc_hero: HeroCharacter = heroes_by_id.get(mc_hero_id, null)
+			if mc_hero != null and is_instance_valid(mc_hero) and mc_hero.has_method("trigger_mortar_visual"):
+				mc_hero.trigger_mortar_visual("stow")
 		"mortar_strike":
+			var ms_hero_id: int = int(payload.get("hero_id", -1))
 			var ms_pos: Vector3 = payload.get("pos", Vector3.ZERO)
-			var ms_rad: float = float(payload.get("radius", 7.0))
-			var ms_delay: float = float(payload.get("delay", 1.5))
+			var ms_rad: float = float(payload.get("radius", 13.0))
+			var ms_delay: float = float(payload.get("delay", 1.25))
+			var ms_hero: HeroCharacter = heroes_by_id.get(ms_hero_id, null)
+			if ms_hero != null and is_instance_valid(ms_hero) and ms_hero.has_method("trigger_mortar_visual"):
+				ms_hero.trigger_mortar_visual("fire")
+			var ms_origin: Vector3 = payload.get("shooter_pos", Vector3.ZERO)
+			if ms_hero != null and is_instance_valid(ms_hero) and ms_hero.has_method("get_mortar_muzzle_world_position"):
+				ms_origin = ms_hero.get_mortar_muzzle_world_position()
+			elif ms_origin == Vector3.ZERO:
+				ms_origin = ms_pos + Vector3(0.0, 1.0, 0.0)
 			if projectiles_root != null:
 				StatusEffectsVFX.spawn_mortar_warning_ring(projectiles_root, ms_pos, ms_rad, ms_delay)
+				StatusEffectsVFX.spawn_mortar_shell_arc(projectiles_root, ms_origin, ms_pos, ms_delay)
 			SoundSynthesizer.play_sfx("mortar_whistle", 0.0, false, ms_pos)
 		"mortar_explode":
 			var me_pos: Vector3 = payload.get("pos", Vector3.ZERO)
-			var me_rad: float = float(payload.get("radius", 7.0))
+			var me_rad: float = float(payload.get("radius", 13.0))
 			var me_hero_id: int = int(payload.get("hero_id", -1))
 			if projectiles_root != null:
 				StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, me_pos, "explosion", me_rad)

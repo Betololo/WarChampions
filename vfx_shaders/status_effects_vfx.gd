@@ -65,6 +65,40 @@ class BuildPreviewVFX extends Node3D:
 			StatusEffectsVFX._active_build_previews.erase(hero_id)
 
 
+class MortarShellArcVFX extends Node3D:
+	var origin: Vector3 = Vector3.ZERO
+	var target: Vector3 = Vector3.ZERO
+	var duration: float = 1.25
+	var elapsed: float = 0.0
+	var peak_lift: float = 22.0
+	var _trail_timer: float = 0.0
+
+	func _process(delta: float) -> void:
+		var safe_dur: float = maxf(0.1, duration)
+		elapsed = minf(safe_dur, elapsed + delta)
+		var t: float = clampf(elapsed / safe_dur, 0.0, 1.0)
+		var pos: Vector3 = origin.lerp(target, t)
+		pos.y += peak_lift * 4.0 * t * (1.0 - t)
+		position = pos
+
+		var vel_t: Vector3 = (target - origin) / safe_dur + Vector3.UP * (peak_lift * 4.0 * (1.0 - 2.0 * t) / safe_dur)
+		if vel_t.length_squared() > 0.001:
+			var fwd: Vector3 = vel_t.normalized()
+			var up_hint: Vector3 = Vector3.FORWARD if absf(fwd.y) > 0.96 else Vector3.UP
+			var right_v: Vector3 = fwd.cross(up_hint).normalized()
+			var up_v: Vector3 = right_v.cross(fwd).normalized()
+			basis = Basis(right_v, up_v, -fwd)
+
+		_trail_timer += delta
+		if _trail_timer >= 0.045 and t < 0.98:
+			_trail_timer = 0.0
+			if not DisplayServer.get_name().contains("headless") and get_parent() != null:
+				StatusEffectsVFX._spawn_mortar_trail_puff(get_parent(), pos)
+
+		if elapsed >= safe_dur:
+			queue_free()
+
+
 static func _get_xray_material() -> ShaderMaterial:
 	if _xray_mat == null:
 		_xray_mat = ShaderMaterial.new()
@@ -1316,7 +1350,7 @@ static func spawn_explosion_area_ring(parent: Node, origin: Vector3, radius: flo
 	return root
 
 
-static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: float = 7.0, delay: float = 1.5) -> Node3D:
+static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: float = 13.0, delay: float = 1.25) -> Node3D:
 	if parent == null or radius <= 0.0 or DisplayServer.get_name().contains("headless"):
 		return null
 	warm_shared_meshes()
@@ -1350,6 +1384,61 @@ static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: flo
 		tw.chain().tween_callback(root.queue_free)
 
 	return root
+
+
+static func _spawn_mortar_trail_puff(parent: Node, pos: Vector3) -> void:
+	if parent == null or DisplayServer.get_name().contains("headless"):
+		return
+	warm_shared_meshes()
+	var puff := MeshInstance3D.new()
+	puff.mesh = _get_shared_sphere()
+	puff.material_override = _get_shared_mat(Color(0.86, 0.84, 0.80, 0.55), false)
+	puff.position = pos
+	puff.scale = Vector3(0.32, 0.32, 0.32)
+	puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(puff)
+	var tw: Tween = puff.create_tween() if puff.is_inside_tree() else null
+	if tw != null:
+		tw.set_parallel(true)
+		tw.tween_property(puff, "scale", Vector3(0.95, 0.95, 0.95), 0.38)
+		tw.tween_property(puff, "position", pos + Vector3(0.0, 0.45, 0.0), 0.38)
+		tw.tween_property(puff, "transparency", 1.0, 0.38)
+		tw.chain().tween_callback(puff.queue_free)
+	else:
+		puff.queue_free()
+
+
+static func spawn_mortar_shell_arc(parent: Node, origin: Vector3, target: Vector3, duration: float = 1.25) -> Node3D:
+	if parent == null:
+		return null
+	warm_shared_meshes()
+
+	var shell := MortarShellArcVFX.new()
+	shell.name = "MortarShellArcVFX"
+	shell.origin = origin
+	shell.target = target
+	shell.duration = maxf(0.1, duration)
+	var horiz_dist: float = Vector2(target.x - origin.x, target.z - origin.z).length()
+	shell.peak_lift = clampf(16.0 + horiz_dist * 0.28, 18.0, 42.0)
+	shell.position = origin
+	shell.add_to_group("mortar_rings")
+
+	var cyl: CylinderMesh = _get_shared_cylinder()
+	var cone: CylinderMesh = _get_shared_cone()
+	var sph: SphereMesh = _get_shared_sphere()
+	var olive_mat: StandardMaterial3D = _get_shared_mat(Color(0.32, 0.38, 0.24, 1.0), false)
+	var brass_mat: StandardMaterial3D = _get_shared_mat(Color(0.92, 0.72, 0.24, 1.0), false)
+	var flame_mat: StandardMaterial3D = _get_shared_mat(Color(1.0, 0.52, 0.14, 0.94), true)
+	var dummy: Array[MeshInstance3D] = []
+
+	# Shell aligned along -Z forward (cylinder/cone local +Y rotated -PI*0.5 around X -> -Z)
+	_vfx_part(shell, cyl, olive_mat, Vector3.ZERO, Vector3(0.22, 0.56, 0.22), Vector3(-PI * 0.5, 0.0, 0.0), dummy)
+	_vfx_part(shell, cone, brass_mat, Vector3(0.0, 0.0, -0.38), Vector3(0.20, 0.26, 0.20), Vector3(-PI * 0.5, 0.0, 0.0), dummy)
+	_vfx_part(shell, sph, flame_mat, Vector3(0.0, 0.0, 0.34), Vector3(0.28, 0.28, 0.46), Vector3.ZERO, dummy)
+
+	parent.add_child(shell)
+	shell._process(0.0)
+	return shell
 
 
 static func _add_wireframe_box_outline(

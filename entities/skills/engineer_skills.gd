@@ -5,14 +5,15 @@ extends SkillManager
 ## 0: Trincheira (3.0s build, 850 HP cover trench 5.0m x 3.0m w/ interior platform & stairs, max 1, 18s CD on destroy)
 ## 1: Metralhadora Montada c/ Escudo (2.0s build, 320 HP shielded 360° turret, max 1, 18s CD on destroy)
 ## 2: Blindar Veiculo (2.0s channel on occupied or nearest <= 7m allied/empty vehicle -> 2x max HP + armor plates, 20s CD)
-## 3: Morteiro via Minimapa (HUD minimap click or bot target -> 1.5s warning strike -> 7.0m radius 80 max AoE dmg, 18s CD)
+## 3: Morteiro via Minimapa (HUD minimap click or bot target -> 1.25s warning strike -> 13.0m radius 110 max AoE dmg, 18s CD)
 ## 4: Armadura Invulneravel (1.5s full damage immunity aura, 18s CD)
 
 const VehicleShieldedMGScript := preload("res://entities/vehicles/vehicle_shielded_mg.gd")
 
-const MORTAR_RADIUS: float = 7.0
-const MORTAR_DELAY: float = 1.5
-const MORTAR_MAX_DAMAGE: int = 80
+const MORTAR_RADIUS: float = 13.0
+const MORTAR_DELAY: float = 1.25
+const MORTAR_MAX_DAMAGE: int = 110
+const MORTAR_STOW_WINDOW: float = 0.75
 const ARMOR_RANGE: float = 7.0
 
 
@@ -200,6 +201,7 @@ var _pending_build_pos: Vector3 = Vector3.ZERO
 var _pending_build_yaw: float = 0.0
 var _pending_build_has_pos: bool = false
 var _mortar_pending_hero_aim: bool = false
+var _mortar_stow_timer: float = 0.0
 var _pending_mortars: Array[Dictionary] = []
 var _last_context: Dictionary = {}
 var _mortar_stepped_frame: int = -1
@@ -231,18 +233,22 @@ func _defers_cooldown_until_exit(slot_idx: int) -> bool:
 
 
 func blocks_weapon_fire() -> bool:
-	return _active_build_slot >= 0 or _mortar_pending_hero_aim
+	return _active_build_slot >= 0 or _mortar_pending_hero_aim or _mortar_stow_timer > 0.0
 
 
 func is_building() -> bool:
 	return _active_build_slot >= 0
 
 
+func is_mortar_active() -> bool:
+	return _mortar_pending_hero_aim or _mortar_stow_timer > 0.0
+
+
 func get_active_buff_flags() -> int:
 	var flags: int = 0
 	if _active_build_slot >= 0:
 		flags |= NetSerializer.BUFF_ENGINEER_BUILD
-	if _mortar_pending_hero_aim:
+	if _mortar_pending_hero_aim or _mortar_stow_timer > 0.0:
 		flags |= NetSerializer.BUFF_ENGINEER_MORTAR
 	return flags
 
@@ -263,15 +269,26 @@ func get_build_progress_fraction() -> float:
 
 
 func _clear_mortar_targeting(broadcast: bool = true) -> void:
-	if not _mortar_pending_hero_aim:
+	var was_aiming: bool = _mortar_pending_hero_aim
+	var was_stowing: bool = _mortar_stow_timer > 0.0
+	if not was_aiming and not was_stowing:
 		return
 	_mortar_pending_hero_aim = false
+	_mortar_stow_timer = 0.0
 	_sync_hero_buffs()
-	if broadcast and owner_hero != null:
+	if broadcast and was_aiming and owner_hero != null:
 		NetworkManager.broadcast_game_event("mortar_mode", {
 			"hero_id": owner_hero.entity_id,
 			"active": false,
 		})
+
+
+func _step_mortar_stow(delta: float) -> void:
+	if _mortar_stow_timer <= 0.0:
+		return
+	_mortar_stow_timer = maxf(0.0, _mortar_stow_timer - delta)
+	if _mortar_stow_timer <= 0.0:
+		_sync_hero_buffs()
 
 
 func _check_interrupt_states() -> void:
@@ -300,6 +317,7 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_s
 	_last_context = context
 	_mortar_stepped_frame = Engine.get_physics_frames()
 	_step_pending_mortars(delta, context)
+	_step_mortar_stow(delta)
 	_check_interrupt_states()
 	_step_active_build(delta, context)
 
@@ -309,7 +327,7 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_s
 	if _active_turret != null and (not is_instance_valid(_active_turret) or _active_turret.is_queued_for_deletion()):
 		_active_turret = null
 
-	super.step_server(delta, cmd, context, allow_class_skills and _active_build_slot < 0)
+	super.step_server(delta, cmd, context, allow_class_skills and _active_build_slot < 0 and not _mortar_pending_hero_aim and _mortar_stow_timer <= 0.0)
 
 
 func _physics_process(delta: float) -> void:
@@ -386,7 +404,7 @@ func _step_active_build(delta: float, context: Dictionary) -> void:
 
 
 func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Dictionary) -> bool:
-	if owner_hero == null or _active_build_slot >= 0:
+	if owner_hero == null or _active_build_slot >= 0 or _mortar_pending_hero_aim or _mortar_stow_timer > 0.0:
 		return false
 
 	match slot_idx:
@@ -445,20 +463,29 @@ func _execute_class_skill(slot_idx: int, _rank: int, _cmd: InputCmd, context: Di
 
 
 func cancel_mortar_mode() -> void:
+	var was_aiming: bool = _mortar_pending_hero_aim
 	_mortar_pending_hero_aim = false
+	_mortar_stow_timer = 0.0
 	_sync_hero_buffs()
+	if was_aiming and owner_hero != null:
+		NetworkManager.broadcast_game_event("mortar_cancel", {
+			"hero_id": owner_hero.entity_id,
+		})
 
 
 func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 	if owner_hero == null or owner_hero.is_defeated:
 		_mortar_pending_hero_aim = false
+		_mortar_stow_timer = 0.0
 		_sync_hero_buffs()
 		return false
 	if skill_cooldowns.size() > 3 and skill_cooldowns[3] > 0.0:
 		_mortar_pending_hero_aim = false
+		_mortar_stow_timer = 0.0
 		_sync_hero_buffs()
 		return false
 	_mortar_pending_hero_aim = false
+	_mortar_stow_timer = MORTAR_STOW_WINDOW
 	_sync_hero_buffs()
 
 	var strike_pos := Vector3(target_xz.x, target_xz.y, target_xz.z)
@@ -472,6 +499,10 @@ func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 		var hit: Dictionary = space.intersect_ray(q)
 		if not hit.is_empty():
 			strike_pos.y = (hit["position"] as Vector3).y
+
+	var shooter_pos: Vector3 = owner_hero.global_position if owner_hero.is_inside_tree() else owner_hero.position
+	if owner_hero.has_method("get_mortar_muzzle_world_position"):
+		shooter_pos = owner_hero.get_mortar_muzzle_world_position()
 
 	skill_cooldowns[3] = skill_max_cooldowns[3]
 	skill_activated.emit(3, skill_cooldowns[3])
@@ -488,6 +519,7 @@ func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 		"hero_id": owner_hero.entity_id,
 		"team": owner_hero.team,
 		"pos": strike_pos,
+		"shooter_pos": shooter_pos,
 		"radius": MORTAR_RADIUS,
 		"delay": MORTAR_DELAY,
 	})
@@ -542,16 +574,17 @@ func _detonate_mortar(strike: Dictionary, context: Dictionary) -> void:
 		var hpos: Vector3 = h.global_position if h.is_inside_tree() else h.position
 		var dist: float = hpos.distance_to(strike_pos)
 		if dist <= MORTAR_RADIUS:
-			var falloff: float = clampf(1.0 - (dist / MORTAR_RADIUS) * 0.6, 0.4, 1.0)
+			var falloff: float = clampf(1.0 - maxf(0.0, dist / MORTAR_RADIUS - 0.35) / 0.65 * 0.55, 0.45, 1.0)
 			var dmg: int = maxi(1, int(roundf(float(MORTAR_MAX_DAMAGE) * falloff)))
 			h.apply_damage_server(dmg, attacker_id, true)
 			var push_dir: Vector3 = (hpos - strike_pos)
 			push_dir.y = 0.0
 			if push_dir.length_squared() < 0.01:
 				push_dir = Vector3.FORWARD
-			h.apply_knockback((push_dir.normalized() + Vector3.UP * 0.55).normalized() * (11.0 * falloff))
+			h.apply_knockback((push_dir.normalized() + Vector3.UP * 0.55).normalized() * (13.5 * falloff))
 
 	var vehicles_arr: Array = context.get("vehicles", strike.get("vehicles", []))
+	var veh_radius: float = MORTAR_RADIUS + 2.5
 	for v_node in vehicles_arr:
 		if not (v_node is VehicleBase) or not is_instance_valid(v_node):
 			continue
@@ -560,8 +593,8 @@ func _detonate_mortar(strike: Dictionary, context: Dictionary) -> void:
 			continue
 		var vpos: Vector3 = v.global_position if v.is_inside_tree() else v.position
 		var dist_v: float = vpos.distance_to(strike_pos)
-		if dist_v <= MORTAR_RADIUS + 2.0:
-			var v_falloff: float = clampf(1.0 - (dist_v / (MORTAR_RADIUS + 2.0)) * 0.6, 0.4, 1.0)
+		if dist_v <= veh_radius:
+			var v_falloff: float = clampf(1.0 - maxf(0.0, dist_v / veh_radius - 0.35) / 0.65 * 0.55, 0.45, 1.0)
 			var vdmg: int = maxi(1, int(roundf(float(MORTAR_MAX_DAMAGE) * 1.25 * v_falloff)))
 			var hit_dir: Vector3 = (vpos - strike_pos).normalized()
 			v.apply_damage_server(vdmg, attacker_id, hit_dir, strike_pos, true)

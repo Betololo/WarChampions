@@ -465,7 +465,10 @@ func _is_fire_blocked_by_tnt_rope() -> bool:
 	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("is_tnt_rope_active") and bool(owner_hero.status_effects.is_tnt_rope_active()):
 		return true
 	if owner_hero.skill_manager != null and owner_hero.skill_manager.has_method("blocks_weapon_fire"):
-		return bool(owner_hero.skill_manager.blocks_weapon_fire())
+		if bool(owner_hero.skill_manager.blocks_weapon_fire()):
+			return true
+	if owner_hero.has_method("is_engineer_mortar_deployed") and bool(owner_hero.is_engineer_mortar_deployed()):
+		return true
 	return false
 
 

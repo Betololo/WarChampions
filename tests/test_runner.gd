@@ -57,6 +57,7 @@ func _ready() -> void:
 	await _test_phase12_task4_field_engineer()
 	await _test_phase12_task5_menus_5classes_integration()
 	await _test_phase12b_task1_engineer_build_channel()
+	await _test_phase12b_task2_mortar_anim_and_aoe()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -8716,7 +8717,7 @@ func _test_phase12_task4_field_engineer() -> void:
 		and sm.skill_cooldowns[2] > 19.0 and sm.skill_cooldowns[2] <= 20.0
 	)
 
-	# Skill 3: Morteiro via Minimapa (0 CD until target chosen -> 1.5s timer -> 80 max AoE dmg)
+	# Skill 3: Morteiro via Minimapa (0 CD until target chosen -> 1.25s timer -> 110 max AoE dmg + 0.75s stow window)
 	enemy_hero.hp = enemy_hero.max_hp
 	enemy_hero.position = Vector3(16.0, 0.0, -16.0)
 	var bot_mortar_target: Vector3 = sm._pick_bot_mortar_target(ctx_t)
@@ -8726,11 +8727,12 @@ func _test_phase12_task4_field_engineer() -> void:
 	var mortar_deferred_ok: bool = is_equal_approx(sm.skill_cooldowns[3], 0.0) and sm._mortar_pending_hero_aim and sm.blocks_weapon_fire()
 	sk_cmd.buttons = 0
 	var fired_m: bool = sm.fire_mortar_at(enemy_hero.position, ctx_t)
-	var mortar_cd_started_ok: bool = fired_m and sm.skill_cooldowns[3] > 17.0 and not sm.blocks_weapon_fire()
+	var mortar_cd_started_ok: bool = fired_m and sm.skill_cooldowns[3] > 17.0 and sm.blocks_weapon_fire()
 	for _i in range(17):
 		eng.status_effects._physics_process(0.1)
 		sm.step_server(0.1, sk_cmd, ctx_t)
-	var mortar_hit_ok: bool = (enemy_hero.hp == enemy_hero.max_hp - 80)
+	mortar_cd_started_ok = mortar_cd_started_ok and not sm.blocks_weapon_fire()
+	var mortar_hit_ok: bool = (enemy_hero.hp == enemy_hero.max_hp - 110)
 
 	# Skill 4: Armadura Invulneravel (1.5s full damage immunity)
 	sk_cmd.buttons = InputCmd.BTN_SKILL_5
@@ -9501,6 +9503,220 @@ func _test_phase12b_task1_engineer_build_channel() -> void:
 			str(start_ev_ok), str(preview_rise_ok), str(exact_trench_align_ok), str(build_stopped_ok), str(weapon_restored_ok),
 			str(exact_turret_align_ok), str(preview1_cleared_ok),
 			str(hud_s0_ok), str(hud_s1_ok), str(hud_s2_ok), str(hud_defeat_hide_ok), str(hud_stop_hide_ok)
+		]
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+
+func _test_phase12b_task2_mortar_anim_and_aoe() -> void:
+	var arena := Node3D.new()
+	add_child(arena)
+	var floor_body := StaticBody3D.new()
+	floor_body.collision_layer = 1
+	var floor_col := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(120.0, 2.0, 120.0)
+	floor_col.shape = floor_box
+	floor_col.position = Vector3(0.0, -1.0, 0.0)
+	floor_body.add_child(floor_col)
+	arena.add_child(floor_body)
+
+	var eng := HeroCharacter.new()
+	eng.setup_identity(461, "MortarEng", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 0, false, false)
+	eng.position = Vector3(0.0, 0.0, 0.0)
+	arena.add_child(eng)
+
+	var enemy_center := HeroCharacter.new()
+	enemy_center.setup_identity(462, "CenterTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	enemy_center.position = Vector3(32.0, 0.0, 0.0)
+	arena.add_child(enemy_center)
+
+	var enemy_rim := HeroCharacter.new()
+	enemy_rim.setup_identity(463, "RimTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	enemy_rim.position = Vector3(43.5, 0.0, 0.0) # 11.5m from strike center (past old 7.0m limit!)
+	arena.add_child(enemy_rim)
+
+	var enemy_veh := VehicleJeep.new()
+	enemy_veh.id = 62
+	enemy_veh.team = NetworkManager.TEAM_NATIONAL
+	enemy_veh.position = Vector3(32.0, 0.0, 14.5) # within 15.5m vehicle blast radius
+	arena.add_child(enemy_veh)
+
+	var cli_eng := HeroCharacter.new()
+	cli_eng.setup_identity(464, "RemoteEng", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_ENGINEER, 0, false, false)
+	cli_eng.position = Vector3(-4.0, 0.0, 0.0)
+	arena.add_child(cli_eng)
+
+	await _flush_deferred()
+	await get_tree().physics_frame
+
+	var sm := eng.skill_manager as EngineerSkills
+	var heroes_d: Dictionary = {
+		eng.entity_id: eng,
+		enemy_center.entity_id: enemy_center,
+		enemy_rim.entity_id: enemy_rim,
+	}
+	var vehs: Array = [enemy_veh]
+	var ctx: Dictionary = {
+		"heroes_by_id": heroes_d,
+		"heroes": heroes_d,
+		"vehicles": vehs,
+		"projectiles_root": arena,
+		"vehicles_root": arena,
+	}
+
+	var strike_events: Array[Dictionary] = []
+	var explode_events: Array[Dictionary] = []
+	var cancel_events: Array[Dictionary] = []
+	var ev_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "mortar_strike":
+			strike_events.append(payload)
+		elif ev_type == "mortar_explode":
+			explode_events.append(payload)
+		elif ev_type == "mortar_cancel":
+			cancel_events.append(payload)
+	NetworkManager.game_event_received.connect(ev_cb)
+
+	# 1. Enter Mortar Aim Mode -> BUFF_ENGINEER_MORTAR active, -97 mortar tube equipped, move/jump/fire locked
+	var sk_cmd := InputCmd.new()
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx)
+	sk_cmd.buttons = 0
+	var mortar_buff_ok: bool = (eng.active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) != 0 and eng.is_engineer_mortar_deployed()
+
+	eng._animate_character(0.05)
+	var prop_equipped_ok: bool = (
+		eng._shown_weapon_kind == -97
+		and eng._mortar_tube_node != null
+		and is_instance_valid(eng._mortar_tube_node)
+		and eng._mortar_tube_node.get_node_or_null("MortarBarrel") != null
+		and eng._mortar_tube_node.get_node_or_null("MortarBaseplate") != null
+		and eng._mortar_tube_node.get_node_or_null("MortarBipodL") != null
+		and eng._held_weapon_root_l != null
+		and not eng._held_weapon_root_l.visible
+		and eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.DEPLOY
+	)
+	eng._animate_character(0.35)
+	var hold_phase_ok: bool = eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.AIMED_HOLD and eng._hips_pivot.position.y < 0.60
+
+	# Movement, jump, and fire locked while mortar deployed
+	eng.velocity = Vector3(5.0, 0.0, 0.0)
+	var move_cmd := InputCmd.new()
+	move_cmd.move_dir = Vector2(1.0, 0.0)
+	move_cmd.aim_yaw = eng.aim_yaw
+	move_cmd.buttons = InputCmd.BTN_JUMP | InputCmd.BTN_FIRE
+	for _i in range(12):
+		eng.simulate_movement(move_cmd, 1.0 / 60.0)
+	var move_jump_locked_ok: bool = Vector2(eng.velocity.x, eng.velocity.z).length() < 1.5 and eng.velocity.y <= 0.05
+	var srv_w := eng.weapons[0] as WeaponBase
+	var srv_fire_locked_ok: bool = not srv_w.try_consume_fire(move_cmd)
+
+	# 2. Fire Mortar -> launch recoil -> stow -> equipped weapon restored!
+	var center_hp0: int = enemy_center.hp
+	var rim_hp0: int = enemy_rim.hp
+	var veh_hp0: int = enemy_veh.hp
+	var fired: bool = sm.fire_mortar_at(enemy_center.position, ctx)
+	eng.trigger_mortar_visual("fire")
+	var fire_phase_ok: bool = (
+		fired
+		and eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.FIRE
+		and (eng.active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) != 0
+		and not srv_w.try_consume_fire(move_cmd)
+	)
+	var strike_ev_ok: bool = (
+		not strike_events.is_empty()
+		and strike_events[0].has("shooter_pos")
+		and is_equal_approx(float(strike_events[0].get("radius", 0.0)), 13.0)
+		and is_equal_approx(float(strike_events[0].get("delay", 0.0)), 1.25)
+	)
+
+	# Advance 0.35s -> transitions from FIRE (0.30s) into STOW (0.45s)
+	eng._animate_character(0.35)
+	var stow_phase_ok: bool = eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.STOW and eng.is_engineer_mortar_deployed()
+
+	# Step server & visuals past 0.75s stow window and 1.25s mortar delay
+	for _i in range(14):
+		sm.step_server(0.1, sk_cmd, ctx)
+		eng.status_effects._physics_process(0.1)
+		eng._animate_character(0.1)
+
+	var weapon_restored_ok: bool = (
+		not eng.is_engineer_mortar_deployed()
+		and (eng.active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) == 0
+		and eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.NONE
+		and eng._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+		and eng._held_weapon_root_l != null
+		and eng._held_weapon_root_l.visible
+	)
+	var aoe_dmg_ok: bool = (
+		center_hp0 - enemy_center.hp == 110
+		and rim_hp0 - enemy_rim.hp >= 45
+		and veh_hp0 - enemy_veh.hp >= 55
+		and not explode_events.is_empty()
+		and is_equal_approx(float(explode_events[0].get("radius", 0.0)), 13.0)
+	)
+
+	# 3. Remote client snapshot edge drives deploy -> hold -> stow -> restore automatically
+	cli_eng.active_buffs = NetSerializer.BUFF_ENGINEER_MORTAR
+	cli_eng._animate_character(0.05)
+	var cli_deploy_ok: bool = cli_eng._shown_weapon_kind == -97 and cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.DEPLOY
+	cli_eng._animate_character(0.40)
+	var cli_hold_ok: bool = cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.AIMED_HOLD
+	cli_eng.active_buffs = 0
+	cli_eng._animate_character(0.05)
+	var cli_stow_ok: bool = cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.STOW
+	cli_eng._animate_character(0.50)
+	var cli_restored_ok: bool = cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.NONE and cli_eng._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+
+	# 4. Flying mortar shell arc rises skyward at midpoint and lands + frees at duration
+	var shell_origin: Vector3 = eng.get_mortar_muzzle_world_position()
+	var shell_target := Vector3(32.0, 0.0, 0.0)
+	var shell_node := StatusEffectsVFX.spawn_mortar_shell_arc(arena, shell_origin, shell_target, 1.25) as StatusEffectsVFX.MortarShellArcVFX
+	var shell_mid_ok: bool = false
+	var shell_freed_ok: bool = false
+	if shell_node != null:
+		shell_node._process(0.625)
+		shell_mid_ok = shell_node.position.y > maxf(shell_origin.y, shell_target.y) + 12.0
+		shell_node._process(0.65)
+		await _flush_deferred()
+		shell_freed_ok = (not is_instance_valid(shell_node)) or shell_node.is_queued_for_deletion()
+
+	# 5. Cancel & Defeat clear mortar state cleanly
+	sm.skill_cooldowns[3] = 0.0
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx)
+	sk_cmd.buttons = 0
+	eng._animate_character(0.05)
+	sm.cancel_mortar_mode()
+	eng.trigger_mortar_visual("stow")
+	var cancel_ev_ok: bool = not cancel_events.is_empty() and (eng.active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) == 0
+	eng._animate_character(0.55)
+	var cancel_restored_ok: bool = not eng.is_engineer_mortar_deployed() and eng._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+
+	sm.skill_cooldowns[3] = 0.0
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx)
+	sk_cmd.buttons = 0
+	eng._animate_character(0.05)
+	eng.apply_damage_server(999, 462, false)
+	eng._animate_character(0.05)
+	var defeat_cleared_ok: bool = not eng.is_engineer_mortar_deployed() and not sm.blocks_weapon_fire()
+
+	NetworkManager.game_event_received.disconnect(ev_cb)
+
+	_assert(
+		mortar_buff_ok and prop_equipped_ok and hold_phase_ok and move_jump_locked_ok and srv_fire_locked_ok
+		and fire_phase_ok and strike_ev_ok and stow_phase_ok and weapon_restored_ok and aoe_dmg_ok
+		and cli_deploy_ok and cli_hold_ok and cli_stow_ok and cli_restored_ok
+		and shell_mid_ok and shell_freed_ok and cancel_ev_ok and cancel_restored_ok and defeat_cleared_ok,
+		"Phase 12B.2: Mortar 3D Prop, Deploy/Fire/Stow Anim, Shell Arc & 13m AoE (mb=%s pr=%s hd=%s mv=%s sf=%s fp=%s se=%s st=%s wr=%s aoe=%s cd=%s ch=%s cs=%s cr=%s sm=%s sf2=%s ce=%s cr2=%s df=%s)" % [
+			str(mortar_buff_ok), str(prop_equipped_ok), str(hold_phase_ok), str(move_jump_locked_ok), str(srv_fire_locked_ok),
+			str(fire_phase_ok), str(strike_ev_ok), str(stow_phase_ok), str(weapon_restored_ok), str(aoe_dmg_ok),
+			str(cli_deploy_ok), str(cli_hold_ok), str(cli_stow_ok), str(cli_restored_ok),
+			str(shell_mid_ok), str(shell_freed_ok), str(cancel_ev_ok), str(cancel_restored_ok), str(defeat_cleared_ok)
 		]
 	)
 

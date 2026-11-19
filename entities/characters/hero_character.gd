@@ -140,8 +140,23 @@ var _weapon_parts_by_name: Dictionary = {}
 var _caber_head_spent: bool = false
 var _tnt_rope_bundle: Node3D = null
 var _tnt_spin_angle: float = 0.0
+enum MortarAnimPhase {
+	NONE = 0,
+	DEPLOY = 1,
+	AIMED_HOLD = 2,
+	FIRE = 3,
+	STOW = 4,
+}
+const MORTAR_DEPLOY_DURATION: float = 0.35
+const MORTAR_FIRE_DURATION: float = 0.30
+const MORTAR_STOW_DURATION: float = 0.45
+
 var _build_tool_node: Node3D = null
 var _build_anim_time: float = 0.0
+var _mortar_tube_node: Node3D = null
+var _mortar_anim_phase: int = MortarAnimPhase.NONE
+var _mortar_phase_timer: float = 0.0
+var _mortar_prev_buff_active: bool = false
 var _held_riot_shield: Node3D = null
 var _held_riot_shield_base_pos: Vector3 = Vector3(-0.08, 0.26, -0.56)
 var _skill_anim_timer: float = 0.0
@@ -714,8 +729,32 @@ func is_engineer_building() -> bool:
 	return false
 
 
+func is_engineer_mortar_deployed() -> bool:
+	if is_defeated or current_vehicle_id >= 0:
+		return false
+	if (active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) != 0:
+		return true
+	if skill_manager != null and skill_manager.has_method("is_mortar_active") and bool(skill_manager.is_mortar_active()):
+		return true
+	if _mortar_anim_phase != MortarAnimPhase.NONE:
+		return true
+	return false
+
+
 func _is_build_tool_held() -> bool:
 	return is_engineer_building()
+
+
+func _is_mortar_tube_held() -> bool:
+	if is_defeated or current_vehicle_id >= 0:
+		return false
+	if _mortar_anim_phase != MortarAnimPhase.NONE:
+		return true
+	if (active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) != 0:
+		return true
+	if skill_manager != null and skill_manager.has_method("is_mortar_active") and bool(skill_manager.is_mortar_active()):
+		return true
+	return false
 
 
 func _is_tnt_rope_held() -> bool:
@@ -740,6 +779,7 @@ func _rebuild_held_weapon_mesh() -> void:
 		_weapon_reload_progress = 0.0
 		_weapon_parts_by_name.clear()
 		_tnt_rope_bundle = null
+		_mortar_tube_node = null
 		var b_info: Dictionary = HeroMeshBuilder.populate_build_wrench_root(_held_weapon_root)
 		_build_tool_node = b_info.get("tool", null) as Node3D
 		_weapon_grip_local = b_info.get("grip", Vector3.ZERO)
@@ -751,6 +791,28 @@ func _rebuild_held_weapon_mesh() -> void:
 		return
 
 	_build_tool_node = null
+	if _is_mortar_tube_held():
+		if _shown_weapon_kind == -97 and _mortar_tube_node != null and is_instance_valid(_mortar_tube_node):
+			return
+		_shown_weapon_kind = -97
+		_shown_weapon_arch = 0
+		_cycle_anim_timer = 0.0
+		_cycle_anim_duration = 0.0
+		_weapon_cycle_progress = 0.0
+		_weapon_reload_progress = 0.0
+		_weapon_parts_by_name.clear()
+		_tnt_rope_bundle = null
+		var m_info: Dictionary = HeroMeshBuilder.populate_mortar_tube_root(_held_weapon_root)
+		_mortar_tube_node = m_info.get("mortar", null) as Node3D
+		_weapon_grip_local = m_info.get("grip", Vector3(0.075, 0.55, -0.15))
+		_weapon_foregrip_local = m_info.get("foregrip", Vector3(-0.075, 0.65, -0.20))
+		_weapon_muzzle_local = m_info.get("muzzle", Vector3(0.0, 0.84, -0.29))
+		_weapon_two_handed = true
+		if _held_weapon_root_l != null:
+			_held_weapon_root_l.visible = false
+		return
+
+	_mortar_tube_node = null
 	if _is_tnt_rope_held():
 		if _shown_weapon_kind == -99 and _tnt_rope_bundle != null and is_instance_valid(_tnt_rope_bundle):
 			return
@@ -905,6 +967,18 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false, ha
 		hero_camera.add_recoil(0.0)
 
 
+func get_mortar_muzzle_world_position() -> Vector3:
+	if _shown_weapon_kind == -97 and _held_weapon_root != null and is_inside_tree():
+		return _held_weapon_root.to_global(_weapon_muzzle_local)
+	var fwd: Vector3 = -Basis(Vector3.UP, aim_yaw).z
+	fwd.y = 0.0
+	if fwd.length_squared() < 0.001:
+		fwd = Vector3.FORWARD
+	fwd = fwd.normalized()
+	var base_pos: Vector3 = global_position if is_inside_tree() else position
+	return base_pos + Vector3(0.0, 0.84, 0.0) + fwd * 0.61
+
+
 func get_muzzle_world_position(hand_override: int = -1) -> Vector3:
 	var is_dual: bool = (_shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or _shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
 	var use_left: bool = is_dual and _held_weapon_root_l != null and ((hand_override == 1) or (hand_override < 0 and _last_fired_hand == 1))
@@ -1039,6 +1113,7 @@ func _process(delta: float) -> void:
 func _animate_character(delta: float) -> void:
 	if _hips_pivot == null:
 		return
+	_step_mortar_anim_state(delta)
 	_rebuild_held_weapon_mesh()
 	if _is_tnt_rope_held():
 		_tnt_spin_angle = wrapf(_tnt_spin_angle + delta * 5.5, 0.0, TAU)
@@ -1260,6 +1335,9 @@ func _animate_character(delta: float) -> void:
 		_hips_pivot.position.y = 0.76 + absf(sin(emote_timer * 8.0)) * 0.16
 	elif is_engineer_building():
 		_pose_build_animation(delta)
+	elif is_engineer_mortar_deployed():
+		_build_anim_time = 0.0
+		_pose_mortar_animation(delta)
 	else:
 		_build_anim_time = 0.0
 		var is_grounded_anim: bool = is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0
@@ -1333,6 +1411,162 @@ func _pose_build_animation(delta: float) -> void:
 	var left_target := Vector3(-0.18, 0.20, -0.34)
 	var left_pole := Vector3(-0.75, -0.45, 0.45)
 	_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, left_pole)
+
+
+func trigger_mortar_visual(phase: String) -> void:
+	if is_defeated or current_vehicle_id >= 0:
+		_mortar_anim_phase = MortarAnimPhase.NONE
+		_mortar_phase_timer = 0.0
+		_mortar_prev_buff_active = false
+		_rebuild_held_weapon_mesh()
+		return
+	match phase:
+		"deploy":
+			if _mortar_anim_phase == MortarAnimPhase.NONE or _mortar_anim_phase == MortarAnimPhase.STOW:
+				_mortar_anim_phase = MortarAnimPhase.DEPLOY
+				_mortar_phase_timer = MORTAR_DEPLOY_DURATION
+		"hold", "aim":
+			_mortar_anim_phase = MortarAnimPhase.AIMED_HOLD
+			_mortar_phase_timer = 0.0
+		"fire":
+			_mortar_anim_phase = MortarAnimPhase.FIRE
+			_mortar_phase_timer = MORTAR_FIRE_DURATION
+			if is_inside_tree() and get_parent() != null and not DisplayServer.get_name().contains("headless"):
+				StatusEffectsVFX.spawn_cartoon_burst(get_parent(), get_mortar_muzzle_world_position(), "muzzle", 1.15)
+		"stow", "cancel":
+			if _mortar_anim_phase != MortarAnimPhase.NONE and _mortar_anim_phase != MortarAnimPhase.STOW:
+				_mortar_anim_phase = MortarAnimPhase.STOW
+				_mortar_phase_timer = MORTAR_STOW_DURATION
+		"none", "clear":
+			_mortar_anim_phase = MortarAnimPhase.NONE
+			_mortar_phase_timer = 0.0
+	_rebuild_held_weapon_mesh()
+
+
+func _step_mortar_anim_state(delta: float) -> void:
+	if is_defeated or current_vehicle_id >= 0:
+		_mortar_anim_phase = MortarAnimPhase.NONE
+		_mortar_phase_timer = 0.0
+		_mortar_prev_buff_active = false
+		return
+	var buff_active: bool = (active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) != 0 or (
+		skill_manager != null and skill_manager.has_method("is_mortar_active") and bool(skill_manager.is_mortar_active())
+	)
+	if buff_active and not _mortar_prev_buff_active:
+		if _mortar_anim_phase == MortarAnimPhase.NONE or _mortar_anim_phase == MortarAnimPhase.STOW:
+			_mortar_anim_phase = MortarAnimPhase.DEPLOY
+			_mortar_phase_timer = MORTAR_DEPLOY_DURATION
+	elif not buff_active and _mortar_prev_buff_active:
+		if _mortar_anim_phase == MortarAnimPhase.DEPLOY or _mortar_anim_phase == MortarAnimPhase.AIMED_HOLD:
+			_mortar_anim_phase = MortarAnimPhase.STOW
+			_mortar_phase_timer = MORTAR_STOW_DURATION
+	_mortar_prev_buff_active = buff_active
+
+	if _mortar_anim_phase == MortarAnimPhase.NONE or _mortar_anim_phase == MortarAnimPhase.AIMED_HOLD:
+		return
+	_mortar_phase_timer = maxf(0.0, _mortar_phase_timer - delta)
+	if _mortar_phase_timer > 0.0:
+		return
+	match _mortar_anim_phase:
+		MortarAnimPhase.DEPLOY:
+			_mortar_anim_phase = MortarAnimPhase.AIMED_HOLD
+		MortarAnimPhase.FIRE:
+			_mortar_anim_phase = MortarAnimPhase.STOW
+			_mortar_phase_timer = MORTAR_STOW_DURATION
+		MortarAnimPhase.STOW:
+			_mortar_anim_phase = MortarAnimPhase.NONE
+
+
+func _pose_mortar_animation(delta: float) -> void:
+	if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
+		_held_riot_shield.visible = false
+	if _held_weapon_root_l != null:
+		_held_weapon_root_l.visible = false
+
+	var phase: int = _mortar_anim_phase
+	if phase == MortarAnimPhase.NONE:
+		phase = MortarAnimPhase.AIMED_HOLD
+
+	var hips_y: float = 0.46
+	var leg_l_x: float = 1.05
+	var leg_r_x: float = 0.48
+	var calf_l_x: float = -1.45
+	var calf_r_x: float = -1.15
+	var torso_x: float = -0.32
+	var torso_y: float = 0.06
+	var head_x: float = clampf(aim_pitch * 0.20 + 0.12, -0.25, 0.35)
+	var mortar_vis_pos := Vector3(0.0, 0.0, -0.32)
+	var mortar_vis_rot := Vector3.ZERO
+	var grip_local: Vector3 = _weapon_grip_local
+	var stow_t: float = 0.0
+
+	match phase:
+		MortarAnimPhase.DEPLOY:
+			var t: float = 1.0 - clampf(_mortar_phase_timer / MORTAR_DEPLOY_DURATION, 0.0, 1.0)
+			var ease_t: float = t * t * (3.0 - 2.0 * t)
+			hips_y = lerpf(0.76, 0.46, ease_t)
+			leg_l_x = lerpf(0.0, 1.05, ease_t)
+			leg_r_x = lerpf(0.0, 0.48, ease_t)
+			calf_l_x = lerpf(0.0, -1.45, ease_t)
+			calf_r_x = lerpf(0.0, -1.15, ease_t)
+			torso_x = lerpf(0.0, -0.32, ease_t)
+			torso_y = lerpf(0.0, 0.06, ease_t)
+			mortar_vis_pos = Vector3(0.24, 0.68, 0.12).lerp(Vector3(0.0, 0.0, -0.32), ease_t)
+			mortar_vis_rot = Vector3(-0.32, 0.22, -0.28).lerp(Vector3.ZERO, ease_t)
+		MortarAnimPhase.AIMED_HOLD:
+			var breathe: float = sin(Time.get_ticks_msec() * 0.003) * 0.02
+			hips_y = lerpf(_hips_pivot.position.y, 0.46, minf(1.0, 14.0 * delta))
+			torso_x = -0.32 + breathe
+		MortarAnimPhase.FIRE:
+			var t_f: float = 1.0 - clampf(_mortar_phase_timer / MORTAR_FIRE_DURATION, 0.0, 1.0)
+			var kick_env: float = sin(clampf(t_f * 1.25, 0.0, 1.0) * PI) * (1.0 - 0.30 * t_f)
+			hips_y = 0.46 - 0.04 * kick_env
+			torso_x = -0.32 + 0.16 * kick_env
+			head_x = clampf(aim_pitch * 0.20 + 0.12 - 0.18 * kick_env, -0.35, 0.35)
+			mortar_vis_pos = Vector3(0.0, -0.012 * kick_env, -0.32 + 0.028 * kick_env)
+			mortar_vis_rot = Vector3(0.065 * kick_env, 0.0, 0.0)
+			grip_local = _weapon_grip_local + Vector3(0.025 * kick_env, -0.045 * kick_env, 0.03 * kick_env)
+		MortarAnimPhase.STOW:
+			stow_t = 1.0 - clampf(_mortar_phase_timer / MORTAR_STOW_DURATION, 0.0, 1.0)
+			var ease_s: float = stow_t * stow_t * (3.0 - 2.0 * stow_t)
+			hips_y = lerpf(0.46, 0.76, ease_s)
+			leg_l_x = lerpf(1.05, 0.0, ease_s)
+			leg_r_x = lerpf(0.48, 0.0, ease_s)
+			calf_l_x = lerpf(-1.45, 0.0, ease_s)
+			calf_r_x = lerpf(-1.15, 0.0, ease_s)
+			torso_x = lerpf(-0.32, 0.0, ease_s)
+			torso_y = lerpf(0.06, 0.0, ease_s)
+			head_x = lerpf(head_x, aim_pitch * 0.35, ease_s)
+			mortar_vis_pos = Vector3(0.0, 0.0, -0.32).lerp(Vector3(0.26, 0.74, 0.14), ease_s)
+			mortar_vis_rot = Vector3.ZERO.lerp(Vector3(-0.35, 0.25, -0.35), ease_s)
+
+	_hips_pivot.position.y = hips_y
+	_leg_l_pivot.rotation.x = leg_l_x
+	_leg_r_pivot.rotation.x = leg_r_x
+	if _calf_l_pivot != null:
+		_calf_l_pivot.rotation.x = calf_l_x
+	if _calf_r_pivot != null:
+		_calf_r_pivot.rotation.x = calf_r_x
+	_leg_l_pivot.rotation.z = 0.0
+	_leg_r_pivot.rotation.z = 0.0
+
+	_torso_pivot.rotation.x = torso_x
+	_torso_pivot.rotation.y = torso_y
+	_head_pivot.rotation.x = head_x
+
+	if _held_weapon_root != null:
+		var torso_vis_xform := Transform3D(Basis.from_euler(_torso_pivot.rotation), _hips_pivot.position + _torso_pivot.position)
+		var mortar_vis_xform := Transform3D(Basis.from_euler(mortar_vis_rot), mortar_vis_pos)
+		_held_weapon_root.visible = true
+		_held_weapon_root.transform = torso_vis_xform.affine_inverse() * mortar_vis_xform
+
+		var right_target: Vector3 = _held_weapon_root.transform * grip_local
+		var left_target: Vector3 = _held_weapon_root.transform * _weapon_foregrip_local
+		if phase == MortarAnimPhase.STOW:
+			right_target = right_target.lerp(Vector3(0.24, 0.42, 0.04), stow_t)
+			left_target = left_target.lerp(Vector3(-0.20, 0.34, -0.22), stow_t)
+		_pose_arm_ik(_arm_r_pivot, _forearm_r_pivot, right_target, Vector3(0.75, -0.35, 0.45))
+		_pose_arm_ik(_arm_l_pivot, _forearm_l_pivot, left_target, Vector3(-0.75, -0.35, 0.45))
 
 
 func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
@@ -1855,7 +2089,7 @@ func _sample_local_input() -> InputCmd:
 
 	cmd.selected_weapon_slot = selected_weapon_slot
 	cmd.view_interp_tick_delta = NetworkManager.get_view_interp_tick_delta()
-	if is_engineer_building() and current_vehicle_id < 0:
+	if (is_engineer_building() or is_engineer_mortar_deployed()) and current_vehicle_id < 0:
 		cmd.move_dir = Vector2.ZERO
 		cmd.set_button(InputCmd.BTN_JUMP, false)
 		cmd.set_button(InputCmd.BTN_FIRE, false)
@@ -1946,9 +2180,9 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 	else:
 		floor_snap_length = 0.3
 
-	var eng_building: bool = is_engineer_building() and current_vehicle_id < 0
+	var eng_locked: bool = (is_engineer_building() or is_engineer_mortar_deployed()) and current_vehicle_id < 0
 	var jump_held: bool = cmd.has_button(InputCmd.BTN_JUMP)
-	var jump_just_pressed: bool = jump_held and not prev_jump_held and not eng_building
+	var jump_just_pressed: bool = jump_held and not prev_jump_held and not eng_locked
 	prev_jump_held = jump_held
 
 	is_crouching = cmd.has_button(InputCmd.BTN_CROUCH) and not is_parachuting
@@ -2016,7 +2250,7 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 			velocity.y = lerpf(velocity.y, PARACHUTE_MAX_FALL, minf(1.0, 14.0 * delta))
 
 	# Horizontal movement aligned to aim_yaw
-	var move_input: Vector2 = Vector2.ZERO if eng_building else cmd.move_dir
+	var move_input: Vector2 = Vector2.ZERO if eng_locked else cmd.move_dir
 	var basis_yaw := Basis(Vector3.UP, aim_yaw)
 	var wish_dir: Vector3 = (basis_yaw * Vector3(move_input.x, 0.0, move_input.y))
 	wish_dir.y = 0.0
@@ -2200,6 +2434,9 @@ func clear_vehicle_state() -> void:
 	_last_vfx_key = ""
 	_speed_trail_timer = 0.0
 	_build_anim_time = 0.0
+	_mortar_anim_phase = MortarAnimPhase.NONE
+	_mortar_phase_timer = 0.0
+	_mortar_prev_buff_active = false
 	if _body_collision != null:
 		_body_collision.disabled = false
 	if hero_camera != null:
@@ -2563,6 +2800,9 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	_last_vfx_key = ""
 	_speed_trail_timer = 0.0
 	_build_anim_time = 0.0
+	_mortar_anim_phase = MortarAnimPhase.NONE
+	_mortar_phase_timer = 0.0
+	_mortar_prev_buff_active = false
 	if visual_root != null:
 		visual_root.global_position = spawn_pos
 	if hero_camera != null:

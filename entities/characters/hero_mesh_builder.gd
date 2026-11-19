@@ -2004,6 +2004,82 @@ static func populate_build_wrench_root(root: Node3D) -> Dictionary:
 	}
 
 
+## Builds the Engineer's 3D military Mortar (baseplate, angled ~0.85m launch tube, bipod legs & crossbar).
+static func populate_mortar_tube_root(root: Node3D) -> Dictionary:
+	for c in root.get_children():
+		root.remove_child(c)
+		c.queue_free()
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var mortar := Node3D.new()
+	mortar.name = "MortarTube"
+	root.add_child(mortar)
+
+	var olive_mat := make_sculpted_mat(Color(0.28, 0.34, 0.22), "", 0.54, 0.28)
+	var steel_mat := make_sculpted_mat(Color(0.22, 0.25, 0.29), "", 0.38, 0.72)
+	var dark_steel_mat := make_sculpted_mat(Color(0.14, 0.16, 0.19), "", 0.42, 0.68)
+	var brass_mat := make_sculpted_mat(Color(0.76, 0.58, 0.22), "", 0.32, 0.68)
+	var bore_mat := make_sculpted_mat(Color(0.05, 0.06, 0.07), "", 0.85, 0.10)
+	var parts: Array[MeshInstance3D] = []
+
+	# Heavy round steel baseplate sitting flat on y=0
+	_add_cyl_part(mortar, 0.22, 0.24, 0.045, Vector3(0.0, 0.0225, 0.0), Vector3.ZERO, dark_steel_mat, 16, parts, "MortarBaseplate")
+	_add_box_part(mortar, Vector3(0.36, 0.024, 0.042), Vector3(0.0, 0.048, 0.0), Vector3.ZERO, steel_mat, parts, "MortarBaseRibA")
+	_add_box_part(mortar, Vector3(0.042, 0.024, 0.36), Vector3(0.0, 0.048, 0.0), Vector3.ZERO, steel_mat, parts, "MortarBaseRibB")
+	_add_cyl_part(mortar, 0.085, 0.10, 0.06, Vector3(0.0, 0.06, 0.09), Vector3.ZERO, steel_mat, 12, parts, "MortarSocket")
+
+	# Angled ~0.85m launch barrel (-0.46 rad tilts top forward toward -Z)
+	const BARREL_PITCH: float = -0.46
+	var barrel_axis := Vector3(0.0, cos(-BARREL_PITCH), -sin(-BARREL_PITCH))
+	var breech_origin := Vector3(0.0, 0.07, 0.09)
+	var barrel_rot := Vector3(BARREL_PITCH, 0.0, 0.0)
+	var barrel_mi := _add_cyl_part(mortar, 0.064, 0.072, 0.85, breech_origin + barrel_axis * 0.425, barrel_rot, olive_mat, 14, parts, "MortarBarrel")
+	_add_cyl_part(mortar, 0.082, 0.084, 0.10, breech_origin + barrel_axis * 0.05, barrel_rot, dark_steel_mat, 12, parts, "MortarBreech")
+	_add_cyl_part(mortar, 0.078, 0.078, 0.075, breech_origin + barrel_axis * 0.50, barrel_rot, steel_mat, 12, parts, "MortarClamp")
+	_add_cyl_part(mortar, 0.078, 0.078, 0.055, breech_origin + barrel_axis * 0.79, barrel_rot, brass_mat, 14, parts, "MortarMuzzleCollar")
+	_add_cyl_part(mortar, 0.052, 0.052, 0.024, breech_origin + barrel_axis * 0.845, barrel_rot, bore_mat, 12, parts, "MortarMuzzleBore")
+
+	# Trigger / lanyard firing lever on lower right side + elevation crank
+	var lever_pos: Vector3 = breech_origin + barrel_axis * 0.22 + Vector3(0.082, 0.0, 0.0)
+	_add_box_part(mortar, Vector3(0.045, 0.085, 0.032), lever_pos, Vector3(BARREL_PITCH, 0.0, -0.35), brass_mat, parts, "MortarTriggerLever")
+	_add_cyl_part(mortar, 0.024, 0.024, 0.045, breech_origin + barrel_axis * 0.50 + Vector3(0.095, 0.0, 0.0), Vector3(0.0, 0.0, PI * 0.5), brass_mat, 10, parts, "MortarCrank")
+
+	# V-shaped bipod legs + crossbar + ground pads
+	for sx in [-1.0, 1.0]:
+		var p_top := Vector3(sx * 0.05, 0.50, -0.14)
+		var p_bot := Vector3(sx * 0.24, 0.02, -0.32)
+		var leg_vec: Vector3 = p_top - p_bot
+		var leg_len: float = leg_vec.length()
+		var leg_dir: Vector3 = leg_vec / maxf(0.001, leg_len)
+		var leg_x: Vector3 = leg_dir.cross(Vector3.FORWARD)
+		if leg_x.length_squared() < 0.0001:
+			leg_x = Vector3.RIGHT
+		leg_x = leg_x.normalized()
+		var leg_z: Vector3 = leg_x.cross(leg_dir).normalized()
+		var leg_rot: Vector3 = Basis(leg_x, leg_dir, leg_z).get_euler()
+		var leg_name: String = "MortarBipodL" if sx < 0.0 else "MortarBipodR"
+		var foot_name: String = "MortarFootL" if sx < 0.0 else "MortarFootR"
+		_add_cyl_part(mortar, 0.020, 0.022, leg_len, (p_top + p_bot) * 0.5, leg_rot, steel_mat, 10, parts, leg_name)
+		_add_box_part(mortar, Vector3(0.085, 0.028, 0.11), Vector3(p_bot.x, 0.014, p_bot.z), Vector3.ZERO, dark_steel_mat, parts, foot_name)
+
+	_add_box_part(mortar, Vector3(0.30, 0.026, 0.028), Vector3(0.0, 0.26, -0.23), Vector3.ZERO, dark_steel_mat, parts, "MortarCrossbar")
+	_add_box_part(mortar, Vector3(0.068, 0.052, 0.052), Vector3(0.0, 0.26, -0.23), Vector3.ZERO, brass_mat, parts, "MortarTraverseGear")
+
+	for mi in parts:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 220.0
+
+	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return {
+		"mortar": mortar,
+		"barrel": barrel_mi,
+		"grip": Vector3(0.075, 0.55, -0.15),
+		"foregrip": Vector3(-0.075, 0.65, -0.20),
+		"muzzle": breech_origin + barrel_axis * 0.86,
+		"two_handed": true,
+	}
+
+
 ## Builds Demolisher's carried 1.15m x 1.35m tactical ballistic riot shield with viewport, team trim & bolts.
 static func build_carried_riot_shield(is_royal: bool) -> Node3D:
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
