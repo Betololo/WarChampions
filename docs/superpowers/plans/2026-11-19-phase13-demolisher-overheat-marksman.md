@@ -1,0 +1,13 @@
+# Phase 13 Implementation Plan — Crocodile LOD Fix, Demolisher Reworks, Mortar-Gunner Fix, Mounted Overheat & Marksman Class
+
+> **For agentic workers:** Use `subagent-driven-development` on `feat/phase12-engineer-menus-minimap-polish` (`BASE_SHA = 4d48e91`). Strict GDScript static typing is mandatory across every file. Confirm headless Godot suite (`0 failed`, map budgets `<= 900 / 350 / 200`, `INPUT_CMD_BYTES == 15`, 24-hero `WorldSnapshot < 1200B`) after every task.
+
+## Tasks
+- **Task 1 (LOD Crocodile Fix + Demolisher 1a–1f + Gunner Mortar Absorption):**
+  Fix `hero_character.gd` LOD rig bug causing remote bots to crawl at distance & drop from sky; rework Demolisher Armor Kit cooldown & single-active replace (1a), remove Trapper sticky auto-detonate on timer (1b), upgrade Flamethrower & Fire Starter to true continuous fuel streams + multi-height cone/cylinder hitbox + `15` dmg/tick + attached `FlameStreamVFX` (1c), raise Riot Shield to `550 HP` (1d), extend right arm laterally for vertical CCW Lasso TNT Rope clear of head (1e), update `STICK_GRENADE` AoE to `110` with `55%` (`61` dmg) self-damage on attacker Demolisher only (1f); absorb Mortar/Trap/Caber explosions cleanly in Gunner's `"I Eat Grenades"`.
+- **Task 2 (Infinite-Ammo Mounted Weapon Overheat System & HUD Gauge):**
+  Add continuous heat/cooling + `4.0s` overheat lockout to all rapid infinite-ammo mounted weapons (`VehicleAPC`, `VehicleBoat`, `VehiclePlane`, `VehicleShieldedMG`, `AAGun`), replicate `u8 heat_byte` per vehicle in `WorldSnapshot`, add weapon silhouette overheat gauge textures & dynamic bottom-right HUD bar (yellow rising/cooling, red `4.0s` overheat lockout).
+- **Task 3 (`Marksman` Core Class, Weapons & 5 Skills):**
+  Implement `CLASS_MARKSMAN = 5` (`100 HP`, `6.3 m/s`), Tommy-style Heavy AR1 (`30` mag, `5/s`, `25` dmg, 8-shot bloom) & Silenced AR2 (`30` mag, `8/s`, `14` dmg, 8-shot low bloom) + Soldier Shotguns/Pistols, Skill 1 Hold-Toggle `Sprint` (`+60%` speed w/ Energy Bar), Skill 2 Oblique `Flashbang` (directional/distance screen blind), Skill 3 `UAV` (`1.0s` minimap-only reveal), Skill 4 Oblique `Granada de Cabo` throw, Skill 5 `Last Stand` (`3.0s` Pickaxe auto-advance `W` + `0.5s` `40`-dmg swings + deferred-death immortality).
+- **Task 4 (`Marksman` Visuals, Audio, Menus, Bot AI, Cache & Integration):**
+  Add `Marksman` 3D character uniform/weapons/Pickaxe/Flashbang meshes, 2D icons/portraits, weapon/skill SFX, 6-class Armory cards + 7-tab Skills Encyclopedia, HUD Sprint Energy bar / Flashbang overlay / UAV minimap-only dots, `BotController` Marksman AI, `% 6` bot spawn balance, `GameCache` pre-warm, and full verification tests.
