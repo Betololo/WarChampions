@@ -870,6 +870,8 @@ static func _spawn_foot_speed_puff(parent: Node, world_pos: Vector3, aim_yaw: fl
 	)
 	var puff := entry.mesh_node
 	puff.mesh = _get_shared_sphere()
+	if entry.aux_mesh_node != null:
+		entry.aux_mesh_node.visible = false
 	puff.material_override = _get_shared_mat(Color(0.86, 0.88, 0.72, 0.48), false)
 	var back_dir := Vector3(sin(aim_yaw), 0.0, cos(aim_yaw))
 	var start_p: Vector3 = world_pos + Vector3(0.0, 0.14, 0.0) + back_dir * 0.28
@@ -1099,6 +1101,7 @@ static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector
 	)
 	var flash_root := entry.node
 	flash_root.position = world_pos
+	flash_root.basis = Basis.IDENTITY
 	flash_root.scale = Vector3.ONE
 	var core := entry.mesh_node
 	core.scale = Vector3.ONE * (base_r * 2.0)

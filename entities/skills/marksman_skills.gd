@@ -111,6 +111,15 @@ func _sync_hero_buffs() -> void:
 		owner_hero.active_buffs = (owner_hero.active_buffs & mask) | get_active_buff_flags()
 
 
+func _sync_client_sprint_status() -> void:
+	if owner_hero != null and owner_hero.status_effects != null and owner_hero.status_effects.has_method("set_sprint_active"):
+		var saved_buffs: int = owner_hero.active_buffs
+		var saved_flags: int = owner_hero.active_flags
+		owner_hero.status_effects.set_sprint_active(is_sprinting)
+		owner_hero.active_buffs = saved_buffs
+		owner_hero.active_flags = saved_flags
+
+
 func sync_sprint_energy_from_server(energy_val: int) -> void:
 	sprint_energy = clampf(float(energy_val), 0.0, 100.0)
 	var server_sprinting: bool = owner_hero != null and (owner_hero.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0
@@ -119,11 +128,13 @@ func sync_sprint_energy_from_server(energy_val: int) -> void:
 		_sprint_exhausted = true
 	elif sprint_energy >= SPRINT_REENGAGE_MIN:
 		_sprint_exhausted = false
+	_sync_client_sprint_status()
 
 
 func predict_sprint_client(cmd: InputCmd, delta: float) -> void:
 	if owner_hero == null or owner_hero.is_defeated or owner_hero.current_vehicle_id >= 0:
 		is_sprinting = false
+		_sync_client_sprint_status()
 		return
 	var held: bool = cmd != null and cmd.has_button(InputCmd.BTN_SKILL_1) and not owner_hero.is_last_stand_active()
 	if held and not _sprint_exhausted and sprint_energy > 0.0:
@@ -139,6 +150,7 @@ func predict_sprint_client(cmd: InputCmd, delta: float) -> void:
 		if _sprint_exhausted and sprint_energy >= SPRINT_REENGAGE_MIN:
 			_sprint_exhausted = false
 	owner_hero.speed_multiplier = SPRINT_SPEED_MULT if is_sprinting else 1.0
+	_sync_client_sprint_status()
 
 
 func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bool:

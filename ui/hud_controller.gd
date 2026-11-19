@@ -2593,7 +2593,11 @@ func _update_sprint_bar() -> void:
 		_sprint_panel.visible = false
 		return
 	var energy: float = _local_hero.get_sprint_energy() if _local_hero.has_method("get_sprint_energy") else 100.0
-	var sprinting: bool = _local_hero.status_effects != null and _local_hero.status_effects.has_method("is_sprint_active") and _local_hero.status_effects.is_sprint_active()
+	var sprinting: bool = (
+		(_local_hero.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0
+		or (_local_hero.skill_manager is MarksmanSkills and (_local_hero.skill_manager as MarksmanSkills).is_sprinting)
+		or (_local_hero.status_effects != null and _local_hero.status_effects.has_method("is_sprint_active") and _local_hero.status_effects.is_sprint_active())
+	)
 	var exhausted: bool = _local_hero.skill_manager != null and _local_hero.skill_manager is MarksmanSkills and (_local_hero.skill_manager as MarksmanSkills)._sprint_exhausted
 	if not sprinting and energy >= 99.5:
 		_sprint_panel.visible = false

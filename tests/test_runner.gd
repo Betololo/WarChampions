@@ -11267,3 +11267,89 @@ func _test_phase13_task4_marksman_full_integration() -> void:
 	game.queue_free()
 	await _flush_deferred()
 	await get_tree().process_frame
+
+	# 6. Final Fix-Wave Regressions: Pooled mote aux cross, vertical muzzle flash basis, & client Marksman sprint HUD/status
+	var vfx_fix_host := Node3D.new()
+	add_child(vfx_fix_host)
+	var vfx_origin: Vector3 = get_viewport().get_camera_3d().global_position if get_viewport().get_camera_3d() != null else Vector3.ZERO
+	StatusEffectsVFX._spawn_rising_mote(vfx_fix_host, vfx_origin, Color(0.24, 0.96, 0.52, 0.9), 0.11, 0.75, true)
+	var vfx_mgr: StatusEffectsVFX.VfxPoolManager = StatusEffectsVFX._get_pool_manager(vfx_fix_host)
+	var cross_aux_was_visible: bool = (vfx_mgr != null and vfx_mgr._active.size() == 1 and vfx_mgr._active[0].aux_mesh_node != null and vfx_mgr._active[0].aux_mesh_node.visible)
+	if vfx_mgr != null:
+		vfx_mgr._process(1.0)
+	StatusEffectsVFX._spawn_foot_speed_puff(vfx_fix_host, vfx_origin, 0.0)
+	var puff_entry: StatusEffectsVFX.VfxPoolEntry = vfx_mgr._active[0] if (vfx_mgr != null and not vfx_mgr._active.is_empty()) else null
+	var puff_aux_hidden_ok: bool = (
+		cross_aux_was_visible
+		and vfx_mgr != null
+		and vfx_mgr.total_reused == 1
+		and puff_entry != null
+		and puff_entry.aux_mesh_node != null
+		and not puff_entry.aux_mesh_node.visible
+	)
+
+	StatusEffectsVFX.spawn_muzzle_flash(vfx_fix_host, vfx_origin, Vector3.RIGHT, WeaponBase.WeaponKind.SMG, true)
+	if vfx_mgr != null:
+		vfx_mgr._process(1.0)
+	StatusEffectsVFX.spawn_muzzle_flash(vfx_fix_host, vfx_origin, Vector3.UP, WeaponBase.WeaponKind.SMG, true)
+	var flash_entry: StatusEffectsVFX.VfxPoolEntry = null
+	if vfx_mgr != null:
+		for fe in vfx_mgr._active:
+			if fe.kind == 3:
+				flash_entry = fe
+	var flash_basis_ok: bool = (
+		vfx_mgr != null
+		and vfx_mgr.total_reused == 2
+		and flash_entry != null
+		and flash_entry.node != null
+		and flash_entry.node.basis.is_equal_approx(Basis.IDENTITY)
+	)
+	StatusEffectsVFX.clear_pools(vfx_fix_host)
+	vfx_fix_host.queue_free()
+
+	var cli_arena := Node3D.new()
+	add_child(cli_arena)
+	var cli_mk := HeroCharacter.new()
+	cli_mk.setup_identity(13430, "MkClient", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN, 0, true, false)
+	cli_arena.add_child(cli_mk)
+	var cli_hud := HUDController.new()
+	add_child(cli_hud)
+	cli_hud.bind_context(null, [], {13430: cli_mk})
+	cli_hud.set_local_hero(cli_mk)
+	var cli_sm: MarksmanSkills = cli_mk.skill_manager as MarksmanSkills
+
+	cli_mk.active_buffs = NetSerializer.BUFF_MARKSMAN_SPRINT | NetSerializer.BUFF_HASTE
+	cli_sm.sync_sprint_energy_from_server(60)
+	cli_hud._process(0.016)
+	var snap_sprint_ok: bool = (
+		cli_mk.status_effects.is_sprint_active()
+		and (cli_mk.active_buffs & NetSerializer.BUFF_HASTE) != 0
+		and cli_hud._sprint_panel.visible
+		and cli_hud._sprint_lbl != null and cli_hud._sprint_lbl.text.contains("SPRINT")
+	)
+
+	cli_mk.active_buffs = 0
+	cli_sm.sync_sprint_energy_from_server(60)
+	var cli_sprint_cmd := InputCmd.new()
+	cli_sprint_cmd.buttons = InputCmd.BTN_SKILL_1
+	cli_sm.predict_sprint_client(cli_sprint_cmd, 0.2)
+	cli_hud._process(0.016)
+	var pred_sprint_ok: bool = (
+		cli_sm.is_sprinting
+		and cli_mk.status_effects.is_sprint_active()
+		and cli_hud._sprint_panel.visible
+		and cli_hud._sprint_lbl != null and cli_hud._sprint_lbl.text.contains("SPRINT")
+	)
+
+	cli_sm.predict_sprint_client(InputCmd.new(), 0.2)
+	var pred_stop_ok: bool = (not cli_sm.is_sprinting and not cli_mk.status_effects.is_sprint_active())
+
+	cli_hud.queue_free()
+	cli_arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+	_assert(
+		puff_aux_hidden_ok and flash_basis_ok and snap_sprint_ok and pred_sprint_ok and pred_stop_ok,
+		"Phase 13.4f: Pooled mote aux cross hidden, vertical muzzle flash basis reset, & client Marksman sprint HUD/status sync"
+	)
