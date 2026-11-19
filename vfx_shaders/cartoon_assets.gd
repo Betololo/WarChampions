@@ -138,9 +138,9 @@ static func _generate_texture(key: String) -> ImageTexture:
 			return _sprite_mounted_weapon("aa")
 		"icon_mounted_plane":
 			return _sprite_mounted_weapon("plane")
-		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3", "portrait_royal_4":
+		"portrait_royal_0", "portrait_royal_1", "portrait_royal_2", "portrait_royal_3", "portrait_royal_4", "portrait_royal_5":
 			return _sprite_portrait(0, int(key.right(1)))
-		"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3", "portrait_national_4":
+		"portrait_national_0", "portrait_national_1", "portrait_national_2", "portrait_national_3", "portrait_national_4", "portrait_national_5":
 			return _sprite_portrait(1, int(key.right(1)))
 		_:
 			if key.begins_with("icon_weapon_"):
@@ -810,6 +810,12 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 		_draw_rect(img, 26, 30, 7, 5, Color(0.24, 0.86, 0.96))
 		_draw_rect(img, 39, 30, 7, 5, Color(0.24, 0.86, 0.96))
 		_draw_rect(img, 29, 41, 14, 4, Color(0.28, 0.18, 0.12))
+	elif class_id == 5:
+		_draw_rect(img, 24, 29, 11, 6, Color(0.14, 0.16, 0.20))
+		_draw_rect(img, 37, 29, 11, 6, Color(0.14, 0.16, 0.20))
+		_draw_rect(img, 26, 30, 7, 4, Color(0.24, 0.92, 0.68) if team == 0 else Color(0.98, 0.52, 0.22))
+		_draw_rect(img, 39, 30, 7, 4, Color(0.24, 0.92, 0.68) if team == 0 else Color(0.98, 0.52, 0.22))
+		_draw_rect(img, 29, 41, 14, 3, Color(0.28, 0.18, 0.12))
 	elif class_id == 1 or class_id == 2:
 		_draw_rect(img, 26, 31, 9, 5, Color(0.1, 0.1, 0.12))
 		_draw_rect(img, 37, 31, 9, 5, Color(0.1, 0.1, 0.12))
@@ -818,7 +824,7 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 		_draw_rect(img, 40, 32, 4, 4, Color(0.12, 0.12, 0.12))
 		_draw_rect(img, 29, 41, 14, 4, Color(0.28, 0.18, 0.12)) # Mustache
 	# Hat / Beret / Visor Helmet
-	var hat_col := Color(0.75, 0.16, 0.16) if class_id == 1 else (Color(0.12, 0.12, 0.14) if class_id == 2 else (Color(0.32, 0.36, 0.28) if (class_id == 3 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 3 else (Color(0.30, 0.38, 0.26) if (class_id == 4 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 4 else jacket.darkened(0.25))))))
+	var hat_col := Color(0.75, 0.16, 0.16) if class_id == 1 else (Color(0.12, 0.12, 0.14) if class_id == 2 else (Color(0.32, 0.36, 0.28) if (class_id == 3 and team == 0) else (Color(0.22, 0.24, 0.28) if class_id == 3 else (Color(0.30, 0.38, 0.26) if (class_id == 4 and team == 0) else (Color(0.20, 0.42, 0.30) if (class_id == 5 and team == 0) else (Color(0.22, 0.24, 0.28) if (class_id == 4 or class_id == 5) else jacket.darkened(0.25)))))))
 	_draw_rect(img, 20, 14, 32, 10, hat_col)
 	if class_id == 2:
 		_draw_rect(img, 12, 21, 48, 4, hat_col)
@@ -827,6 +833,9 @@ static func _sprite_portrait(team: int, class_id: int) -> ImageTexture:
 		_draw_rect(img, 24, 21, 24, 2, Color(0.92, 0.52, 0.14))
 	elif class_id == 4:
 		_draw_rect(img, 20, 21, 34, 4, Color(0.16, 0.14, 0.12))
+	elif class_id == 5:
+		_draw_rect(img, 18, 21, 32, 4, Color(0.14, 0.16, 0.18))
+		_draw_rect(img, 39, 15, 5, 5, Color(0.94, 0.78, 0.24) if team == 0 else Color(0.88, 0.20, 0.20))
 	_draw_ring(img, 36, 36, 34.0, 30.0, Color(0.92, 0.92, 0.95))
 	return ImageTexture.create_from_image(img)
 
@@ -1240,6 +1249,38 @@ static func _sprite_weapon(kind_str: String) -> ImageTexture:
 			_draw_circle(img, 79, 15, 7.0, Color(0.32, 0.92, 1.0))
 			_draw_circle(img, 76, 16, 4.0, Color(1.0, 0.88, 0.36))
 
+		"14": # Assault Rifle (arch 0=Heavy Tommy-style AR w/ drum mag, arch >=1=Suppressed Tactical AR)
+			if arch >= 1:
+				_draw_rect(img, 6, 26, 18, 10, steel_dark)
+				_draw_rect(img, 24, 36, 7, 13, steel_dark)
+				_draw_rect(img, 24, 22, 30, 7, steel_mid)
+				_draw_rect(img, 24, 29, 30, 7, steel_dark)
+				_draw_rect(img, 32, 16, 14, 6, steel_hi)
+				_draw_rect(img, 42, 17, 4, 4, glass_cyan)
+				_draw_line(img, Vector2(40, 36), Vector2(45, 53), 6.0, steel_dark)
+				_draw_rect(img, 54, 25, 12, 5, steel_hi)
+				_draw_rect(img, 64, 23, 24, 9, steel_dark)
+				_draw_rect(img, 64, 23, 4, 9, steel_hi)
+			else:
+				_draw_rect(img, 6, 27, 20, 6, walnut_hi)
+				_draw_rect(img, 6, 33, 20, 8, walnut_dark)
+				_draw_rect(img, 26, 37, 7, 13, walnut_mid)
+				_draw_rect(img, 26, 22, 32, 7, steel_hi)
+				_draw_rect(img, 26, 29, 32, 7, steel_dark)
+				_draw_rect(img, 58, 26, 28, 4, steel_hi)
+				_draw_rect(img, 82, 21, 3, 5, steel_dark)
+				_draw_rect(img, 58, 33, 15, 7, walnut_hi)
+				_draw_circle(img, 42, 44, 10.0, steel_dark)
+				_draw_circle(img, 42, 44, 7.0, brass_hi)
+
+		"15": # Pickaxe (Last Stand melee weapon: wooden haft + curved dual-pointed steel pick head)
+			_draw_line(img, Vector2(18, 52), Vector2(62, 16), 7.0, walnut_hi)
+			_draw_line(img, Vector2(19, 53), Vector2(63, 17), 3.0, walnut_dark)
+			_draw_circle(img, 61, 17, 6.0, steel_dark)
+			_draw_line(img, Vector2(46, 10), Vector2(61, 17), 7.0, steel_hi)
+			_draw_line(img, Vector2(61, 17), Vector2(78, 30), 7.0, steel_hi)
+			_draw_line(img, Vector2(78, 30), Vector2(84, 38), 4.0, steel_mid)
+
 		_: # Default to Pistol
 			_draw_rect(img, 32, 32, 14, 18, walnut_dark)
 			_draw_rect(img, 34, 34, 10, 14, walnut_hi)
@@ -1591,6 +1632,49 @@ static func _sprite_skill(slot_str: String) -> ImageTexture:
 			_draw_circle(img, 20, 20, 11.0, Color(1.0, 0.86, 0.28))
 			_draw_circle(img, 20, 20, 8.0, Color(0.28, 0.90, 1.0))
 			_draw_star(img, 20.0, 20.0, 6.0, white)
+
+		"5_0": # Sprint: emerald-cyan badge + speed chevrons & winged dash arrow
+			_draw_rounded_badge(img, Color(0.12, 0.56, 0.42), Color(0.06, 0.28, 0.24), Color(0.44, 1.0, 0.72))
+			_draw_line(img, Vector2(7, 13), Vector2(15, 13), 2.4, white)
+			_draw_line(img, Vector2(6, 20), Vector2(14, 20), 2.4, Color(0.65, 1.0, 0.80))
+			_draw_line(img, Vector2(7, 27), Vector2(15, 27), 2.4, white)
+			_draw_triangle(img, Vector2(16, 10), Vector2(31, 20), Vector2(16, 30), ink)
+			_draw_triangle(img, Vector2(18, 12), Vector2(29, 20), Vector2(18, 28), Color(0.48, 1.0, 0.62))
+			_draw_rect(img, 10, 32, 20, 3, Color(0.32, 0.94, 1.0))
+
+		"5_1": # Flashbang: bright sky/gold starburst badge + cylindrical stun grenade
+			_draw_rounded_badge(img, Color(0.24, 0.46, 0.68), Color(0.10, 0.20, 0.36), Color(0.95, 0.98, 1.0))
+			_draw_star(img, 20.0, 20.0, 13.0, Color(1.0, 0.96, 0.55))
+			_draw_rect(img, 14, 12, 12, 17, ink)
+			_draw_rect(img, 15, 13, 10, 15, Color(0.42, 0.50, 0.58))
+			_draw_rect(img, 15, 18, 10, 5, Color(0.42, 0.92, 1.0))
+			_draw_rect(img, 17, 9, 6, 4, Color(0.86, 0.72, 0.24))
+
+		"5_2": # UAV: deep teal radar badge + sweeping arc + red enemy blips
+			_draw_rounded_badge(img, Color(0.08, 0.34, 0.32), Color(0.04, 0.16, 0.18), Color(0.32, 0.96, 0.68))
+			_draw_ring(img, 20.0, 20.0, 12.5, 10.8, Color(0.32, 0.92, 0.62))
+			_draw_ring(img, 20.0, 20.0, 7.2, 5.8, Color(0.32, 0.92, 0.62))
+			_draw_line(img, Vector2(20, 20), Vector2(30, 11), 2.2, Color(0.55, 1.0, 0.78))
+			_draw_circle(img, 14.0, 14.0, 2.3, Color(1.0, 0.20, 0.18))
+			_draw_circle(img, 26.0, 25.0, 2.3, Color(1.0, 0.20, 0.18))
+			_draw_circle(img, 20.0, 20.0, 2.0, white)
+
+		"5_3": # Granada de Cabo: crimson-olive badge + spinning stick grenade + motion arcs
+			_draw_rounded_badge(img, Color(0.58, 0.20, 0.14), Color(0.28, 0.10, 0.08), Color(1.0, 0.76, 0.28))
+			_draw_ring(img, 20.0, 20.0, 13.0, 11.2, Color(1.0, 0.86, 0.34))
+			_draw_line(img, Vector2(11, 29), Vector2(22, 18), 4.8, ink)
+			_draw_line(img, Vector2(12, 28), Vector2(22, 18), 3.0, Color(0.74, 0.48, 0.22))
+			_draw_line(img, Vector2(21, 19), Vector2(28, 12), 9.0, ink)
+			_draw_line(img, Vector2(21, 19), Vector2(27, 13), 6.5, Color(0.38, 0.56, 0.24))
+			_draw_circle(img, 28.0, 12.0, 2.2, Color(1.0, 0.34, 0.18))
+
+		"5_4": # Last Stand: fiery crimson-gold badge + steel pickaxe + persistence heart
+			_draw_rounded_badge(img, Color(0.68, 0.14, 0.14), Color(0.30, 0.06, 0.08), Color(1.0, 0.84, 0.26))
+			_draw_line(img, Vector2(11, 29), Vector2(26, 14), 4.6, ink)
+			_draw_line(img, Vector2(12, 28), Vector2(26, 14), 2.8, Color(0.76, 0.50, 0.24))
+			_draw_line(img, Vector2(17, 10), Vector2(30, 23), 5.0, ink)
+			_draw_line(img, Vector2(18, 11), Vector2(29, 22), 3.2, Color(0.84, 0.90, 0.98))
+			_draw_circle(img, 27.0, 28.0, 3.0, Color(1.0, 0.88, 0.24))
 
 		_: # Fallback outlined badge
 			_draw_rounded_badge(img, Color(0.24, 0.36, 0.56), Color(0.12, 0.18, 0.30), Color(0.75, 0.85, 0.98))

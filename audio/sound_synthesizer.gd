@@ -174,7 +174,8 @@ func play_weapon_fire(
 	weapon_kind: int,
 	distance_m: float = 0.0,
 	is_local_priority: bool = true,
-	world_pos: Vector3 = Vector3.ZERO
+	world_pos: Vector3 = Vector3.ZERO,
+	weapon_archetype: int = 0
 ) -> void:
 	var clip: String = "shoot_smg"
 	var p_jitter: float = randf_range(0.96, 1.04)
@@ -220,6 +221,17 @@ func play_weapon_fire(
 			clip = "weld_arc"
 			p_jitter = randf_range(0.92, 1.08)
 			gain_off = -1.0
+		14: # Assault Rifle (arch 0=Heavy AR1, arch 1=Suppressed AR2)
+			if weapon_archetype == 1:
+				clip = "shoot_ar_suppressed"
+				p_jitter = randf_range(0.97, 1.05)
+				gain_off = -1.5
+			else:
+				clip = "shoot_ar"
+				gain_off = 0.8
+		15: # Pickaxe (Last Stand)
+			clip = "pickaxe"
+			gain_off = 0.4
 	var effective_pos: Vector3 = world_pos
 	if not is_local_priority and world_pos == Vector3.ZERO and distance_m > 0.0:
 		effective_pos = (_listener_pos if _has_listener_pos else Vector3.ZERO) + Vector3(distance_m, 0.0, 0.0)
@@ -250,6 +262,11 @@ func _build_clips() -> void:
 	_clips["weld_arc"] = _synth_weld_arc(0.22, 0.78)
 	_clips["mortar_whistle"] = _synth_mortar_whistle(0.85, 0.82)
 	_clips["build_construct"] = _synth_build_construct(0.26, 0.84)
+	_clips["shoot_ar"] = _synth_gunshot(0.145, 340.0, 74.0, 0.46, 0.90, 2.0, 0.40, 0.72)
+	_clips["shoot_ar_suppressed"] = _synth_gunshot(0.068, 520.0, 145.0, 0.24, 0.78, 3.2, 0.22, 0.24)
+	_clips["flashbang"] = _synth_flashbang(0.45, 0.90)
+	_clips["radar"] = _synth_radar_chirp(0.24, 0.82)
+	_clips["pickaxe"] = _synth_pickaxe_swing(0.16, 0.84)
 
 	# Combat, feedback & UI clips normalized to 0.78..0.92 peak
 	_clips["explosion"] = _synth_explosion(0.48, 0.92)
@@ -598,5 +615,56 @@ func _synth_build_construct(duration: float, target_peak: float) -> AudioStreamW
 		var clank2: float = exp(-pow((t - 0.62) / 0.07, 2.0)) * (sin(p2) * 0.7 + randf_range(-0.35, 0.35))
 		buf[i] = clank1 + clank2
 	_lowpass_smooth(buf, 0.44)
+	_normalize_peak(buf, target_peak)
+	return _make_wav(buf, false)
+
+
+func _synth_flashbang(duration: float, target_peak: float) -> AudioStreamWAV:
+	var n: int = maxi(1, int(duration * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var p_pop: float = 0.0
+	var p_ring: float = 0.0
+	for i in range(n):
+		var t: float = float(i) / float(maxi(1, n))
+		p_pop += TAU * lerpf(620.0, 90.0, pow(t, 0.35)) / float(SAMPLE_RATE)
+		p_ring += TAU * 2350.0 / float(SAMPLE_RATE)
+		var bang: float = exp(-t * 22.0) * (sin(p_pop) * 0.7 + randf_range(-0.85, 0.85))
+		var ring: float = sin(clampf(t * 14.0, 0.0, 1.0) * PI * 0.5) * (1.0 - t) * sin(p_ring) * 0.32
+		buf[i] = tanh((bang + ring) * 1.35)
+	_lowpass_smooth(buf, 0.48)
+	_normalize_peak(buf, target_peak)
+	return _make_wav(buf, false)
+
+
+func _synth_radar_chirp(duration: float, target_peak: float) -> AudioStreamWAV:
+	var n: int = maxi(1, int(duration * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var phase: float = 0.0
+	for i in range(n):
+		var t: float = float(i) / float(maxi(1, n))
+		var freq: float = 1160.0 if t < 0.45 else 1560.0
+		phase += TAU * freq / float(SAMPLE_RATE)
+		var pulse1: float = exp(-pow((t - 0.18) / 0.12, 2.0))
+		var pulse2: float = exp(-pow((t - 0.68) / 0.16, 2.0))
+		buf[i] = (sin(phase) * 0.82 + sin(phase * 2.0) * 0.18) * (pulse1 + pulse2)
+	_lowpass_smooth(buf, 0.44)
+	_normalize_peak(buf, target_peak)
+	return _make_wav(buf, false)
+
+
+func _synth_pickaxe_swing(duration: float, target_peak: float) -> AudioStreamWAV:
+	var n: int = maxi(1, int(duration * float(SAMPLE_RATE)))
+	var buf := PackedFloat32Array()
+	buf.resize(n)
+	var p_clang: float = 0.0
+	for i in range(n):
+		var t: float = float(i) / float(maxi(1, n))
+		p_clang += TAU * lerpf(920.0, 520.0, t) / float(SAMPLE_RATE)
+		var whoosh: float = sin(clampf(t * 2.5, 0.0, 1.0) * PI) * randf_range(-0.55, 0.55)
+		var clang: float = exp(-maxf(0.0, t - 0.35) * 14.0) * (1.0 if t >= 0.35 else 0.0) * (sin(p_clang) * 0.72 + sin(p_clang * 1.62) * 0.35)
+		buf[i] = tanh((whoosh + clang) * 1.25)
+	_lowpass_smooth(buf, 0.46)
 	_normalize_peak(buf, target_peak)
 	return _make_wav(buf, false)

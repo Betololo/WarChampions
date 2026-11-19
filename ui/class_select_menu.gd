@@ -167,6 +167,8 @@ static func get_class_weapon_slots(p_class_id: int) -> Array[int]:
 			return [WeaponBase.WeaponKind.FLAMETHROWER, WeaponBase.WeaponKind.GRENADE_LAUNCHER, WeaponBase.WeaponKind.STICK_GRENADE]
 		NetworkManager.CLASS_ENGINEER:
 			return [WeaponBase.WeaponKind.DUAL_REVOLVERS, WeaponBase.WeaponKind.SHOTGUN, WeaponBase.WeaponKind.WELDING_TORCH]
+		NetworkManager.CLASS_MARKSMAN:
+			return [WeaponBase.WeaponKind.ASSAULT_RIFLE, WeaponBase.WeaponKind.SHOTGUN, WeaponBase.WeaponKind.PISTOL]
 		_:
 			return [WeaponBase.WeaponKind.SNIPER, WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.PISTOL, WeaponBase.WeaponKind.TNT]
 
@@ -210,6 +212,10 @@ static func _get_weapon_role_tag(w_kind: int) -> String:
 			return "Dupla Automática"
 		WeaponBase.WeaponKind.WELDING_TORCH:
 			return "Solda / Reparo"
+		WeaponBase.WeaponKind.ASSAULT_RIFLE:
+			return "Rifle de Assalto"
+		WeaponBase.WeaponKind.PICKAXE:
+			return "Corpo a Corpo"
 		_:
 			return "Arma"
 
@@ -351,7 +357,7 @@ func _build_hub_screen(parent: Control) -> void:
 	title_box.add_child(subtitle)
 
 	var badge_lbl := Label.new()
-	badge_lbl.text = "5 Classes Únicas • Veículos Terrestres, Aéreos & Navais • Conquista 6 Bandeiras"
+	badge_lbl.text = "6 Classes Únicas • Veículos Terrestres, Aéreos & Navais • Conquista 6 Bandeiras"
 	badge_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	badge_lbl.add_theme_font_size_override("font_size", 12)
 	badge_lbl.add_theme_color_override("font_color", Color(0.84, 0.90, 0.96))
@@ -402,7 +408,7 @@ func _build_hub_screen(parent: Control) -> void:
 	solo_v.add_child(solo_btn)
 
 	var solo_sub := Label.new()
-	solo_sub.text = "Partida instantânea 14v14 com todas as 5 classes e bots inteligentes"
+	solo_sub.text = "Partida instantânea 14v14 com todas as 6 classes e bots inteligentes"
 	solo_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	solo_sub.add_theme_font_size_override("font_size", 11)
 	solo_sub.add_theme_color_override("font_color", Color(0.76, 0.86, 0.96))
@@ -675,7 +681,7 @@ func _build_armory_screen(parent: Control) -> void:
 	_national_flag_rect.texture = CartoonAssets.get_texture("flag_national")
 	n_row.add_child(_national_flag_rect)
 
-	# 3. Main Center Split: Left 5 Class Cards | Right Live 3D Rotating Character Preview
+	# 3. Main Center Split: Left 6 Class Cards | Right Live 3D Rotating Character Preview
 	var center_split := HBoxContainer.new()
 	center_split.add_theme_constant_override("separation", 12)
 	center_split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -684,7 +690,7 @@ func _build_armory_screen(parent: Control) -> void:
 	var classes_col := VBoxContainer.new()
 	classes_col.custom_minimum_size = Vector2(656, 306)
 	classes_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	classes_col.add_theme_constant_override("separation", 5)
+	classes_col.add_theme_constant_override("separation", 4)
 	center_split.add_child(classes_col)
 
 	var class_info: Array[Dictionary] = [
@@ -723,6 +729,13 @@ func _build_armory_screen(parent: Control) -> void:
 			"role": "Suporte • 2 Revólveres/Pistolas, Shotgun, Maçarico",
 			"col": Color(0.86, 0.68, 0.18),
 		},
+		{
+			"id": NetworkManager.CLASS_MARKSMAN,
+			"name": "MARKSMAN",
+			"stats": "HP: 100  |  Vel: 6.3 m/s",
+			"role": "Recon • Rifle de Assalto / Silenciado, Shotgun, UAV",
+			"col": Color(0.24, 0.74, 0.44),
+		},
 	]
 
 	_class_buttons.clear()
@@ -732,7 +745,7 @@ func _build_armory_screen(parent: Control) -> void:
 	for info in class_info:
 		var cid: int = int(info["id"])
 		var c_card := PanelContainer.new()
-		c_card.custom_minimum_size = Vector2(640, 56)
+		c_card.custom_minimum_size = Vector2(640, 45)
 		c_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		c_card.add_theme_stylebox_override("panel", _make_card_style(Color(0.07, 0.11, 0.18, 0.95), info["col"], 2))
 		classes_col.add_child(c_card)
@@ -741,8 +754,8 @@ func _build_armory_screen(parent: Control) -> void:
 		var cm := MarginContainer.new()
 		cm.add_theme_constant_override("margin_left", 8)
 		cm.add_theme_constant_override("margin_right", 8)
-		cm.add_theme_constant_override("margin_top", 5)
-		cm.add_theme_constant_override("margin_bottom", 5)
+		cm.add_theme_constant_override("margin_top", 3)
+		cm.add_theme_constant_override("margin_bottom", 3)
 		c_card.add_child(cm)
 
 		var ch := HBoxContainer.new()
@@ -750,7 +763,7 @@ func _build_armory_screen(parent: Control) -> void:
 		cm.add_child(ch)
 
 		var c_portrait := TextureRect.new()
-		c_portrait.custom_minimum_size = Vector2(42, 42)
+		c_portrait.custom_minimum_size = Vector2(36, 36)
 		c_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		c_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		c_portrait.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -761,7 +774,7 @@ func _build_armory_screen(parent: Control) -> void:
 		var text_v := VBoxContainer.new()
 		text_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		text_v.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		text_v.add_theme_constant_override("separation", 1)
+		text_v.add_theme_constant_override("separation", 0)
 		ch.add_child(text_v)
 
 		var top_line := HBoxContainer.new()
@@ -770,27 +783,27 @@ func _build_armory_screen(parent: Control) -> void:
 
 		var name_lbl := Label.new()
 		name_lbl.text = str(info["name"])
-		name_lbl.add_theme_font_size_override("font_size", 14)
+		name_lbl.add_theme_font_size_override("font_size", 13)
 		name_lbl.add_theme_color_override("font_color", Color(1.0, 0.90, 0.38))
 		top_line.add_child(name_lbl)
 
 		var stat_lbl := Label.new()
 		stat_lbl.text = str(info["stats"])
-		stat_lbl.add_theme_font_size_override("font_size", 12)
+		stat_lbl.add_theme_font_size_override("font_size", 11)
 		stat_lbl.add_theme_color_override("font_color", Color(0.58, 0.92, 1.0))
 		top_line.add_child(stat_lbl)
 
 		var role_lbl := Label.new()
 		role_lbl.text = str(info["role"])
-		role_lbl.add_theme_font_size_override("font_size", 11)
+		role_lbl.add_theme_font_size_override("font_size", 10)
 		role_lbl.add_theme_color_override("font_color", Color(0.84, 0.90, 0.96))
 		text_v.add_child(role_lbl)
 
 		var c_btn := Button.new()
 		c_btn.text = "SELECIONAR"
-		c_btn.custom_minimum_size = Vector2(126, 36)
+		c_btn.custom_minimum_size = Vector2(126, 32)
 		c_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		c_btn.add_theme_font_size_override("font_size", 12)
+		c_btn.add_theme_font_size_override("font_size", 11)
 		c_btn.pressed.connect(func() -> void:
 			select_class(cid)
 		)
@@ -998,7 +1011,7 @@ func _teardown_preview_viewport() -> void:
 func _sync_preview_hero() -> void:
 	if _preview_hero == null or not is_instance_valid(_preview_hero):
 		return
-	var cid: int = clampi(selected_class, 0, 4)
+	var cid: int = clampi(selected_class, 0, 5)
 	var slot_archs: Dictionary = NetworkManager.build_class_slot_archetypes(cid)
 	var sig_parts: PackedStringArray = [str(selected_team), str(cid)]
 	var kinds: Array[int] = get_class_weapon_slots(cid)
@@ -1021,6 +1034,7 @@ func _sync_preview_hero() -> void:
 	_preview_weapon_slot = safe_slot
 	_preview_hero.selected_weapon_slot = safe_slot
 	_preview_hero._shown_weapon_kind = -1
+	_preview_hero._shown_weapon_arch = -1
 	_preview_hero._rebuild_held_weapon_mesh()
 	_preview_hero._animate_character(0.016)
 
@@ -1031,7 +1045,7 @@ func _sync_preview_hero() -> void:
 
 
 func select_preview_weapon_slot(slot_idx: int) -> void:
-	var cid: int = clampi(selected_class, 0, 4)
+	var cid: int = clampi(selected_class, 0, 5)
 	var kinds: Array[int] = get_class_weapon_slots(cid)
 	_preview_weapon_slot = clampi(slot_idx, 0, maxi(0, kinds.size() - 1))
 	_sync_preview_hero()
@@ -1330,7 +1344,7 @@ func _build_skills_screen(parent: Control) -> void:
 
 	var tab_row := HBoxContainer.new()
 	tab_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	tab_row.add_theme_constant_override("separation", 8)
+	tab_row.add_theme_constant_override("separation", 6)
 	_skills_screen.add_child(tab_row)
 
 	var tab_labels: Array[String] = [
@@ -1339,13 +1353,15 @@ func _build_skills_screen(parent: Control) -> void:
 		"Commando (6)",
 		"Demolisher (5)",
 		"Field Engineer (5)",
+		"Marksman (5)",
 		"Itens / Widgets (4)",
 	]
 	_skills_tab_buttons.clear()
 	for tab_i in range(tab_labels.size()):
 		var t_btn := Button.new()
 		t_btn.text = tab_labels[tab_i]
-		t_btn.custom_minimum_size = Vector2(152, 34)
+		t_btn.custom_minimum_size = Vector2(132, 34)
+		t_btn.add_theme_font_size_override("font_size", 12)
 		var cap_tab: int = tab_i
 		t_btn.pressed.connect(func() -> void:
 			select_skills_tab(cap_tab)
@@ -1367,7 +1383,7 @@ func _build_skills_screen(parent: Control) -> void:
 
 
 func select_skills_tab(tab_idx: int) -> void:
-	_skills_tab_class = clampi(tab_idx, 0, 5)
+	_skills_tab_class = clampi(tab_idx, 0, 6)
 	_rebuild_skills_grid()
 
 
@@ -1379,6 +1395,7 @@ func _rebuild_skills_grid() -> void:
 		Color(0.90, 0.38, 0.16),
 		Color(0.86, 0.68, 0.18),
 		Color(0.24, 0.74, 0.44),
+		Color(0.32, 0.76, 0.78),
 	]
 	for i in range(_skills_tab_buttons.size()):
 		var is_active: bool = (i == _skills_tab_class)
@@ -1396,7 +1413,7 @@ func _rebuild_skills_grid() -> void:
 
 	var entries: Array[Dictionary] = (
 		SkillCatalog.get_widgets()
-		if _skills_tab_class == 5
+		if _skills_tab_class == 6
 		else SkillCatalog.get_class_skills(_skills_tab_class)
 	)
 	var accent_col: Color = tab_colors[clampi(_skills_tab_class, 0, tab_colors.size() - 1)]
@@ -1516,7 +1533,7 @@ func select_team(p_team: int) -> void:
 
 
 func select_class(p_class_id: int) -> void:
-	var clamped: int = clampi(p_class_id, 0, 4)
+	var clamped: int = clampi(p_class_id, 0, 5)
 	if clamped != selected_class:
 		_preview_weapon_slot = 0
 	selected_class = clamped
@@ -1601,7 +1618,7 @@ func _rebuild_weapon_variant_selectors() -> void:
 		var w_kind: int = kinds[slot_idx]
 		var cur_arch: int = NetworkManager.get_slot_archetype(selected_class, slot_idx, NetworkManager.ARCHETYPE_BALANCED)
 		var eff_kind: int = _resolve_slot_weapon_kind(selected_class, slot_idx, cur_arch)
-		var eff_arch: int = 0 if (selected_class == NetworkManager.CLASS_ENGINEER and slot_idx == 0) else clampi(cur_arch, 0, 2)
+		var eff_arch: int = 0 if (selected_class == NetworkManager.CLASS_ENGINEER and slot_idx == 0) else (clampi(cur_arch, 0, 1) if w_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE else clampi(cur_arch, 0, 2))
 		var w_display: String = WeaponBase.get_variant_display_name(eff_kind, eff_arch)
 
 		var card := PanelContainer.new()
@@ -1696,6 +1713,10 @@ func _rebuild_weapon_variant_selectors() -> void:
 			for a_idx in range(3):
 				opt.add_item(WeaponBase.get_variant_display_name(w_kind, a_idx), a_idx)
 			opt.selected = clampi(cur_arch, 0, 2)
+		elif w_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE:
+			opt.add_item("Rifle de Assalto", 0)
+			opt.add_item("Rifle Silenciado", 1)
+			opt.selected = clampi(cur_arch, 0, 1)
 		else:
 			for a_idx in range(3):
 				var vname: String = WeaponBase.get_variant_display_name(w_kind, a_idx)
@@ -1778,16 +1799,17 @@ func _notify_hud_hotkeys_changed() -> void:
 
 
 func _refresh_summary() -> void:
-	var cid: int = clampi(selected_class, 0, 4)
+	var cid: int = clampi(selected_class, 0, 5)
 	var t_name: String = "Royal Army" if selected_team == 0 else "National Army"
 	var t_prefix: String = "royal" if selected_team == 0 else "national"
-	var c_names: Array[String] = ["Soldier", "Gunner", "Commando", "Demolisher", "Field Engineer"]
+	var c_names: Array[String] = ["Soldier", "Gunner", "Commando", "Demolisher", "Field Engineer", "Marksman"]
 	var c_stats: Array[String] = [
 		"HP 110 • 6.3 m/s",
 		"HP 150 • 5.4 m/s",
 		"HP 80 • 7.2 m/s",
 		"HP 110 • 5.4 m/s",
 		"HP 125 • 6.3 m/s",
+		"HP 100 • 6.3 m/s",
 	]
 	var w_desc: Array[String] = [
 		"SMG, Shotgun, Pistola, TNT",
@@ -1795,6 +1817,7 @@ func _refresh_summary() -> void:
 		"Rifle Sniper, Faca, Pistola, TNT",
 		"Lança-Chamas, Lança-Granadas, Granada de Cabo",
 		"2 Revólveres/Pistolas, Shotgun, Maçarico de Solda",
+		"Rifle de Assalto / Silenciado, Shotgun, Pistola",
 	]
 	var equipped_names: PackedStringArray = []
 	var kinds: Array[int] = get_class_weapon_slots(cid)

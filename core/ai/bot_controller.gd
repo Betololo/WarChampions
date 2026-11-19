@@ -121,37 +121,46 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 	if bot_hero.is_inside_tree() and bot_hero.get_world_3d() != null:
 		space_state = bot_hero.get_world_3d().direct_space_state
 
-	# 1. Look for nearest visible enemy hero (stagger full scan every 6th tick per bot; validate engaged target with 4-tick LOS cache)
+	# 1. Look for nearest visible enemy hero (unless blinded by Flashbang)
+	var is_blinded: bool = bot_hero.status_effects != null and bot_hero.status_effects.has_method("is_blinded") and bool(bot_hero.status_effects.is_blinded())
 	var target_enemy: HeroCharacter = null
-	var do_full_scan: bool = (_ai_tick == 1) or (((_ai_tick + bot_hero.entity_id) % 6) == 0)
-	if not do_full_scan and _engaged_target_id >= 0:
-		var cand: HeroCharacter = heroes_by_id.get(_engaged_target_id) as HeroCharacter
-		if cand != null and is_instance_valid(cand) and not cand.is_defeated and cand.team != bot_hero.team:
-			var b_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
-			var c_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
-			var dist_sq: float = b_pos.distance_squared_to(c_pos)
-			var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 10.0
-			var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r) or ((cand.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) or StatusEffectContainer.is_enemy_sensed_by_team(cand, bot_hero.team, heroes_by_id, bot_hero)
-			if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth and is_in_vision_cone(cand):
-				var has_los: bool
-				if _los_cache_target_id == _engaged_target_id and (_ai_tick - _los_cache_ticks) < 4:
-					has_los = _los_cache_ok
-				else:
-					has_los = has_line_of_sight(space_state, cand)
-					_los_cache_target_id = _engaged_target_id
-					_los_cache_ticks = _ai_tick
-					_los_cache_ok = has_los
-				if has_los:
-					target_enemy = cand
-	elif do_full_scan:
-		target_enemy = _find_nearest_visible_enemy(heroes_by_id, space_state)
-		if target_enemy != null:
-			_los_cache_target_id = target_enemy.entity_id
-			_los_cache_ticks = _ai_tick
-			_los_cache_ok = true
-		else:
-			_los_cache_target_id = -1
-			_los_cache_ok = false
+	if is_blinded:
+		_engaged_target_id = -1
+		_los_cache_target_id = -1
+		_los_cache_ok = false
+		_memory_timer = 0.0
+		_reaction_timer = 0.25
+		_burst_firing = false
+	else:
+		var do_full_scan: bool = (_ai_tick == 1) or (((_ai_tick + bot_hero.entity_id) % 6) == 0)
+		if not do_full_scan and _engaged_target_id >= 0:
+			var cand: HeroCharacter = heroes_by_id.get(_engaged_target_id) as HeroCharacter
+			if cand != null and is_instance_valid(cand) and not cand.is_defeated and cand.team != bot_hero.team:
+				var b_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
+				var c_pos: Vector3 = cand.global_position if cand.is_inside_tree() else cand.position
+				var dist_sq: float = b_pos.distance_squared_to(c_pos)
+				var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 10.0
+				var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r) or ((cand.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) or StatusEffectContainer.is_enemy_sensed_by_team(cand, bot_hero.team, heroes_by_id, bot_hero)
+				if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth and is_in_vision_cone(cand):
+					var has_los: bool
+					if _los_cache_target_id == _engaged_target_id and (_ai_tick - _los_cache_ticks) < 4:
+						has_los = _los_cache_ok
+					else:
+						has_los = has_line_of_sight(space_state, cand)
+						_los_cache_target_id = _engaged_target_id
+						_los_cache_ticks = _ai_tick
+						_los_cache_ok = has_los
+					if has_los:
+						target_enemy = cand
+		elif do_full_scan:
+			target_enemy = _find_nearest_visible_enemy(heroes_by_id, space_state)
+			if target_enemy != null:
+				_los_cache_target_id = target_enemy.entity_id
+				_los_cache_ticks = _ai_tick
+				_los_cache_ok = true
+			else:
+				_los_cache_target_id = -1
+				_los_cache_ok = false
 	var desired_pos: Vector3 = _target_flag.global_position if _target_flag != null else Vector3.ZERO
 
 	# Heal or cleanse status effects if injured/burning/poisoned
@@ -244,6 +253,15 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 				cmd.selected_weapon_slot = 0 # Dual Revolvers / Dual Pistols
 				max_fire_dist = 55.0
 				preferred_engage_dist = 18.0
+		elif bot_hero.class_id == NetworkManager.CLASS_MARKSMAN and not bot_hero.weapons.is_empty():
+			if dist <= 10.0 and bot_hero.weapons.size() > 1:
+				cmd.selected_weapon_slot = 1 # Shotgun <= 10m
+				max_fire_dist = 14.0
+				preferred_engage_dist = 8.0
+			else:
+				cmd.selected_weapon_slot = 0 # AR1 / Silenced AR2 mid/long range
+				max_fire_dist = 65.0
+				preferred_engage_dist = 24.0
 
 		var flat_dir := Vector3(to_enemy.x, 0.0, to_enemy.z)
 		if flat_dir.length_squared() > 0.001:
@@ -276,6 +294,8 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 				cmd.set_button(InputCmd.BTN_AIM, true) # Detonate Trapper stickies when armed
 		elif bot_hero.class_id == NetworkManager.CLASS_ENGINEER:
 			_apply_engineer_skill_triggers(cmd, dist, can_fire, eng_support_veh, eng_support_dist, vehicles)
+		elif bot_hero.class_id == NetworkManager.CLASS_MARKSMAN:
+			_apply_marksman_skill_triggers(cmd, dist, can_fire, flat_dir)
 		else:
 			cmd.set_button(InputCmd.BTN_SKILL_2, can_fire and (_ai_tick % 180) == 0)
 			cmd.set_button(InputCmd.BTN_SKILL_3, can_fire and (_ai_tick % 240) == 0)
@@ -283,7 +303,11 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			cmd.set_button(InputCmd.BTN_SKILL_5, can_fire and (_ai_tick % 360) == 0)
 			cmd.set_button(InputCmd.BTN_SKILL_6, can_fire and bot_hero.class_id == NetworkManager.CLASS_COMMANDO and (_ai_tick % 420) == 0)
 
-		if dist > preferred_engage_dist:
+		if bot_hero.class_id == NetworkManager.CLASS_MARKSMAN and bot_hero.is_last_stand_active():
+			if flat_dir.length_squared() > 0.001:
+				cmd.aim_yaw = atan2(-flat_dir.x, -flat_dir.z)
+			cmd.move_dir = Vector2(0.0, -1.0)
+		elif dist > preferred_engage_dist:
 			cmd.move_dir = Vector2(_strafe_dir * 0.4, -0.9)
 		else:
 			cmd.move_dir = Vector2(_strafe_dir * 0.85, 0.15)
@@ -329,7 +353,12 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 				elif eng_support_veh.hp < eng_support_veh.max_hp or not eng_support_veh.is_armored:
 					move_target = v_pos
 
-		if not welding_ally_veh:
+		if is_blinded:
+			var weave_dir: float = 1.0 if ((_ai_tick / 15) % 2) == 0 else -1.0
+			cmd.move_dir = Vector2(weave_dir * 0.9, 0.4)
+			cmd.aim_yaw = sin(float(_ai_tick) * 0.14 + _aim_seed) * 1.4
+			cmd.aim_pitch = -0.05
+		elif not welding_ally_veh:
 			var bot_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
 			var to_obj: Vector3 = move_target - bot_pos
 			var flat := Vector3(to_obj.x, 0.0, to_obj.z)
@@ -337,8 +366,17 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 				cmd.aim_yaw = atan2(-flat.x, -flat.z)
 				cmd.aim_pitch = -0.05
 				cmd.move_dir = Vector2(0.0, -1.0)
+				if bot_hero.class_id == NetworkManager.CLASS_MARKSMAN and flat.length() > 35.0 and not bot_hero.is_last_stand_active():
+					var mk_e: float = bot_hero.get_sprint_energy() if bot_hero.has_method("get_sprint_energy") else 0.0
+					var mk_sp: bool = bot_hero.status_effects != null and bot_hero.status_effects.is_sprint_active()
+					if (mk_sp and mk_e > 0.5) or mk_e >= 25.0:
+						cmd.set_button(InputCmd.BTN_SKILL_1, true)
 			else:
 				cmd.move_dir = Vector2(_strafe_dir * 0.5, 0.0)
+			if bot_hero.class_id == NetworkManager.CLASS_MARKSMAN and (_ai_tick % 180) == 0:
+				var mk_sm_uav: MarksmanSkills = bot_hero.skill_manager as MarksmanSkills
+				if mk_sm_uav == null or mk_sm_uav.skill_cooldowns[2] <= 0.0:
+					cmd.set_button(InputCmd.BTN_SKILL_3, true) # UAV sweep on cooldown
 
 			# Periodically hop into an unoccupied nearby ground/water vehicle when far from flag
 			if _engaged_target_id < 0 and bot_hero.current_vehicle_id < 0 and flat.length() > 55.0 and (_ai_tick % 120) == 0:
@@ -401,6 +439,34 @@ func _apply_engineer_skill_triggers(
 		elif idx == 2 and trench_ready:
 			cmd.set_button(InputCmd.BTN_SKILL_1, true) # Skill 0: Trench
 			return
+
+
+func _apply_marksman_skill_triggers(cmd: InputCmd, dist: float, can_fire: bool, _flat_dir: Vector3) -> void:
+	var mk_sm: MarksmanSkills = bot_hero.skill_manager as MarksmanSkills
+	# Held BTN_SKILL_1: Sprint while closing (> 28m) or retreating at low HP (< 45 HP)
+	if not bot_hero.is_last_stand_active() and bot_hero.current_vehicle_id < 0:
+		var want_sprint: bool = (dist > 28.0) or (bot_hero.hp < 45 and dist < 18.0)
+		if want_sprint:
+			var energy: float = bot_hero.get_sprint_energy() if bot_hero.has_method("get_sprint_energy") else 0.0
+			var is_spr: bool = bot_hero.status_effects != null and bot_hero.status_effects.is_sprint_active()
+			if (is_spr and energy > 0.5) or energy >= 20.0:
+				cmd.set_button(InputCmd.BTN_SKILL_1, true)
+	# Edge-triggered skills pulsed on (_ai_tick % 12) == 0 so was_pressed resets cleanly
+	if (_ai_tick % 12) != 0:
+		return
+	if bot_hero.current_vehicle_id < 0 and bot_hero.hp <= 40 and dist <= 10.0:
+		if mk_sm == null or mk_sm.skill_cooldowns[4] <= 0.0:
+			cmd.set_button(InputCmd.BTN_SKILL_5, true) # Last Stand Pickaxe rush
+			return
+	if (_ai_tick % 180) == 0 and (mk_sm == null or mk_sm.skill_cooldowns[2] <= 0.0):
+		cmd.set_button(InputCmd.BTN_SKILL_3, true) # UAV Recon Sweep
+	if can_fire and dist >= 6.0 and dist <= 22.0 and (mk_sm == null or mk_sm.skill_cooldowns[1] <= 0.0):
+		cmd.aim_pitch = clampf(cmd.aim_pitch + 0.14, -1.1, 1.1)
+		cmd.set_button(InputCmd.BTN_SKILL_2, true) # Flashbang oblique throw
+		return
+	if can_fire and dist >= 7.0 and dist <= 26.0 and (mk_sm == null or mk_sm.skill_cooldowns[3] <= 0.0):
+		cmd.aim_pitch = clampf(cmd.aim_pitch + 0.16, -1.1, 1.1)
+		cmd.set_button(InputCmd.BTN_SKILL_4, true) # Stick Grenade oblique throw
 
 
 func _pick_objective(capture_points: Array[CapturePoint]) -> void:

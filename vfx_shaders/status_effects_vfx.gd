@@ -1061,10 +1061,10 @@ static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, 
 	entry.duration = 0.55 if is_plume else 0.26
 
 
-static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector3, weapon_kind: int, force_in_headless: bool = false) -> void:
+static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector3, weapon_kind: int, force_in_headless: bool = false, weapon_archetype: int = 0) -> void:
 	if parent == null or (not force_in_headless and DisplayServer.get_name().contains("headless")):
 		return
-	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 10:
+	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 10 or weapon_kind == 15:
 		return
 	if _is_beyond_vfx_distance(parent, world_pos, 110.0):
 		return
@@ -1072,8 +1072,9 @@ static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector
 	if mgr == null:
 		return
 
-	var base_r: float = 0.16 if weapon_kind == 6 or weapon_kind == 2 else (0.14 if (weapon_kind == 4 or weapon_kind == 13) else 0.10)
-	var flash_col := Color(0.34, 0.94, 1.0, 0.95) if weapon_kind == 13 else Color(1.0, 0.90, 0.32, 0.95)
+	var is_suppressed_ar: bool = (weapon_kind == 14 and weapon_archetype == 1)
+	var base_r: float = 0.042 if is_suppressed_ar else (0.16 if weapon_kind == 6 or weapon_kind == 2 else (0.14 if (weapon_kind == 4 or weapon_kind == 13) else 0.10))
+	var flash_col := Color(0.75, 0.82, 0.90, 0.42) if is_suppressed_ar else (Color(0.34, 0.94, 1.0, 0.95) if weapon_kind == 13 else Color(1.0, 0.90, 0.32, 0.95))
 	var mat: StandardMaterial3D = _get_shared_mat(flash_col, true)
 
 	var entry: VfxPoolEntry = mgr._acquire_entry(mgr._flash_free, mgr.MAX_FLASHES, 3, func() -> VfxPoolEntry:

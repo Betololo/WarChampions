@@ -62,6 +62,7 @@ func _ready() -> void:
 	await _test_phase13_task1_lod_demolisher_gunner()
 	await _test_phase13_task2_mounted_overheat()
 	await _test_phase13_task3_marksman_core()
+	await _test_phase13_task4_marksman_full_integration()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -4297,7 +4298,7 @@ func _test_phase8_task1_skill_icons_and_guide() -> void:
 			found_combat_med = true
 			break
 
-	menu.select_skills_tab(5)
+	menu.select_skills_tab(6)
 	var widget_tab_count: int = menu._skills_grid.get_child_count()
 
 	menu._skills_back_btn.pressed.emit()
@@ -6966,9 +6967,9 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	await _flush_deferred()
 
 	menu.show_screen("armory")
-	var cards_ok: bool = (menu._class_cards.size() == 5 and menu._class_buttons.size() == 5)
+	var cards_ok: bool = (menu._class_cards.size() == 6 and menu._class_buttons.size() == 6)
 	var cards_fit_ok: bool = true
-	if menu._class_cards.size() == 5:
+	if menu._class_cards.size() == 6:
 		var cls_row_node := menu._class_cards[0].get_parent() as Control
 		if cls_row_node != null and cls_row_node.get_combined_minimum_size().x > 932.0:
 			cards_fit_ok = false
@@ -7000,7 +7001,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 	await _flush_deferred()
 	var skills_tabs_ok: bool = (
 		menu.current_screen == "skills"
-		and menu._skills_tab_buttons.size() == 6
+		and menu._skills_tab_buttons.size() == 7
 		and menu._skills_tab_class == NetworkManager.CLASS_DEMOLISHER
 		and menu._skills_grid.get_child_count() == 5
 	)
@@ -7013,7 +7014,7 @@ func _test_phase11_task6_ui_bots_and_full_matrix() -> void:
 		if txt.contains("Quebra-Tanques"):
 			found_buster_skill = true
 
-	menu.select_skills_tab(5)
+	menu.select_skills_tab(6)
 	await _flush_deferred()
 	var found_agua: bool = false
 	var found_cueca: bool = false
@@ -8529,7 +8530,7 @@ func _test_phase12_task4_field_engineer() -> void:
 		heroes24.append({
 			"id": 100 + i,
 			"team": i % 2,
-			"class_id": NetworkManager.CLASS_ENGINEER if (i % 5 == 4) else (i % 5),
+			"class_id": NetworkManager.CLASS_ENGINEER if (i % 6 == 4) else (i % 6),
 			"weapon_slot": 0,
 			"flags": NetSerializer.SNAP_GROUNDED,
 			"buffs": eng_buffs if i == 4 else 0,
@@ -8932,8 +8933,8 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 	var yaw_after: float = menu._preview_hero.rotation.y if menu._preview_hero != null else 0.0
 	var rotates_ok: bool = absf(yaw_after - yaw_before) > 0.35
 
-	var all_classes_preview_ok: bool = (menu._class_cards.size() == 5 and menu._class_buttons.size() == 5)
-	for cid in range(5):
+	var all_classes_preview_ok: bool = (menu._class_cards.size() == 6 and menu._class_buttons.size() == 6)
+	for cid in range(6):
 		menu.select_class(cid)
 		if menu.selected_class != cid or menu._preview_hero.class_id != cid:
 			all_classes_preview_ok = false
@@ -8980,16 +8981,16 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 	)
 	NetworkManager.set_slot_archetype(NetworkManager.CLASS_ENGINEER, 0, 0)
 
-	# 6 Skills Encyclopedia tabs including Field Engineer (5)
+	# 7 Skills Encyclopedia tabs including Field Engineer (5) & Marksman (6)
 	menu._armory_skills_btn.pressed.emit()
 	await _flush_deferred()
 	var eng_skills_tab_ok: bool = (
 		menu.current_screen == "skills"
-		and menu._skills_tab_buttons.size() == 6
+		and menu._skills_tab_buttons.size() == 7
 		and menu._skills_tab_class == NetworkManager.CLASS_ENGINEER
 		and menu._skills_grid.get_child_count() == 5
 	)
-	menu.select_skills_tab(5)
+	menu.select_skills_tab(6)
 	var widgets_tab6_ok: bool = (menu._skills_grid.get_child_count() == 4)
 
 	_assert(
@@ -9194,8 +9195,8 @@ func _test_phase12_task5_menus_5classes_integration() -> void:
 	var budgets_ok: bool = (mesh_count <= 900 and uniq_meshes.size() <= 350 and uniq_mats.size() <= 200)
 
 	_assert(
-		game.heroes_by_id.size() == 28 and eng_bot_count >= 5 and class_seen.size() == 5 and budgets_ok and NetSerializer.INPUT_CMD_BYTES == 15,
-		"Phase 12.5d: 14v14 spawns all 5 classes (%d Engineer bots), map budgets (%d/%d/%d), INPUT_CMD=15B" % [
+		game.heroes_by_id.size() == 28 and eng_bot_count >= 4 and class_seen.size() == 6 and budgets_ok and NetSerializer.INPUT_CMD_BYTES == 15,
+		"Phase 12.5d: 14v14 spawns all 6 classes (%d Engineer bots), map budgets (%d/%d/%d), INPUT_CMD=15B" % [
 			eng_bot_count, mesh_count, uniq_meshes.size(), uniq_mats.size()
 		]
 	)
@@ -10968,5 +10969,301 @@ func _test_phase13_task3_marksman_core() -> void:
 	NetworkManager.game_event_received.disconnect(mk_ev_cb)
 	StatusEffectContainer.clear_team_uav()
 	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+
+func _test_phase13_task4_marksman_full_integration() -> void:
+	print("--- Phase 13 Task 4: Marksman 3D Visuals, 2D/Audio/Cache, 6-Class Menus, HUD Overlays, UAV Minimap & Bot AI ---")
+	StatusEffectContainer.clear_team_uav()
+
+	# 1. 3D Marksman Uniform, AR1 vs Suppressed AR2, Pickaxe (-96) & Sprint/Chop/Throw Animations
+	var vis_arena := Node3D.new()
+	add_child(vis_arena)
+
+	var mk_r := HeroCharacter.new()
+	mk_r.setup_identity(13401, "MkRoyal", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN, 0, true, false, {0: 0})
+	vis_arena.add_child(mk_r)
+
+	var mk_n := HeroCharacter.new()
+	mk_n.setup_identity(13402, "MkNat", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_MARKSMAN, 0, false, false, {0: 1})
+	vis_arena.add_child(mk_n)
+
+	var rcap_r_mesh: Mesh = HeroMeshBuilder.build_ranger_cap_mesh(true)
+	var rcap_n_mesh: Mesh = HeroMeshBuilder.build_ranger_cap_mesh(false)
+	var headgear_r_ok: bool = false
+	for ch in (mk_r._head_pivot.get_children() if mk_r._head_pivot != null else []):
+		if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == rcap_r_mesh:
+			headgear_r_ok = true
+			break
+	var headgear_n_ok: bool = false
+	for ch in (mk_n._head_pivot.get_children() if mk_n._head_pivot != null else []):
+		if ch is MeshInstance3D and (ch as MeshInstance3D).mesh == rcap_n_mesh:
+			headgear_n_ok = true
+			break
+	var ar1_drum: Node = mk_r._held_weapon_root.find_child("Drum", true, false) if mk_r._held_weapon_root != null else null
+	var ar1_supp: Node = mk_r._held_weapon_root.find_child("Suppressor", true, false) if mk_r._held_weapon_root != null else null
+	var ar2_supp: Node = mk_n._held_weapon_root.find_child("Suppressor", true, false) if mk_n._held_weapon_root != null else null
+	var ar2_arch_ok: bool = (mk_r._shown_weapon_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE and mk_r._shown_weapon_arch == 0 and mk_n._shown_weapon_arch == 1)
+
+	# Switch AR1 -> AR2 archetype dynamically and verify rebuild detects arch change
+	(mk_r.weapons[0] as WeaponBase).archetype = 1
+	mk_r._rebuild_held_weapon_mesh()
+	var ar_rebuild_ok: bool = (mk_r._shown_weapon_arch == 1 and mk_r._held_weapon_root.find_child("Suppressor", true, false) != null)
+	(mk_r.weapons[0] as WeaponBase).archetype = 0
+	mk_r._rebuild_held_weapon_mesh()
+
+	# Last Stand Pickaxe (-96) mesh & chop animation + Sprint lean/stride + Throw anim
+	mk_r.active_buffs |= NetSerializer.BUFF_MARKSMAN_LAST_STAND
+	mk_r._rebuild_held_weapon_mesh()
+	mk_r.trigger_weapon_fire_visual(WeaponBase.WeaponKind.PICKAXE, false)
+	var pick_head: Node = mk_r._held_weapon_root.find_child("PickTip", true, false) if mk_r._held_weapon_root != null else null
+	var pick_chop_ok: bool = (mk_r._shown_weapon_kind == -96 and pick_head != null and mk_r._weapon_recoil_anim > 0.5 and mk_r._fire_pose_timer > 0.1)
+	mk_r.active_buffs &= ~NetSerializer.BUFF_MARKSMAN_LAST_STAND
+	mk_r._weapon_recoil_anim = 0.0
+	mk_r._fire_pose_timer = 0.0
+	mk_r._rebuild_held_weapon_mesh()
+
+	mk_r.velocity = Vector3(0.0, 0.0, -6.3)
+	mk_r._animate_character(0.016)
+	var normal_torso_x: float = mk_r._torso_pivot.rotation.x
+	mk_r.active_buffs |= NetSerializer.BUFF_MARKSMAN_SPRINT
+	mk_r.velocity = Vector3(0.0, 0.0, -9.45)
+	mk_r._animate_character(0.016)
+	var sprint_lean_ok: bool = (mk_r._torso_pivot.rotation.x < normal_torso_x - 0.10)
+	mk_r.active_buffs &= ~NetSerializer.BUFF_MARKSMAN_SPRINT
+
+	mk_r.trigger_skill_visual(NetworkManager.CLASS_MARKSMAN, 1) # Flashbang throw_overhead
+	var fb_anim_ok: bool = (mk_r.last_skill_anim_name == "throw_overhead")
+	mk_r.trigger_skill_visual(NetworkManager.CLASS_MARKSMAN, 3) # Stick Grenade throw_overhead
+	var caber_anim_ok: bool = (mk_r.last_skill_anim_name == "throw_overhead")
+
+	_assert(
+		headgear_r_ok and headgear_n_ok and ar1_drum != null and ar1_supp == null and ar2_supp != null
+		and ar2_arch_ok and ar_rebuild_ok and pick_chop_ok and sprint_lean_ok and fb_anim_ok and caber_anim_ok,
+		"Phase 13.4a: Marksman 3D uniform, AR1 drum vs AR2 suppressed arch rebuild, Pickaxe chop, Sprint lean & throw anims"
+	)
+
+	# 2. 2D Icons, Synthesized SFX & GameCache Coverage (class 0..5 & WeaponKind 0..15)
+	var icons_ok: bool = (
+		CartoonAssets.get_texture("portrait_royal_5") != null
+		and CartoonAssets.get_texture("portrait_national_5") != null
+		and CartoonAssets.get_texture("icon_weapon_14_0") != null
+		and CartoonAssets.get_texture("icon_weapon_14_1") != null
+		and CartoonAssets.get_texture("icon_weapon_15_0") != null
+	)
+	for sk_i in range(5):
+		if CartoonAssets.get_texture("icon_skill_5_%d" % sk_i) == null:
+			icons_ok = false
+	var sfx_ok: bool = (
+		SoundSynthesizer._clips.has("shoot_ar")
+		and SoundSynthesizer._clips.has("shoot_ar_suppressed")
+		and SoundSynthesizer._clips.has("flashbang")
+		and SoundSynthesizer._clips.has("radar")
+		and SoundSynthesizer._clips.has("pickaxe")
+		and (SoundSynthesizer._clips["shoot_ar"] as AudioStreamWAV).data.size() > 100
+		and (SoundSynthesizer._clips["shoot_ar_suppressed"] as AudioStreamWAV).data.size() > 100
+		and (SoundSynthesizer._clips["flashbang"] as AudioStreamWAV).data.size() > 100
+		and (SoundSynthesizer._clips["radar"] as AudioStreamWAV).data.size() > 100
+		and (SoundSynthesizer._clips["pickaxe"] as AudioStreamWAV).data.size() > 100
+	)
+	GameCache.clear_all()
+	GameCache.warm_textures()
+	GameCache.warm_meshes()
+	var cache_ok: bool = (
+		GameCache.is_textures_warmed()
+		and GameCache.is_meshes_warmed()
+		and GameCache.ALL_TEXTURE_KEYS.has("portrait_royal_5")
+		and GameCache.ALL_TEXTURE_KEYS.has("portrait_national_5")
+		and CartoonAssets._cache.has("portrait_royal_5")
+		and CartoonAssets._cache.has("icon_skill_5_4")
+		and CartoonAssets._cache.has("icon_weapon_14_0")
+		and CartoonAssets._cache.has("icon_weapon_14_1")
+		and CartoonAssets._cache.has("icon_weapon_15_0")
+		and HeroMeshBuilder.build_torso_mesh(5) != null
+		and HeroMeshBuilder.build_ranger_cap_mesh(false) != null
+	)
+	_assert(
+		icons_ok and sfx_ok and cache_ok,
+		"Phase 13.4b: Marksman 2D portraits/weapons/skills, AR1/AR2/Flashbang/UAV/Pickaxe SFX & GameCache 0..5/0..15 warmed"
+	)
+
+	# 3. 6-Class Armory & 7-Tab Skills Encyclopedia + Live Rotating AR1/AR2 Preview
+	var menu := ClassSelectMenu.new()
+	menu.hotkeys_config_path = "user://test_hotkeys_p13t4.cfg"
+	add_child(menu)
+	await _flush_deferred()
+	menu.show_screen("armory")
+	await _flush_deferred()
+
+	var armory_cards_ok: bool = (menu._class_cards.size() == 6 and menu._class_buttons.size() == 6)
+	var cls_col := menu._class_cards[0].get_parent() as Control
+	var armory_fit_ok: bool = (cls_col != null and cls_col.get_combined_minimum_size().x <= 932.0 and cls_col.get_combined_minimum_size().y <= 306.0)
+
+	menu.select_team(NetworkManager.TEAM_ROYAL)
+	menu.select_class(NetworkManager.CLASS_MARKSMAN)
+	await _flush_deferred()
+	var mk_sel_ok: bool = (
+		menu.selected_class == NetworkManager.CLASS_MARKSMAN
+		and menu._preview_portrait.texture == CartoonAssets.get_texture("portrait_royal_5")
+		and menu._preview_hero.class_id == NetworkManager.CLASS_MARKSMAN
+		and menu._arsenal_cards.size() == 3
+		and menu._weapon_variant_selectors.size() == 3
+		and menu._weapon_variant_selectors[0].item_count == 2
+		and menu._weapon_variant_selectors[0].get_item_text(0) == "Rifle de Assalto"
+		and menu._weapon_variant_selectors[0].get_item_text(1) == "Rifle Silenciado"
+		and menu._summary_lbl.text.contains("Marksman")
+	)
+	menu.select_weapon_variant(NetworkManager.CLASS_MARKSMAN, 0, 1)
+	await _flush_deferred()
+	var preview_arch_ok: bool = (
+		menu._preview_hero._shown_weapon_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE
+		and menu._preview_hero._shown_weapon_arch == 1
+		and menu._preview_hero._held_weapon_root.find_child("Suppressor", true, false) != null
+	)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_MARKSMAN, 0, 0)
+
+	menu._armory_skills_btn.pressed.emit()
+	await _flush_deferred()
+	var tab_row_ctrl := menu._skills_tab_buttons[0].get_parent() as Control
+	var skills_7tabs_ok: bool = (
+		menu._skills_tab_buttons.size() == 7
+		and menu._skills_tab_class == NetworkManager.CLASS_MARKSMAN
+		and menu._skills_grid.get_child_count() == 5
+		and tab_row_ctrl != null and tab_row_ctrl.get_combined_minimum_size().x <= 1040.0
+	)
+	menu.select_skills_tab(6)
+	await _flush_deferred()
+	var tab_widgets_ok: bool = (menu._skills_grid.get_child_count() == 4)
+	menu.queue_free()
+
+	_assert(
+		armory_cards_ok and armory_fit_ok and mk_sel_ok and preview_arch_ok and skills_7tabs_ok and tab_widgets_ok,
+		"Phase 13.4c: ClassSelectMenu 6-class Armory fits cleanly, AR1/AR2 3D rotating preview, & 7-tab Skills Encyclopedia"
+	)
+
+	# 4. HUD Overlays (Portrait, Sprint Energy Bar, Flashbang White Fade, Minimap-Only UAV)
+	var hud := HUDController.new()
+	add_child(hud)
+	var mk_hud_r := HeroCharacter.new()
+	mk_hud_r.setup_identity(13410, "MkHudR", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN, 0, true, false)
+	var enemy_hidden := HeroCharacter.new()
+	enemy_hidden.setup_identity(13411, "EnemyHidden", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	vis_arena.add_child(mk_hud_r)
+	vis_arena.add_child(enemy_hidden)
+	mk_hud_r.global_position = Vector3(0.0, 1.0, 0.0)
+	enemy_hidden.global_position = Vector3(0.0, 1.0, -35.0)
+	if mk_hud_r.hero_camera != null and mk_hud_r.hero_camera.camera != null:
+		mk_hud_r.hero_camera.camera.make_current()
+
+	var hud_heroes: Dictionary = {13410: mk_hud_r, 13411: enemy_hidden}
+	hud.bind_context(null, [], hud_heroes)
+	hud.set_local_hero(mk_hud_r)
+	hud._process(0.016)
+	var portrait_ok: bool = (hud._portrait_tex.texture == CartoonAssets.get_texture("portrait_royal_5"))
+	var sprint_hidden_at_full: bool = (hud._sprint_panel != null and not hud._sprint_panel.visible)
+
+	(mk_hud_r.skill_manager as MarksmanSkills).sprint_energy = 55.0
+	mk_hud_r.active_buffs |= NetSerializer.BUFF_MARKSMAN_SPRINT
+	hud._process(0.016)
+	var sprint_shown_ok: bool = (
+		hud._sprint_panel.visible
+		and absf(hud._sprint_bar_fill.anchor_right - 0.55) < 0.02
+	)
+	mk_hud_r.active_buffs &= ~NetSerializer.BUFF_MARKSMAN_SPRINT
+	(mk_hud_r.skill_manager as MarksmanSkills).sprint_energy = 100.0
+	hud._process(0.016)
+
+	hud.trigger_flashbang_blind(1.0, 0.90)
+	var fb_white_on: bool = (hud._flashbang_rect.visible and hud._flashbang_rect.color.r > 0.99 and hud._flashbang_rect.color.a > 0.85)
+	hud._process(0.50)
+	var fb_fading: bool = (hud._flashbang_rect.visible and hud._flashbang_rect.color.a > 0.15 and hud._flashbang_rect.color.a < 0.85)
+	hud._process(0.60)
+	var fb_cleared: bool = (not hud._flashbang_rect.visible and hud._flashbang_rect.color.a <= 0.005)
+
+	# UAV reveals enemies on minimap ONLY (zero 3D Sixth Sense diamond markers!)
+	StatusEffectContainer.trigger_team_uav(NetworkManager.TEAM_ROYAL, 1.0)
+	hud._process(0.016)
+	var uav_active_ok: bool = StatusEffectContainer.is_team_uav_active(NetworkManager.TEAM_ROYAL, hud_heroes)
+	var any_3d_marker_visible: bool = false
+	for mk_lbl in hud._marker_pool:
+		if (mk_lbl as Label).visible:
+			any_3d_marker_visible = true
+	var enemy_not_sensed_3d: bool = not StatusEffectContainer.is_enemy_sensed_by_team(enemy_hidden, NetworkManager.TEAM_ROYAL, hud_heroes, mk_hud_r)
+	StatusEffectContainer.clear_team_uav()
+	hud.queue_free()
+
+	_assert(
+		portrait_ok and sprint_hidden_at_full and sprint_shown_ok
+		and fb_white_on and fb_fading and fb_cleared
+		and uav_active_ok and not any_3d_marker_visible and enemy_not_sensed_3d,
+		"Phase 13.4d: HUD portrait_5, Sprint bar, Flashbang white fade, & UAV minimap-only reveal (zero 3D markers)"
+	)
+
+	# 5. BotController Marksman AI + Blinded Behavior + 6-Class 14v14 Spawns & Budgets
+	var bot_hero := HeroCharacter.new()
+	bot_hero.setup_identity(13420, "MkBot", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN, 0, false, true)
+	var tgt_hero := HeroCharacter.new()
+	tgt_hero.setup_identity(13421, "TgtNat", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	vis_arena.add_child(bot_hero)
+	vis_arena.add_child(tgt_hero)
+	bot_hero.global_position = Vector3(0.0, 1.0, 0.0)
+	tgt_hero.global_position = Vector3(0.0, 1.0, -35.0)
+	bot_hero.aim_yaw = 0.0
+
+	var bc := BotController.new()
+	bc.setup(bot_hero)
+	var bot_heroes: Dictionary = {13420: bot_hero, 13421: tgt_hero}
+	var cmd_far: InputCmd = bc.compute_input(0.05, [], bot_heroes, [])
+	var bot_far_ok: bool = (cmd_far.selected_weapon_slot == 0 and (cmd_far.buttons & InputCmd.BTN_SKILL_1) != 0)
+
+	tgt_hero.global_position = Vector3(0.0, 1.0, -8.0)
+	var cmd_close: InputCmd = bc.compute_input(0.05, [], bot_heroes, [])
+	var bot_close_shotgun_ok: bool = (cmd_close.selected_weapon_slot == 1)
+
+	bot_hero.status_effects.apply_blind(2.0, 0.9)
+	var cmd_blind: InputCmd = bc.compute_input(0.05, [], bot_heroes, [])
+	var bot_blind_ok: bool = ((cmd_blind.buttons & InputCmd.BTN_FIRE) == 0 and absf(cmd_blind.move_dir.x) > 0.5 and bc._engaged_target_id == -1)
+
+	vis_arena.queue_free()
+
+	# 14v14 6-class spawn verification & map budgets
+	var prev_peer_id: int = NetworkManager.local_peer_id
+	NetworkManager.shutdown_network()
+	var game := MainGame.new()
+	add_child(game)
+	game._start_bots_sync(NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN)
+	await _flush_deferred()
+
+	var classes_14v14: Dictionary = {}
+	var mk_bots_count: int = 0
+	for hk in game.heroes_by_id.keys():
+		var hh: HeroCharacter = game.heroes_by_id[hk] as HeroCharacter
+		classes_14v14[hh.class_id] = true
+		if hh.is_bot and hh.class_id == NetworkManager.CLASS_MARKSMAN:
+			mk_bots_count += 1
+	var map_meshes: int = 0
+	var u_meshes: Dictionary = {}
+	var u_mats: Dictionary = {}
+	for n in game.map_instance.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		map_meshes += 1
+		if mi.mesh != null:
+			u_meshes[mi.mesh.get_instance_id()] = true
+		if mi.material_override != null:
+			u_mats[mi.material_override.get_instance_id()] = true
+	var budgets_ok: bool = (map_meshes <= 900 and u_meshes.size() <= 350 and u_mats.size() <= 200)
+
+	_assert(
+		bot_far_ok and bot_close_shotgun_ok and bot_blind_ok
+		and game.heroes_by_id.size() == 28 and classes_14v14.size() == 6 and mk_bots_count >= 4 and budgets_ok,
+		"Phase 13.4e: Marksman Bot AI (AR/Shotgun/Sprint/Blinded), 14v14 all 6 classes (%d Marksman bots), budgets (%d/%d/%d)" % [
+			mk_bots_count, map_meshes, u_meshes.size(), u_mats.size()
+		]
+	)
+
+	NetworkManager.shutdown_network()
+	NetworkManager.local_peer_id = prev_peer_id
+	game.queue_free()
 	await _flush_deferred()
 	await get_tree().process_frame

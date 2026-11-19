@@ -429,7 +429,8 @@ class _TacticalMinimapControl extends Control:
 			])
 			draw_colored_polygon(tri, v_col)
 
-		# 8. Allied Heroes & Revealed Enemy Heroes (Sixth Sense or Mark Target)
+		# 8. Allied Heroes & Revealed Enemy Heroes (Sixth Sense, Mark Target, or Team UAV)
+		var uav_active: bool = StatusEffectContainer.is_team_uav_active(local_team, hud_owner._heroes_ref)
 		for id_key in hud_owner._heroes_ref.keys():
 			var h: HeroCharacter = hud_owner._heroes_ref[id_key] as HeroCharacter
 			if h == null or not is_instance_valid(h) or h.is_defeated or h == local_hero:
@@ -445,6 +446,9 @@ class _TacticalMinimapControl extends Control:
 				var sensed: bool = StatusEffectContainer.is_enemy_sensed_by_team(h, local_team, hud_owner._heroes_ref, local_hero)
 				if marked or sensed:
 					_draw_diamond(hp_2d, 4.0, Color(1.0, 0.16, 0.16), Color(1.0, 0.96, 0.85))
+				elif uav_active:
+					draw_circle(hp_2d, 4.2, Color(0.08, 0.02, 0.02, 0.92))
+					draw_circle(hp_2d, 3.1, Color(1.0, 0.18, 0.18, 0.98))
 
 		# 9. Local Hero: Translucent FOV Wedge + White/Gold Directional Arrow
 		if local_hero != null and is_instance_valid(local_hero) and not local_hero.is_defeated:
@@ -545,6 +549,13 @@ var _widget_slot_keys: Array[Label] = []
 
 var _poison_tint_rect: ColorRect
 var _poison_pulse_time: float = 0.0
+var _flashbang_rect: ColorRect
+var _flashbang_timer: float = 0.0
+var _flashbang_duration: float = 0.0
+var _flashbang_intensity: float = 0.0
+var _sprint_panel: PanelContainer
+var _sprint_bar_fill: ColorRect
+var _sprint_lbl: Label
 
 var _mastery_lbl: Label
 var _crosshair: Control
@@ -881,13 +892,21 @@ func _make_slot_style(highlighted: bool) -> StyleBoxFlat:
 
 
 func _build_hud() -> void:
-	# 0. Full-Screen Poisoned Blade Green Tint Overlay
+	# 0. Full-Screen Poisoned Blade Green Tint Overlay & Flashbang White Blind Overlay
 	_poison_tint_rect = ColorRect.new()
 	_poison_tint_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_poison_tint_rect.color = Color(0.16, 0.72, 0.22, 0.26)
 	_poison_tint_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_poison_tint_rect.visible = false
 	add_child(_poison_tint_rect)
+
+	_flashbang_rect = ColorRect.new()
+	_flashbang_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_flashbang_rect.color = Color(1.0, 1.0, 1.0, 0.0)
+	_flashbang_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_flashbang_rect.visible = false
+	_flashbang_rect.z_index = 40
+	add_child(_flashbang_rect)
 
 	# 1. Top-Left Circular Portrait + XP Ring + Level Badge
 	var tl_root := Control.new()
@@ -1700,6 +1719,51 @@ func _build_hud() -> void:
 		btn.add_child(sl)
 		_seat_slot_labels.append(sl)
 
+	# 13. Marksman Sprint Energy Bar (compact bar just above the bottom hotbar)
+	_sprint_panel = PanelContainer.new()
+	_sprint_panel.anchor_left = 0.5
+	_sprint_panel.anchor_right = 0.5
+	_sprint_panel.anchor_top = 1.0
+	_sprint_panel.anchor_bottom = 1.0
+	_sprint_panel.offset_left = -114.0
+	_sprint_panel.offset_right = 114.0
+	_sprint_panel.offset_top = -116.0
+	_sprint_panel.offset_bottom = -98.0
+	_sprint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sp_sb := StyleBoxFlat.new()
+	sp_sb.bg_color = Color(0.06, 0.09, 0.13, 0.86)
+	sp_sb.border_color = Color(0.32, 0.86, 0.62, 0.85)
+	sp_sb.set_border_width_all(1)
+	sp_sb.set_corner_radius_all(4)
+	sp_sb.content_margin_left = 4.0
+	sp_sb.content_margin_right = 4.0
+	sp_sb.content_margin_top = 3.0
+	sp_sb.content_margin_bottom = 3.0
+	_sprint_panel.add_theme_stylebox_override("panel", sp_sb)
+	_sprint_panel.visible = false
+	add_child(_sprint_panel)
+
+	var sp_track := Control.new()
+	sp_track.custom_minimum_size = Vector2(218.0, 10.0)
+	sp_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sprint_panel.add_child(sp_track)
+
+	_sprint_bar_fill = ColorRect.new()
+	_sprint_bar_fill.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_sprint_bar_fill.anchor_right = 1.0
+	_sprint_bar_fill.color = Color(0.26, 0.90, 0.56)
+	_sprint_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sp_track.add_child(_sprint_bar_fill)
+
+	_sprint_lbl = Label.new()
+	_sprint_lbl.text = "SPRINT"
+	_sprint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sprint_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_sprint_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_sprint_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_style_label(_sprint_lbl, 9, Color(0.95, 0.98, 1.0))
+	sp_track.add_child(_sprint_lbl)
+
 
 static func _format_skill_hotkey_label(slot_idx: int) -> String:
 	var lbl: String = InputCmd.key_short_label(InputCmd.get_skill_key(slot_idx))
@@ -1739,6 +1803,14 @@ func _hide_local_hud_overlays() -> void:
 		set_mortar_targeting_mode(false)
 	if _poison_tint_rect != null:
 		_poison_tint_rect.visible = false
+	_flashbang_timer = 0.0
+	_flashbang_duration = 0.0
+	_flashbang_intensity = 0.0
+	if _flashbang_rect != null:
+		_flashbang_rect.color = Color(1.0, 1.0, 1.0, 0.0)
+		_flashbang_rect.visible = false
+	if _sprint_panel != null:
+		_sprint_panel.visible = false
 	if _crosshair != null:
 		_crosshair.visible = false
 	if _scope_overlay != null:
@@ -1869,6 +1941,8 @@ func _update_ammo_hud() -> void:
 					var melee_tag: String = "Faca"
 					if w.weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE:
 						melee_tag = "Corpo a Corpo" if w.caber_spent else "Explosivo"
+					elif w.weapon_kind == WeaponBase.WeaponKind.PICKAXE:
+						melee_tag = "Corpo a Corpo"
 					_weapon_name_lbl.text = "%s (%s)" % [w.weapon_name, melee_tag]
 				elif w.is_reloading:
 					_ammo_value_lbl.text = "..."
@@ -2398,9 +2472,27 @@ func _process(delta: float) -> void:
 		trigger_damage_flash()
 	_prev_hp_observed = _local_hero.hp
 
+	# Update Flashbang White Blind Screen Overlay fade
+	if _flashbang_rect != null:
+		if _flashbang_timer > 0.0 and _flashbang_duration > 0.001 and (_local_hero == null or not _local_hero.is_defeated):
+			_flashbang_timer = maxf(0.0, _flashbang_timer - delta)
+			var ratio: float = clampf(_flashbang_timer / _flashbang_duration, 0.0, 1.0)
+			var alpha: float = clampf(_flashbang_intensity * pow(ratio, 0.72), 0.0, 0.98)
+			if alpha > 0.004:
+				_flashbang_rect.visible = true
+				_flashbang_rect.color = Color(1.0, 1.0, 1.0, alpha)
+			else:
+				_flashbang_rect.color = Color(1.0, 1.0, 1.0, 0.0)
+				_flashbang_rect.visible = false
+		else:
+			_flashbang_timer = 0.0
+			if _flashbang_rect.visible or _flashbang_rect.color.a > 0.0:
+				_flashbang_rect.color = Color(1.0, 1.0, 1.0, 0.0)
+				_flashbang_rect.visible = false
+
 	# Update Portrait sprite
 	var t_prefix: String = "royal" if _local_hero.team == NetworkManager.TEAM_ROYAL else "national"
-	var p_key: String = "portrait_%s_%d" % [t_prefix, clampi(_local_hero.class_id, 0, 4)]
+	var p_key: String = "portrait_%s_%d" % [t_prefix, clampi(_local_hero.class_id, 0, 5)]
 	if p_key != _last_portrait_key:
 		_last_portrait_key = p_key
 		_portrait_tex.texture = CartoonAssets.get_texture(p_key)
@@ -2474,12 +2566,53 @@ func _process(delta: float) -> void:
 		_refresh_slot_cooldowns_immediate()
 
 	_update_interact_prompt()
+	_update_sprint_bar()
 	_update_vehicle_hp_panel(delta)
 	_update_sixth_sense_markers()
 	_minimap_redraw_accum += delta
 	if _minimap != null and _minimap_redraw_accum >= (1.0 / 12.0):
 		_minimap_redraw_accum = 0.0
 		_minimap.queue_redraw()
+
+
+func trigger_flashbang_blind(duration: float, intensity: float) -> void:
+	if duration <= 0.01 or intensity <= 0.01:
+		return
+	_flashbang_duration = maxf(0.05, duration)
+	_flashbang_timer = _flashbang_duration
+	_flashbang_intensity = clampf(intensity, 0.0, 1.0)
+	if _flashbang_rect != null:
+		_flashbang_rect.visible = true
+		_flashbang_rect.color = Color(1.0, 1.0, 1.0, clampf(_flashbang_intensity, 0.0, 0.98))
+
+
+func _update_sprint_bar() -> void:
+	if _sprint_panel == null or _sprint_bar_fill == null:
+		return
+	if _local_hero == null or not is_instance_valid(_local_hero) or _local_hero.is_defeated or _local_hero.class_id != NetworkManager.CLASS_MARKSMAN:
+		_sprint_panel.visible = false
+		return
+	var energy: float = _local_hero.get_sprint_energy() if _local_hero.has_method("get_sprint_energy") else 100.0
+	var sprinting: bool = _local_hero.status_effects != null and _local_hero.status_effects.has_method("is_sprint_active") and _local_hero.status_effects.is_sprint_active()
+	var exhausted: bool = _local_hero.skill_manager != null and _local_hero.skill_manager is MarksmanSkills and (_local_hero.skill_manager as MarksmanSkills)._sprint_exhausted
+	if not sprinting and energy >= 99.5:
+		_sprint_panel.visible = false
+		return
+	_sprint_panel.visible = true
+	var ratio: float = clampf(energy / 100.0, 0.0, 1.0)
+	_sprint_bar_fill.anchor_right = ratio
+	if exhausted:
+		_sprint_bar_fill.color = Color(0.95, 0.34, 0.22)
+		if _sprint_lbl != null:
+			_sprint_lbl.text = "SPRINT %d%% (EXAUSTO)" % int(roundf(energy))
+	elif sprinting:
+		_sprint_bar_fill.color = Color(0.28, 0.96, 0.62)
+		if _sprint_lbl != null:
+			_sprint_lbl.text = "SPRINT %d%%" % int(roundf(energy))
+	else:
+		_sprint_bar_fill.color = Color(0.42, 0.78, 0.98)
+		if _sprint_lbl != null:
+			_sprint_lbl.text = "ENERGIA %d%%" % int(roundf(energy))
 
 
 func spawn_damage_number(world_pos: Vector3, amount: int, is_crit: bool = false, style_tag: String = "") -> void:

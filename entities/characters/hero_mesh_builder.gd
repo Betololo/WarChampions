@@ -268,6 +268,8 @@ static func get_torso_profile(class_id: int) -> Dictionary:
 		return {"waist_rx": 0.195, "waist_rz": 0.138, "chest_rx": 0.345, "chest_rz": 0.200, "hem_y": -0.16}
 	elif class_id == 4:
 		return {"waist_rx": 0.186, "waist_rz": 0.136, "chest_rx": 0.320, "chest_rz": 0.188, "hem_y": -0.14}
+	elif class_id == 5:
+		return {"waist_rx": 0.184, "waist_rz": 0.134, "chest_rx": 0.312, "chest_rz": 0.186, "hem_y": -0.20}
 	return {"waist_rx": 0.180, "waist_rz": 0.132, "chest_rx": 0.305, "chest_rz": 0.182, "hem_y": -0.18}
 
 
@@ -322,6 +324,17 @@ static func build_torso_mesh(class_id: int) -> ArrayMesh:
 			{"y": 0.60, "rx": 0.252, "rz": 0.152, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.05},
 			{"y": 0.64, "rx": 0.114, "rz": 0.106, "p": 2.1, "col": c_lit, "v": 0.00},
 		], 20))
+	elif class_id == 5: # Marksman tactical recon vest & ranger field coat
+		return _store_mesh(k, make_loft([
+			{"y": -0.20, "z": 0.008, "rx": 0.246, "rz": 0.186, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
+			{"y": -0.04, "rx": 0.212, "rz": 0.156, "p": 2.4, "col": c_shade, "side_ao": 0.10, "v": 0.86},
+			{"y": 0.06, "rx": 0.184, "rz": 0.134, "p": 2.4, "col": c_shade, "side_ao": 0.08, "v": 0.74},
+			{"y": 0.24, "rx": 0.248, "rz": 0.170, "p": 2.5, "col": c_mid, "side_ao": 0.10, "v": 0.50},
+			{"y": 0.45, "rx": 0.314, "rz": 0.188, "p": 2.5, "col": c_lit, "side_ao": 0.12, "v": 0.24},
+			{"y": 0.54, "rx": 0.304, "rz": 0.178, "p": 2.3, "col": c_lit, "side_ao": 0.08, "v": 0.12},
+			{"y": 0.60, "rx": 0.246, "rz": 0.150, "p": 2.2, "col": c_lit, "side_ao": 0.04, "v": 0.05},
+			{"y": 0.65, "rx": 0.112, "rz": 0.104, "p": 2.1, "col": c_lit, "v": 0.00},
+		], 20))
 	# Soldier tailored WWII jacket with pinched waist & flared coat tail
 	return _store_mesh(k, make_loft([
 		{"y": -0.18, "z": 0.006, "rx": 0.238, "rz": 0.178, "p": 2.4, "col": c_hem, "side_ao": 0.12, "v": 1.00},
@@ -342,11 +355,11 @@ static func build_collar_lapels_mesh(class_id: int) -> ArrayMesh:
 		return _mesh_cache[k] as ArrayMesh
 	var col_rim := Color(0.95, 0.95, 0.98)
 	var col_lapel := Color.WHITE
-	var collar_top_y: float = 0.740 if class_id == 2 else (0.710 if class_id == 3 else (0.688 if class_id == 4 else (0.662 if class_id == 1 else 0.678)))
+	var collar_top_y: float = 0.740 if class_id == 2 else (0.710 if class_id == 3 else (0.692 if class_id == 5 else (0.688 if class_id == 4 else (0.662 if class_id == 1 else 0.678))))
 	var collar_z: float = 0.012 if class_id == 2 else 0.006
-	var collar_rx: float = 0.124 if class_id == 3 else (0.118 if class_id == 1 else (0.114 if class_id == 4 else (0.112 if class_id == 2 else 0.108)))
-	var collar_rz: float = 0.114 if class_id == 3 else (0.108 if class_id == 1 else (0.105 if class_id == 4 else (0.104 if class_id == 2 else 0.100)))
-	var lapel_z: float = -0.194 if class_id == 1 else (-0.186 if class_id == 3 else (-0.175 if class_id == 4 else (-0.162 if class_id == 2 else -0.168)))
+	var collar_rx: float = 0.124 if class_id == 3 else (0.118 if class_id == 1 else (0.114 if class_id == 4 else (0.112 if (class_id == 2 or class_id == 5) else 0.108)))
+	var collar_rz: float = 0.114 if class_id == 3 else (0.108 if class_id == 1 else (0.105 if class_id == 4 else (0.104 if (class_id == 2 or class_id == 5) else 0.100)))
+	var lapel_z: float = -0.194 if class_id == 1 else (-0.186 if class_id == 3 else (-0.175 if class_id == 4 else (-0.172 if class_id == 5 else (-0.162 if class_id == 2 else -0.168))))
 	var lapel_h: float = 0.19 if class_id == 1 else (0.28 if class_id == 2 else (0.21 if class_id == 4 else 0.22))
 
 	var parts: Array[Dictionary] = [
@@ -508,6 +521,41 @@ static func build_backpack_mesh(class_id: int) -> ArrayMesh:
 				{"y": 0.155, "rx": 0.048, "rz": 0.048, "p": 2.0, "col": Color(0.36, 0.32, 0.24)},
 			],
 		})
+	elif class_id == 5: # Marksman: Tactical recon radio satchel + whip antenna + side canteen
+		parts.append({
+			"seg": 14,
+			"xform": _xform(Vector3(0.0, 0.30, 0.205)),
+			"rings": [
+				{"y": -0.14, "rx": 0.144, "rz": 0.068, "p": 2.6, "col": Color(0.30, 0.36, 0.26)},
+				{"y": 0.04, "rx": 0.152, "rz": 0.074, "p": 2.6, "col": Color(0.42, 0.48, 0.34)},
+				{"y": 0.14, "rx": 0.142, "rz": 0.066, "p": 2.5, "col": Color(0.48, 0.54, 0.38)},
+			],
+		})
+		parts.append({
+			"seg": 12,
+			"xform": _xform(Vector3(0.072, 0.33, 0.265)),
+			"rings": [
+				{"y": -0.10, "rx": 0.052, "rz": 0.036, "p": 2.4, "col": Color(0.24, 0.26, 0.30)},
+				{"y": 0.10, "rx": 0.050, "rz": 0.034, "p": 2.4, "col": Color(0.32, 0.35, 0.40)},
+			],
+		})
+		parts.append({
+			"seg": 8,
+			"xform": _xform(Vector3(0.098, 0.56, 0.270), Vector3(-0.08, 0.0, -0.06)),
+			"rings": [
+				{"y": -0.14, "rx": 0.009, "rz": 0.009, "p": 2.0, "col": Color(0.22, 0.24, 0.28)},
+				{"y": 0.14, "rx": 0.005, "rz": 0.005, "p": 2.0, "col": c_brass},
+			],
+		})
+		for sx in [-0.085, 0.085]:
+			parts.append({
+				"seg": 8,
+				"xform": _xform(Vector3(sx, 0.43, 0.140), Vector3(0.48, 0.0, 0.0)),
+				"rings": [
+					{"y": -0.08, "rx": 0.017, "rz": 0.010, "p": 2.2, "col": c_strap},
+					{"y": 0.08, "rx": 0.017, "rz": 0.010, "p": 2.2, "col": c_strap.lightened(0.15)},
+				],
+			})
 	else: # Soldier: WWII field rucksack + top bedroll cylinder + leather straps
 		parts.append({
 			"seg": 14,
@@ -697,6 +745,17 @@ static func build_bandolier_mesh(class_id: int) -> ArrayMesh:
 					{"y": -0.024, "rx": 0.013, "rz": 0.013, "p": 2.2, "col": tool_steel if t > 0.20 else brass_gauge},
 					{"y": 0.024, "rx": 0.015, "rz": 0.015, "p": 2.2, "col": tool_steel},
 				], 8, true, _xform(sp + Vector3(0.0, 0.0, -0.014), Vector3(0.0, 0.0, 0.52)), 30 + i0)
+		elif class_id == 5: # Tactical rifle mag pouches & flashbang cylinders along Marksman chest bandolier
+			var pouch_col := Color(0.28, 0.36, 0.24)
+			var stun_col := Color(0.68, 0.74, 0.82)
+			for t in [0.16, 0.25, 0.35]:
+				var idx: float = t * float(pts.size() - 1)
+				var i0: int = clampi(int(idx), 0, pts.size() - 2)
+				var sp: Vector3 = pts[i0].lerp(pts[i0 + 1], idx - float(i0))
+				add_loft_to_st(st, [
+					{"y": -0.026, "rx": 0.016, "rz": 0.012, "p": 2.4, "col": stun_col if t > 0.30 else pouch_col},
+					{"y": 0.026, "rx": 0.016, "rz": 0.012, "p": 2.4, "col": pouch_col.lightened(0.08)},
+				], 8, true, _xform(sp + Vector3(0.0, 0.0, -0.015), Vector3(0.0, 0.0, 0.55)), 40 + i0)
 
 	st.generate_normals()
 	return _store_mesh("band_%d" % class_id, st.commit())
@@ -1076,6 +1135,62 @@ static func build_engineer_cap_mesh(is_royal: bool) -> ArrayMesh:
 				{"y": 0.018, "rx": 0.025, "rz": 0.022, "p": 2.0, "col": lens_col},
 			],
 		})
+	return _store_mesh(k, _commit_lofts(parts))
+
+
+## Builds Marksman ranger beret with tactical recon visor brim and comms earpiece.
+static func build_ranger_cap_mesh(is_royal: bool) -> ArrayMesh:
+	var k := "ranger_cap_%s" % str(is_royal)
+	if _mesh_cache.has(k):
+		return _mesh_cache[k] as ArrayMesh
+	var crown_col := Color(0.20, 0.42, 0.30) if is_royal else Color(0.22, 0.24, 0.28)
+	var band_col := Color(0.14, 0.16, 0.18)
+	var accent_col := Color(0.92, 0.76, 0.26) if is_royal else Color(0.84, 0.20, 0.20)
+	var visor_col := Color(0.16, 0.84, 0.66) if is_royal else Color(0.96, 0.48, 0.20)
+	var parts: Array[Dictionary] = [
+		{
+			"seg": 18,
+			"rings": [
+				{"y": -0.010, "rx": 0.132, "rz": 0.138, "p": 2.1, "col": band_col},
+				{"y": 0.014, "rx": 0.136, "rz": 0.142, "p": 2.1, "col": crown_col.darkened(0.12)},
+				{"y": 0.048, "x": -0.022, "rx": 0.168, "rz": 0.164, "p": 2.0, "col": crown_col},
+				{"y": 0.092, "x": -0.028, "rx": 0.156, "rz": 0.152, "p": 2.0, "col": crown_col.lightened(0.08)},
+				{"y": 0.120, "x": -0.018, "rx": 0.088, "rz": 0.088, "p": 2.0, "col": crown_col.lightened(0.10)},
+			],
+		},
+		{
+			"seg": 12,
+			"xform": _xform(Vector3(0.0, -0.008, -0.152), Vector3(0.20, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.007, "rx": 0.118, "rz": 0.052, "p": 2.4, "col": band_col},
+				{"y": 0.007, "rx": 0.114, "rz": 0.048, "p": 2.4, "col": band_col.lightened(0.08)},
+			],
+		},
+		{
+			"seg": 10,
+			"xform": _xform(Vector3(0.038, 0.036, -0.138), Vector3(-0.10, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.018, "rx": 0.022, "rz": 0.010, "p": 2.4, "col": accent_col},
+				{"y": 0.018, "rx": 0.024, "rz": 0.010, "p": 2.4, "col": accent_col.lightened(0.12)},
+			],
+		},
+		{
+			"seg": 10,
+			"xform": _xform(Vector3(-0.042, -0.028, -0.156), Vector3(-0.12, 0.0, 0.0)),
+			"rings": [
+				{"y": -0.014, "rx": 0.042, "rz": 0.010, "p": 2.5, "col": visor_col},
+				{"y": 0.014, "rx": 0.044, "rz": 0.010, "p": 2.5, "col": visor_col.lightened(0.15)},
+			],
+		},
+		{
+			"seg": 10,
+			"xform": _xform(Vector3(0.136, -0.048, 0.005), Vector3(0.0, 0.0, PI * 0.5)),
+			"rings": [
+				{"y": -0.014, "rx": 0.032, "rz": 0.032, "p": 2.0, "col": band_col},
+				{"y": 0.014, "rx": 0.026, "rz": 0.026, "p": 2.0, "col": accent_col},
+			],
+		},
+	]
 	return _store_mesh(k, _commit_lofts(parts))
 
 
@@ -1831,6 +1946,48 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 			info["grip"] = Vector3(0.0, -0.040, 0.0)
 			info["foregrip"] = Vector3.ZERO
 			info["muzzle"] = Vector3(0.0, 0.040, -0.46)
+			info["two_handed"] = false
+
+		14: # Assault Rifle (arch 0=Heavy Tommy-style AR w/ drum mag, arch >=1=Suppressed Black Tactical AR)
+			if arch >= 1:
+				add_part(root, p_grip, Vector3(0.0, -0.048, 0.01), Vector3(-0.26, 0.0, 0.0), metal_mat, dummy)
+				_add_box_part(root, Vector3(0.038, 0.072, 0.24), Vector3(0.0, 0.004, 0.14), Vector3.ZERO, blued_metal_mat, dummy)
+				_add_box_part(root, Vector3(0.048, 0.058, 0.34), Vector3(0.0, 0.032, -0.12), Vector3.ZERO, metal_mat, dummy)
+				_add_box_part(root, Vector3(0.042, 0.042, 0.18), Vector3(0.0, 0.032, -0.34), Vector3.ZERO, blued_metal_mat, dummy)
+				_add_box_part(root, Vector3(0.026, 0.15, 0.048), Vector3(0.0, -0.058, -0.14), Vector3(0.14, 0.0, 0.0), blued_metal_mat, dummy)
+				_add_box_part(root, Vector3(0.030, 0.032, 0.11), Vector3(0.0, 0.076, -0.08), Vector3.ZERO, steel_mat, dummy)
+				_add_cyl_part(root, 0.013, 0.013, 0.010, Vector3(0.0, 0.076, -0.135), Vector3(PI * 0.5, 0.0, 0.0), lens_mat, 10, dummy)
+				_add_cyl_part(root, 0.016, 0.016, 0.16, Vector3(0.0, 0.034, -0.46), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 10, dummy)
+				_add_cyl_part(root, 0.025, 0.025, 0.22, Vector3(0.0, 0.034, -0.64), Vector3(PI * 0.5, 0.0, 0.0), blued_metal_mat, 12, dummy, "Suppressor")
+				_add_cyl_part(root, 0.027, 0.027, 0.020, Vector3(0.0, 0.034, -0.54), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 12, dummy)
+				info["foregrip"] = Vector3(0.0, -0.015, -0.26)
+				info["muzzle"] = Vector3(0.0, 0.034, -0.76)
+			else:
+				add_part(root, p_grip, Vector3(0.0, -0.048, 0.01), Vector3(-0.28, 0.0, 0.0), wood_mat, dummy)
+				var ar_stock := make_loft([
+					{"y": 0.00, "rx": 0.022, "rz": 0.050, "p": 2.2},
+					{"y": 0.24, "rx": 0.024, "rz": 0.034, "p": 2.2},
+				], 12)
+				add_part(root, ar_stock, Vector3(0.0, -0.008, 0.25), Vector3(-PI * 0.5, 0.0, 0.0), wood_mat, dummy)
+				_add_box_part(root, Vector3(0.054, 0.066, 0.34), Vector3(0.0, 0.032, -0.12), Vector3.ZERO, blued_metal_mat, dummy)
+				_add_box_part(root, Vector3(0.044, 0.040, 0.19), Vector3(0.0, -0.004, -0.26), Vector3.ZERO, wood_mat, dummy)
+				_add_cyl_part(root, 0.018, 0.015, 0.38, Vector3(0.0, 0.036, -0.48), Vector3(PI * 0.5, 0.0, 0.0), steel_mat, 10, dummy)
+				_add_box_part(root, Vector3(0.010, 0.022, 0.014), Vector3(0.0, 0.056, -0.64), Vector3.ZERO, steel_mat, dummy)
+				_add_cyl_part(root, 0.068, 0.068, 0.055, Vector3(0.0, -0.032, -0.14), Vector3(PI * 0.5, 0.0, 0.0), metal_mat, 14, dummy, "Drum")
+				_add_cyl_part(root, 0.052, 0.052, 0.058, Vector3(0.0, -0.032, -0.14), Vector3(PI * 0.5, 0.0, 0.0), brass_mat, 12, dummy)
+				info["foregrip"] = Vector3(0.0, -0.018, -0.26)
+				info["muzzle"] = Vector3(0.0, 0.036, -0.68)
+
+		15: # Pickaxe (Last Stand melee weapon: wooden haft + steel socket + curved dual pick head)
+			_add_cyl_part(root, 0.022, 0.020, 0.68, Vector3(0.0, 0.20, 0.0), Vector3.ZERO, wood_mat, 10, dummy, "PickHaft")
+			_add_cyl_part(root, 0.028, 0.028, 0.036, Vector3(0.0, -0.14, 0.0), Vector3.ZERO, brass_mat, 10, dummy)
+			_add_box_part(root, Vector3(0.062, 0.066, 0.088), Vector3(0.0, 0.52, 0.0), Vector3.ZERO, metal_mat, dummy, "PickSocket")
+			_add_box_part(root, Vector3(0.028, 0.044, 0.24), Vector3(0.0, 0.50, -0.14), Vector3(0.24, 0.0, 0.0), steel_mat, dummy, "PickSpikeBase")
+			_add_cyl_part(root, 0.004, 0.022, 0.14, Vector3(0.0, 0.455, -0.30), Vector3(-PI * 0.5 + 0.34, 0.0, 0.0), steel_mat, 8, dummy, "PickTip")
+			_add_box_part(root, Vector3(0.042, 0.040, 0.18), Vector3(0.0, 0.505, 0.12), Vector3(-0.20, 0.0, 0.0), steel_mat, dummy, "PickAdze")
+			info["grip"] = Vector3(0.0, -0.02, 0.0)
+			info["foregrip"] = Vector3.ZERO
+			info["muzzle"] = Vector3(0.0, 0.48, -0.34)
 			info["two_handed"] = false
 
 		_: # Service Pistol (arch 0=Classic Slide, 1=Suppressed Tactical Auto, 2=Brass Six-Shooter Revolver)

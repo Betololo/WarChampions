@@ -427,6 +427,18 @@ func _get_visual_style(is_royal: bool) -> Dictionary:
 		style["use_shades"] = false
 		style["headgear"] = "engineer_cap"
 		style["pauldron"] = false
+	elif class_id == NetworkManager.CLASS_MARKSMAN:
+		style["hip_x"] = 0.142
+		style["thigh_r"] = 0.095
+		style["sh_x"] = 0.252
+		style["arm_r_scale"] = 1.02
+		style["arm_len_scale"] = 1.02
+		style["beard_style"] = 1
+		style["use_shades"] = true
+		style["shade_col"] = Color(0.55, 0.92, 0.72) if is_royal else Color(0.96, 0.62, 0.34)
+		style["headgear"] = "ranger_cap"
+		style["scarf_col"] = Color(0.20, 0.36, 0.28) if is_royal else Color(0.46, 0.16, 0.18)
+		style["pauldron"] = false
 	return style
 
 
@@ -581,6 +593,9 @@ func _attach_head_and_gear(style: Dictionary, mats: Dictionary) -> void:
 		"engineer_cap":
 			var ecap_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.44)
 			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_engineer_cap_mesh(bool(style["is_royal"])), Vector3(0.0, 0.290, 0.0), Vector3(-0.04, 0.0, 0.0), ecap_mat, _mesh_parts)
+		"ranger_cap":
+			var rcap_mat := HeroMeshBuilder.make_sculpted_mat(Color.WHITE, "", 0.56)
+			HeroMeshBuilder.add_part(_head_pivot, HeroMeshBuilder.build_ranger_cap_mesh(bool(style["is_royal"])), Vector3(-0.008, 0.298, 0.0), Vector3(0.02, 0.0, 0.10), rcap_mat, _mesh_parts)
 
 
 func _rebuild_cartoon_visuals() -> void:
@@ -681,6 +696,7 @@ func _rebuild_cartoon_visuals() -> void:
 	_held_weapon_root_l.visible = false
 	_torso_pivot.add_child(_held_weapon_root_l)
 	_shown_weapon_kind = -1
+	_shown_weapon_arch = -1
 	_rebuild_held_weapon_mesh()
 
 	if class_id == NetworkManager.CLASS_DEMOLISHER:
@@ -1400,14 +1416,19 @@ func _animate_character(delta: float) -> void:
 	if _held_weapon_root_l != null:
 		_held_weapon_root_l.visible = (_shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS or _shown_weapon_kind == WeaponBase.WeaponKind.DUAL_PISTOLS)
 
+	var is_marksman_sprinting: bool = (
+		((active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0)
+		or (status_effects != null and status_effects.has_method("is_sprint_active") and bool(status_effects.is_sprint_active()))
+	) and not is_crouching and not is_parachuting and not is_emoting
 	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
 	if horiz_speed > 0.4 and (is_on_floor() or (active_flags & NetSerializer.SNAP_GROUNDED) != 0):
-		_walk_phase += horiz_speed * anim_dt * 2.1
+		_walk_phase += horiz_speed * anim_dt * (2.5 if is_marksman_sprinting else 2.1)
 	else:
 		_walk_phase = lerpf(_walk_phase, 0.0, minf(1.0, 8.0 * anim_dt))
 
-	var stride: float = sin(_walk_phase) * clampf(horiz_speed / 7.0, 0.0, 1.0)
-	var bob: float = absf(sin(_walk_phase * 2.0)) * 0.012 * clampf(horiz_speed / 7.0, 0.0, 1.0)
+	var stride_denom: float = 7.0
+	var stride: float = sin(_walk_phase) * clampf(horiz_speed / stride_denom, 0.0, 1.35 if is_marksman_sprinting else 1.0)
+	var bob: float = absf(sin(_walk_phase * 2.0)) * (0.018 if is_marksman_sprinting else 0.012) * clampf(horiz_speed / stride_denom, 0.0, 1.0)
 
 	var target_hips_y: float = 0.52 if is_crouching else (0.76 + bob)
 	_hips_pivot.position.y = lerpf(_hips_pivot.position.y, target_hips_y, minf(1.0, 14.0 * anim_dt))
@@ -1477,9 +1498,10 @@ func _animate_character(delta: float) -> void:
 		_leg_l_pivot.rotation.z = 0.0
 		_leg_r_pivot.rotation.z = 0.0
 		var counter_twist: float = -stride * 0.08 * (1.0 - fire_blend)
-		_torso_pivot.rotation.x = aim_pitch * 0.25 + (0.14 if is_crouching else 0.0) - kick * 0.05
+		var sprint_lean_x: float = -0.22 if (is_marksman_sprinting and horiz_speed > 1.5) else 0.0
+		_torso_pivot.rotation.x = aim_pitch * 0.25 + (0.14 if is_crouching else 0.0) + sprint_lean_x - kick * 0.05
 		_torso_pivot.rotation.y = lerpf(counter_twist, 0.18 if _shown_weapon_kind != WeaponBase.WeaponKind.KNIFE else kick * 0.45, 0.5 + fire_blend * 0.5)
-		_head_pivot.rotation.x = aim_pitch * 0.35
+		_head_pivot.rotation.x = aim_pitch * 0.35 - sprint_lean_x * 0.5
 		_pose_held_weapon_and_arms(stride, fire_blend, kick, reloading)
 		if _skill_anim_timer > 0.0:
 			var s_t: float = 1.0 - clampf(_skill_anim_timer / maxf(0.05, _skill_anim_duration), 0.0, 1.0)
@@ -1937,7 +1959,7 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 			WeaponBase.WeaponKind.WELDING_TORCH:
 				_held_weapon_root.position = Vector3(0.22, 0.38, -0.26 + kick * 0.02)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.72 + 0.06, lerpf(0.18, 0.05, fire_blend), 0.0)
-			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE, WeaponBase.WeaponKind.PICKAXE, -96:
+			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE:
 				var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				if _shown_weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE and _cycle_anim_timer > 0.0 and _cycle_anim_duration > 0.001:
 					swing_phase = maxf(swing_phase, sin(clampf(cycle_p, 0.0, 1.0) * PI))
@@ -1955,6 +1977,18 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 						_held_riot_shield.rotation = Vector3.ZERO
 						left_target = Vector3(-0.08, 0.36, -0.58)
 					custom_left_target = true
+			WeaponBase.WeaponKind.PICKAXE, -96: # Vigorous overhead/diagonal Pickaxe chop during Last Stand
+				var chop_phase: float = 0.0
+				if _cycle_anim_timer > 0.0 and _cycle_anim_duration > 0.001:
+					chop_phase = sin(clampf(cycle_p, 0.0, 1.0) * PI)
+				elif kick > 0.01:
+					chop_phase = sin(clampf(1.0 - kick, 0.0, 1.0) * PI)
+				_held_weapon_root.position = Vector3(0.26 - chop_phase * 0.20, 0.46 + chop_phase * 0.18 - chop_phase * chop_phase * 0.28, -0.18 - chop_phase * 0.28)
+				_held_weapon_root.rotation = Vector3(0.45 - chop_phase * 1.75 + aim_pitch * 0.35, 0.25 + chop_phase * 0.35, -0.32 + chop_phase * 0.18)
+				_torso_pivot.rotation.x -= 0.16 * chop_phase
+				right_pole = Vector3(0.85, 0.15, 0.45)
+				left_target = Vector3(-0.24, 0.38 + stride * 0.08, -0.22 - stride * 0.12)
+				custom_left_target = true
 			WeaponBase.WeaponKind.FLAMETHROWER:
 				var f_tilt: float = 0.45 if reloading else 0.0
 				_held_weapon_root.position = Vector3(0.23, 0.26, -0.14 + kick * 0.03)
@@ -2159,7 +2193,7 @@ func _physics_process(delta: float) -> void:
 						SoundSynthesizer.play_sfx("reload")
 					if cw.try_consume_fire(cmd):
 						trigger_weapon_fire_visual(cw.weapon_kind, true)
-						SoundSynthesizer.play_weapon_fire(cw.weapon_kind, 0.0)
+						SoundSynthesizer.play_weapon_fire(cw.weapon_kind, 0.0, true, Vector3.ZERO, cw.archetype)
 						var aim_dir: Vector3 = -(Basis.from_euler(Vector3(aim_pitch, aim_yaw, 0.0)).z).normalized()
 						if cw.weapon_kind == WeaponBase.WeaponKind.FLAMETHROWER and cw.archetype != 2:
 							StatusEffectsVFX.update_continuous_flame_stream(
@@ -2171,7 +2205,7 @@ func _physics_process(delta: float) -> void:
 								cw.archetype == 1
 							)
 						else:
-							StatusEffectsVFX.spawn_muzzle_flash(get_parent(), get_muzzle_world_position(), aim_dir, cw.weapon_kind)
+							StatusEffectsVFX.spawn_muzzle_flash(get_parent(), get_muzzle_world_position(), aim_dir, cw.weapon_kind, false, cw.archetype)
 		NetworkManager.send_input_to_server(cmd)
 	elif NetworkManager.is_active_host_authority():
 		simulate_movement(latest_server_input, delta)

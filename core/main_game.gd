@@ -525,11 +525,11 @@ func _spawn_14v14_bots(human_team: int) -> void:
 	var enemy_team: int = NetworkManager.TEAM_NATIONAL if human_team == NetworkManager.TEAM_ROYAL else NetworkManager.TEAM_ROYAL
 
 	for i in range(ally_count):
-		var cls: int = i % 5
+		var cls: int = i % 6
 		NetworkManager.register_bot(bot_id, "AllyBot_%d" % (i + 1), human_team, cls, i % 3)
 		bot_id += 1
 	for j in range(enemy_count):
-		var cls_e: int = (j + 2) % 5
+		var cls_e: int = (j + 2) % 6
 		NetworkManager.register_bot(bot_id, "EnemyBot_%d" % (j + 1), enemy_team, cls_e, j % 3)
 		bot_id += 1
 
@@ -914,11 +914,11 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 					else:
 						_last_flame_sfx_msec[shooter_id] = now_ms
 				if play_sfx_now:
-					SoundSynthesizer.play_weapon_fire(w_kind, dist_m, is_local_shooter, muzzle_pos)
+					SoundSynthesizer.play_weapon_fire(w_kind, dist_m, is_local_shooter, muzzle_pos, w_arch)
 				if shooter != null and not is_vehicle_shot:
 					shooter.trigger_weapon_fire_visual(w_kind, shooter_id == NetworkManager.local_peer_id and not shooter.is_bot, hand)
 				if not is_continuous_flame:
-					StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind)
+					StatusEffectsVFX.spawn_muzzle_flash(projectiles_root, muzzle_pos, aim_dir, w_kind, false, w_arch)
 
 			if is_continuous_flame and projectiles_root != null:
 				var hit_arr: Array = payload.get("hits", [])
@@ -973,10 +973,12 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 		"explosion_vfx":
 			var exp_pos: Vector3 = payload.get("pos", Vector3.ZERO)
 			var exp_radius: float = float(payload.get("radius", 5.0))
+			var exp_kind: int = int(payload.get("kind", -1))
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, exp_pos, "explosion", exp_radius)
 			StatusEffectsVFX.spawn_explosion_area_ring(projectiles_root, exp_pos, exp_radius)
 			var exp_attacker_id: int = int(payload.get("attacker_id", -1))
-			SoundSynthesizer.play_sfx("explosion", 0.0, exp_attacker_id == NetworkManager.local_peer_id, exp_pos)
+			var exp_sfx: String = "flashbang" if exp_kind == ProjectileEntity.ProjectileKind.FLASHBANG else "explosion"
+			SoundSynthesizer.play_sfx(exp_sfx, 0.0, exp_attacker_id == NetworkManager.local_peer_id, exp_pos)
 		"vehicle_destroyed":
 			var v_id_dead: int = int(payload.get("vehicle_id", -1))
 			var v_type: int = int(payload.get("vehicle_type", 0))
@@ -1239,15 +1241,17 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			var fb_hero_id: int = int(payload.get("hero_id", -1))
 			var fb_dur: float = float(payload.get("duration", 0.0))
 			var fb_int: float = float(payload.get("intensity", 0.0))
-			if fb_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("trigger_flashbang_blind"):
-				hud.trigger_flashbang_blind(fb_dur, fb_int)
+			if fb_hero_id == NetworkManager.local_peer_id:
+				SoundSynthesizer.play_sfx("flashbang", 0.0, true)
+				if hud != null and hud.has_method("trigger_flashbang_blind"):
+					hud.trigger_flashbang_blind(fb_dur, fb_int)
 		"pickaxe_swing":
 			var pk_hero_id: int = int(payload.get("hero_id", -1))
 			var pk_hero: HeroCharacter = heroes_by_id.get(pk_hero_id, null)
 			if pk_hero != null and is_instance_valid(pk_hero):
 				pk_hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.PICKAXE, false)
 			var pk_pos: Vector3 = payload.get("pos", Vector3.ZERO)
-			SoundSynthesizer.play_sfx("knife", 0.0, pk_hero_id == NetworkManager.local_peer_id, pk_pos)
+			SoundSynthesizer.play_sfx("pickaxe", 0.0, pk_hero_id == NetworkManager.local_peer_id, pk_pos)
 
 
 func _get_live_vehicles_array() -> Array[VehicleBase]:
