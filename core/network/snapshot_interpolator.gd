@@ -19,6 +19,7 @@ class SnapshotSample extends RefCounted:
 
 
 var _buffer: Array[SnapshotSample] = []
+var _reusable_sample: SnapshotSample = SnapshotSample.new()
 
 
 func push_snapshot(
@@ -37,7 +38,11 @@ func push_snapshot(
 		if server_tick <= latest.server_tick:
 			return
 
-	var s := SnapshotSample.new()
+	var s: SnapshotSample
+	if _buffer.size() >= MAX_SNAPSHOTS:
+		s = _buffer.pop_front() as SnapshotSample
+	else:
+		s = SnapshotSample.new()
 	s.server_tick = server_tick
 	s.timestamp_ms = timestamp_ms
 	s.position = pos
@@ -48,9 +53,6 @@ func push_snapshot(
 	s.turret_yaw = turret_yaw
 	s.flags = flags
 	_buffer.append(s)
-
-	while _buffer.size() > MAX_SNAPSHOTS:
-		_buffer.pop_front()
 
 
 func sample(server_clock_ms: float) -> SnapshotSample:
@@ -72,7 +74,7 @@ func sample(server_clock_ms: float) -> SnapshotSample:
 		if s0.timestamp_ms <= render_time and render_time <= s1.timestamp_ms:
 			var span: float = maxf(s1.timestamp_ms - s0.timestamp_ms, 0.001)
 			var alpha: float = clampf((render_time - s0.timestamp_ms) / span, 0.0, 1.0)
-			var out := SnapshotSample.new()
+			var out: SnapshotSample = _reusable_sample
 			out.server_tick = int(lerpf(float(s0.server_tick), float(s1.server_tick), alpha))
 			out.timestamp_ms = render_time
 			out.position = s0.position.lerp(s1.position, alpha)

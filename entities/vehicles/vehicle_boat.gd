@@ -35,7 +35,7 @@ func _build_vehicle_mesh() -> void:
 func _physics_process(delta: float) -> void:
 	if _enforce_remote_freeze():
 		return
-	if is_destroyed or freeze:
+	if is_destroyed or freeze or sleeping:
 		return
 	_apply_buoyancy_and_leveling(delta)
 

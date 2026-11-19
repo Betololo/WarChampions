@@ -33,7 +33,156 @@ const BUFF_ICON_TABLE: Array[Array] = [
 static var _xray_mat: ShaderMaterial = null
 static var _shared_meshes: Dictionary = {}
 static var _shared_mats: Dictionary = {}
+static var _shared_burst_mats: Dictionary = {}
+static var _pool_managers: Dictionary = {}
 static var _active_build_previews: Dictionary = {}
+
+
+class VfxPoolEntry extends RefCounted:
+	var kind: int = 0 # 0=burst, 1=tracer, 2=flame_jet, 3=flash, 4=mote
+	var node: Node3D = null
+	var mesh_node: MeshInstance3D = null
+	var aux_mesh_node: MeshInstance3D = null
+	var elapsed: float = 0.0
+	var duration: float = 0.25
+	var start_pos: Vector3 = Vector3.ZERO
+	var end_pos: Vector3 = Vector3.ZERO
+	var start_scale: Vector3 = Vector3.ONE
+	var end_scale: Vector3 = Vector3.ONE
+	var arc_points: PackedVector3Array = PackedVector3Array()
+	var cum_dist: PackedFloat32Array = PackedFloat32Array()
+	var start_d: float = 0.0
+	var end_d: float = 0.0
+	var active: bool = false
+
+
+class VfxPoolManager extends Node:
+	const MAX_BURSTS: int = 64
+	const MAX_TRACERS: int = 64
+	const MAX_FLASHES: int = 32
+	const MAX_MOTES: int = 64
+
+	var _burst_free: Array[VfxPoolEntry] = []
+	var _tracer_free: Array[VfxPoolEntry] = []
+	var _flash_free: Array[VfxPoolEntry] = []
+	var _mote_free: Array[VfxPoolEntry] = []
+	var _active: Array[VfxPoolEntry] = []
+	var total_created: int = 0
+	var total_reused: int = 0
+	var parent_id: int = 0
+
+	func _exit_tree() -> void:
+		if parent_id != 0 and StatusEffectsVFX._pool_managers.get(parent_id, null) == self:
+			StatusEffectsVFX._pool_managers.erase(parent_id)
+		clear_all_entries()
+
+	func clear_all_entries() -> void:
+		for entry in _active:
+			if entry.node != null and is_instance_valid(entry.node):
+				entry.node.queue_free()
+		for pool in [_burst_free, _tracer_free, _flash_free, _mote_free]:
+			for entry in pool:
+				if entry.node != null and is_instance_valid(entry.node):
+					entry.node.queue_free()
+			pool.clear()
+		_active.clear()
+
+	func _acquire_entry(pool: Array[VfxPoolEntry], cap: int, kind_id: int, create_fn: Callable) -> VfxPoolEntry:
+		var entry: VfxPoolEntry = null
+		while not pool.is_empty():
+			var cand: VfxPoolEntry = pool.pop_back() as VfxPoolEntry
+			if cand != null and cand.node != null and is_instance_valid(cand.node):
+				entry = cand
+				total_reused += 1
+				break
+		if entry == null:
+			var active_of_kind: int = 0
+			var oldest_idx: int = -1
+			for idx in range(_active.size()):
+				if _active[idx].kind == kind_id:
+					active_of_kind += 1
+					if oldest_idx < 0:
+						oldest_idx = idx
+			if active_of_kind >= cap and oldest_idx >= 0:
+				entry = _active[oldest_idx]
+				_active.remove_at(oldest_idx)
+				total_reused += 1
+			else:
+				entry = create_fn.call() as VfxPoolEntry
+				total_created += 1
+				var p: Node = get_parent()
+				if p != null and entry.node != null and entry.node.get_parent() == null:
+					p.add_child(entry.node)
+		entry.elapsed = 0.0
+		entry.active = true
+		if entry.node != null:
+			entry.node.visible = true
+		_active.append(entry)
+		return entry
+
+	func _recycle_entry(entry: VfxPoolEntry) -> void:
+		entry.active = false
+		if entry.node != null and is_instance_valid(entry.node):
+			entry.node.visible = false
+		match entry.kind:
+			0:
+				if _burst_free.size() < MAX_BURSTS:
+					_burst_free.append(entry)
+				elif entry.node != null and is_instance_valid(entry.node):
+					entry.node.queue_free()
+			1, 2:
+				if _tracer_free.size() < MAX_TRACERS:
+					_tracer_free.append(entry)
+				elif entry.node != null and is_instance_valid(entry.node):
+					entry.node.queue_free()
+			3:
+				if _flash_free.size() < MAX_FLASHES:
+					_flash_free.append(entry)
+				elif entry.node != null and is_instance_valid(entry.node):
+					entry.node.queue_free()
+			_:
+				if _mote_free.size() < MAX_MOTES:
+					_mote_free.append(entry)
+				elif entry.node != null and is_instance_valid(entry.node):
+					entry.node.queue_free()
+
+	func _process(delta: float) -> void:
+		if _active.is_empty():
+			return
+		var i: int = _active.size() - 1
+		while i >= 0:
+			var entry: VfxPoolEntry = _active[i]
+			if entry == null or entry.node == null or not is_instance_valid(entry.node):
+				_active.remove_at(i)
+				i -= 1
+				continue
+			entry.elapsed += delta
+			var dur: float = maxf(0.01, entry.duration)
+			var t: float = clampf(entry.elapsed / dur, 0.0, 1.0)
+			match entry.kind:
+				0: # burst: expand quickly then shrink to zero cleanly (zero material allocation)
+					entry.node.position = entry.start_pos.lerp(entry.end_pos, t)
+					var env: float = (1.0 - maxf(0.0, (t - 0.55) / 0.45))
+					entry.node.scale = entry.start_scale.lerp(entry.end_scale, minf(1.0, t * 1.35)) * maxf(0.02, env)
+				1: # curved/straight tracer
+					var d: float = lerpf(entry.start_d, entry.end_d, t)
+					StatusEffectsVFX._apply_tracer_pose(entry.mesh_node, entry.arc_points, entry.cum_dist, d)
+					var fade_s: float = maxf(0.05, 1.0 - maxf(0.0, (t - 0.65) / 0.35))
+					entry.mesh_node.scale = Vector3(entry.start_scale.x * fade_s, entry.start_scale.y * fade_s, entry.start_scale.z)
+				2: # flame jet
+					entry.node.position = entry.start_pos.lerp(entry.end_pos, t)
+					var f_fade: float = 1.0 - maxf(0.0, (t - 0.50) / 0.50)
+					entry.node.scale = entry.start_scale.lerp(entry.end_scale, t) * maxf(0.05, f_fade)
+				3: # muzzle flash
+					entry.node.scale = entry.start_scale.lerp(entry.end_scale, t) * maxf(0.05, 1.0 - t * 0.85)
+				4: # mote / puff
+					entry.node.position = entry.start_pos.lerp(entry.end_pos, t)
+					var m_fade: float = 1.0 - maxf(0.0, (t - 0.55) / 0.45)
+					entry.node.scale = entry.start_scale.lerp(entry.end_scale, t) * maxf(0.04, m_fade)
+			if entry.elapsed >= dur:
+				_active.remove_at(i)
+				_recycle_entry(entry)
+			i -= 1
 
 
 class BuildPreviewVFX extends Node3D:
@@ -197,6 +346,108 @@ static func _get_shared_mat(col: Color, additive: bool = false) -> StandardMater
 	mat.albedo_color = col
 	_shared_mats[key] = mat
 	return mat
+
+
+static func _get_shared_burst_mat(kind: String) -> StandardMaterial3D:
+	if _shared_burst_mats.has(kind):
+		return _shared_burst_mats[kind] as StandardMaterial3D
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	match kind:
+		"spark":
+			mat.albedo_color = Color(1.0, 0.86, 0.2, 0.95)
+			mat.emission_enabled = true
+			mat.emission = Color(1.0, 0.72, 0.1)
+		"explosion":
+			mat.albedo_color = Color(1.0, 0.45, 0.1, 0.85)
+			mat.emission_enabled = true
+			mat.emission = Color(1.0, 0.35, 0.05)
+		"heal":
+			mat.albedo_color = Color(0.25, 0.95, 0.45, 0.85)
+		"smoke":
+			mat.albedo_color = Color(0.28, 0.28, 0.30, 0.72)
+		"fire":
+			mat.albedo_color = Color(1.0, 0.42, 0.08, 0.88)
+			mat.emission_enabled = true
+			mat.emission = Color(1.0, 0.32, 0.04)
+		"muzzle":
+			mat.albedo_color = Color(1.0, 0.72, 0.16, 0.90)
+			mat.emission_enabled = true
+			mat.emission = Color(1.0, 0.60, 0.10)
+		_:
+			mat.albedo_color = Color(0.88, 0.86, 0.8, 0.75)
+	_shared_burst_mats[kind] = mat
+	return mat
+
+
+static func get_prewarm_materials() -> Array[Material]:
+	warm_shared_meshes()
+	var mats: Array[Material] = []
+	for k in ["spark", "explosion", "heal", "smoke", "fire", "muzzle", "dust"]:
+		mats.append(_get_shared_burst_mat(k))
+	mats.append(_get_shared_mat(Color(1.0, 0.86, 0.35, 0.80), true))
+	mats.append(_get_shared_mat(Color(1.0, 0.90, 0.32, 0.95), true))
+	return mats
+
+
+static func _get_pool_manager(parent: Node) -> VfxPoolManager:
+	if parent == null or not is_instance_valid(parent):
+		return null
+	var pid: int = parent.get_instance_id()
+	var existing: Variant = _pool_managers.get(pid, null)
+	if existing is VfxPoolManager and is_instance_valid(existing) and (existing as VfxPoolManager).get_parent() == parent:
+		return existing as VfxPoolManager
+	var mgr := VfxPoolManager.new()
+	mgr.name = "StatusEffectsVFXPool"
+	mgr.parent_id = pid
+	parent.add_child(mgr)
+	_pool_managers[pid] = mgr
+	return mgr
+
+
+static func clear_pools(parent: Node = null) -> void:
+	if parent != null:
+		var pid: int = parent.get_instance_id()
+		var mgr: Variant = _pool_managers.get(pid, null)
+		_pool_managers.erase(pid)
+		if mgr is VfxPoolManager and is_instance_valid(mgr):
+			(mgr as VfxPoolManager).clear_all_entries()
+			(mgr as VfxPoolManager).queue_free()
+		return
+	for pid_key in _pool_managers.keys():
+		var m: Variant = _pool_managers[pid_key]
+		if m is VfxPoolManager and is_instance_valid(m):
+			(m as VfxPoolManager).clear_all_entries()
+			(m as VfxPoolManager).queue_free()
+	_pool_managers.clear()
+
+
+static func _is_beyond_vfx_distance(parent: Node, world_pos: Vector3, max_dist: float = 110.0) -> bool:
+	if parent == null or not parent.is_inside_tree() or parent.get_viewport() == null:
+		return false
+	var cam: Camera3D = parent.get_viewport().get_camera_3d()
+	if cam == null:
+		return false
+	return cam.global_position.distance_squared_to(world_pos) > (max_dist * max_dist)
+
+
+static func _apply_tracer_pose(tracer: MeshInstance3D, arc_points: PackedVector3Array, cum_dist: PackedFloat32Array, d: float) -> void:
+	if tracer == null or not is_instance_valid(tracer) or arc_points.size() < 2 or cum_dist.size() < 2:
+		return
+	var seg_idx: int = 0
+	for i in range(arc_points.size() - 1):
+		if d <= cum_dist[i + 1] or i == arc_points.size() - 2:
+			seg_idx = i
+			break
+	var seg_span: float = maxf(0.001, cum_dist[seg_idx + 1] - cum_dist[seg_idx])
+	var local_t: float = clampf((d - cum_dist[seg_idx]) / seg_span, 0.0, 1.0)
+	var pos: Vector3 = arc_points[seg_idx].lerp(arc_points[seg_idx + 1], local_t)
+	var seg_dir: Vector3 = arc_points[seg_idx + 1] - arc_points[seg_idx]
+	tracer.position = pos
+	if seg_dir.length_squared() > 0.0001:
+		var dir_n: Vector3 = seg_dir.normalized()
+		if absf(dir_n.dot(Vector3.UP)) < 0.98 and tracer.is_inside_tree():
+			tracer.look_at(pos + dir_n, Vector3.UP)
 
 
 static func _vfx_part(
@@ -378,28 +629,29 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var mark_flag: int = 1 if ((hero.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) else 0
 	var cloak_q: int = int(roundf(clampf(cloak_val, 0.0, 1.0) * 100.0))
 
-	var state_key: String = "%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d" % [
-		1 if hero.current_vehicle_id >= 0 else 0,
-		0 if vis else 1,
-		1 if hero.is_defeated else 0,
-		1 if show_xray else 0,
-		1 if burning else 0,
-		1 if poisoned else 0,
-		1 if shielded else 0,
-		1 if marked_enemy else 0,
-		speed_flag,
-		eat_flag,
-		frenzy_flag,
-		pierce_flag,
-		cloak_q,
-		hero.active_buffs,
-		stealth_ally_flag,
-		mark_flag,
-	]
+	var state_hash: int = (
+		(1 if hero.current_vehicle_id >= 0 else 0)
+		| ((0 if vis else 1) << 1)
+		| ((1 if hero.is_defeated else 0) << 2)
+		| ((1 if show_xray else 0) << 3)
+		| ((1 if burning else 0) << 4)
+		| ((1 if poisoned else 0) << 5)
+		| ((1 if shielded else 0) << 6)
+		| ((1 if marked_enemy else 0) << 7)
+		| (speed_flag << 8)
+		| (eat_flag << 9)
+		| (frenzy_flag << 10)
+		| (pierce_flag << 11)
+		| (stealth_ally_flag << 12)
+		| (mark_flag << 13)
+		| ((cloak_q & 0x7F) << 14)
+		| (hero.active_buffs << 21)
+	)
 
-	if state_key == hero._last_vfx_key:
+	if state_hash == hero._last_vfx_hash:
 		return
-	hero._last_vfx_key = state_key
+	hero._last_vfx_hash = state_hash
+	hero._last_vfx_key = String.num_int64(state_hash)
 	hero.visual_root.visible = vis
 	_update_overhead_buff_icons(hero, stealthed, is_enemy, vis)
 	if not vis:
@@ -449,18 +701,34 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 		rim_col = Color(0.72, 1.0, 0.32)
 		rim_str = 1.35
 
+	var shader_changed: bool = (hero._last_vfx_shader != target_shader)
+	var xray_changed: bool = (hero._last_vfx_xray != xray_ov)
+	var cloak_changed: bool = not is_equal_approx(hero._last_vfx_cloak, cloak_val)
+	var rim_col_changed: bool = (hero._last_vfx_rim_col != rim_col)
+	var rim_str_changed: bool = not is_equal_approx(hero._last_vfx_rim_str, rim_str)
+
 	for part in hero._mesh_parts:
 		if not is_instance_valid(part):
 			continue
 		part.visible = true
-		part.material_overlay = xray_ov
+		if xray_changed:
+			part.material_overlay = xray_ov
 		if part.material_override is ShaderMaterial:
 			var smat := part.material_override as ShaderMaterial
 			if smat.shader != target_shader:
 				smat.shader = target_shader
-			smat.set_shader_parameter("cloak_amount", cloak_val)
-			smat.set_shader_parameter("rim_color", rim_col)
-			smat.set_shader_parameter("rim_strength", rim_str)
+			if shader_changed or cloak_changed:
+				smat.set_shader_parameter("cloak_amount", cloak_val)
+			if shader_changed or rim_col_changed:
+				smat.set_shader_parameter("rim_color", rim_col)
+			if shader_changed or rim_str_changed:
+				smat.set_shader_parameter("rim_strength", rim_str)
+
+	hero._last_vfx_shader = target_shader
+	hero._last_vfx_xray = xray_ov
+	hero._last_vfx_cloak = cloak_val
+	hero._last_vfx_rim_col = rim_col
+	hero._last_vfx_rim_str = rim_str
 
 
 static func update_vehicle_client_visuals(veh: VehicleBase, local_hero: HeroCharacter, heroes_by_id: Dictionary = {}) -> void:
@@ -482,21 +750,33 @@ static func update_vehicle_client_visuals(veh: VehicleBase, local_hero: HeroChar
 
 
 static func _spawn_foot_speed_puff(parent: Node, world_pos: Vector3, aim_yaw: float) -> void:
-	var puff := MeshInstance3D.new()
+	if _is_beyond_vfx_distance(parent, world_pos, 110.0):
+		return
+	var mgr: VfxPoolManager = _get_pool_manager(parent)
+	if mgr == null:
+		return
+	var entry: VfxPoolEntry = mgr._acquire_entry(mgr._mote_free, mgr.MAX_MOTES, 4, func() -> VfxPoolEntry:
+		var e := VfxPoolEntry.new()
+		e.kind = 4
+		var mi := MeshInstance3D.new()
+		mi.mesh = _get_shared_sphere()
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		e.node = mi
+		e.mesh_node = mi
+		return e
+	)
+	var puff := entry.mesh_node
 	puff.mesh = _get_shared_sphere()
 	puff.material_override = _get_shared_mat(Color(0.86, 0.88, 0.72, 0.48), false)
-	puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var back_dir := Vector3(sin(aim_yaw), 0.0, cos(aim_yaw))
-	puff.position = world_pos + Vector3(0.0, 0.14, 0.0) + back_dir * 0.28
+	var start_p: Vector3 = world_pos + Vector3(0.0, 0.14, 0.0) + back_dir * 0.28
+	puff.position = start_p
 	puff.scale = Vector3(0.24, 0.16, 0.24)
-	parent.add_child(puff)
-	if puff.is_inside_tree():
-		var tw: Tween = puff.create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(puff, "scale", Vector3(0.55, 0.30, 0.55), 0.26)
-		tw.tween_property(puff, "position", puff.position + back_dir * 0.45 + Vector3(0.0, 0.18, 0.0), 0.26)
-		tw.tween_property(puff, "transparency", 1.0, 0.26)
-		tw.chain().tween_callback(puff.queue_free)
+	entry.start_pos = start_p
+	entry.end_pos = start_p + back_dir * 0.45 + Vector3(0.0, 0.18, 0.0)
+	entry.start_scale = Vector3(0.24, 0.16, 0.24)
+	entry.end_scale = Vector3(0.55, 0.30, 0.55)
+	entry.duration = 0.26
 
 
 static func _has_continuous_particle_buff(hero: HeroCharacter) -> bool:
@@ -535,30 +815,49 @@ static func _spawn_rising_mote(
 	rise_y: float = 0.65,
 	is_cross: bool = false
 ) -> void:
-	var node: Node3D
-	var fades: Array[MeshInstance3D] = []
+	if _is_beyond_vfx_distance(parent, start_pos, 110.0):
+		return
+	var mgr: VfxPoolManager = _get_pool_manager(parent)
+	if mgr == null:
+		return
 	var mat: StandardMaterial3D = _get_shared_mat(col, true)
-	if is_cross:
-		node = _vfx_plus_cross(parent as Node3D, mat, start_pos, mote_scale * 2.2, mote_scale * 0.55, fades)
-	else:
+	var entry: VfxPoolEntry = mgr._acquire_entry(mgr._mote_free, mgr.MAX_MOTES, 4, func() -> VfxPoolEntry:
+		var e := VfxPoolEntry.new()
+		e.kind = 4
 		var mi := MeshInstance3D.new()
 		mi.mesh = _get_shared_sphere()
-		mi.material_override = mat
-		mi.scale = Vector3.ONE * mote_scale
-		mi.position = start_pos
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		parent.add_child(mi)
-		node = mi
-		fades.append(mi)
-
-	if node.is_inside_tree():
-		var tw: Tween = node.create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(node, "position", start_pos + Vector3(randf_range(-0.18, 0.18), rise_y, randf_range(-0.18, 0.18)), 0.45)
-		tw.tween_property(node, "scale", node.scale * 1.45, 0.45)
-		for mi in fades:
-			tw.tween_property(mi, "transparency", 1.0, 0.45)
-		tw.chain().tween_callback(node.queue_free)
+		var aux := MeshInstance3D.new()
+		aux.mesh = _get_shared_box()
+		aux.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		aux.visible = false
+		mi.add_child(aux)
+		e.node = mi
+		e.mesh_node = mi
+		e.aux_mesh_node = aux
+		return e
+	)
+	var mi := entry.mesh_node
+	var aux := entry.aux_mesh_node
+	mi.position = start_pos
+	mi.material_override = mat
+	if is_cross:
+		mi.mesh = _get_shared_box()
+		mi.scale = Vector3(mote_scale * 0.55, mote_scale * 2.2, mote_scale * 0.55)
+		if aux != null:
+			aux.visible = true
+			aux.material_override = mat
+			aux.scale = Vector3(4.0, 0.25, 1.0)
+	else:
+		mi.mesh = _get_shared_sphere()
+		mi.scale = Vector3.ONE * mote_scale
+		if aux != null:
+			aux.visible = false
+	entry.start_pos = start_pos
+	entry.end_pos = start_pos + Vector3(randf_range(-0.18, 0.18), rise_y, randf_range(-0.18, 0.18))
+	entry.start_scale = mi.scale
+	entry.end_scale = mi.scale * 1.45
+	entry.duration = 0.45
 
 
 static func _spawn_active_buff_tick_vfx(parent: Node, hero: HeroCharacter) -> void:
@@ -618,106 +917,112 @@ static func _spawn_sixth_sense_radar_pulse(parent: Node, origin: Vector3, radius
 		tw.chain().tween_callback(pulse.queue_free)
 
 
-static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, radius: float = 1.0) -> void:
-	if parent == null or DisplayServer.get_name().contains("headless"):
+static func spawn_cartoon_burst(parent: Node, world_pos: Vector3, kind: String, radius: float = 1.0, force_in_headless: bool = false) -> void:
+	if parent == null or (not force_in_headless and DisplayServer.get_name().contains("headless")):
 		return
-	var burst := MeshInstance3D.new()
-	burst.mesh = _get_shared_sphere()
-	burst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var cull_dist: float = 220.0 if kind == "explosion" else 110.0
+	if _is_beyond_vfx_distance(parent, world_pos, cull_dist):
+		return
+	var mgr: VfxPoolManager = _get_pool_manager(parent)
+	if mgr == null:
+		return
 	var base_r: float = 0.28 if kind != "explosion" else clampf(radius * 0.45, 0.8, 3.5)
+	if kind == "smoke":
+		base_r = clampf(0.35 * radius, 0.25, 1.2)
+	elif kind == "fire":
+		base_r = clampf(0.28 * radius, 0.2, 0.9)
 
-	var mat := StandardMaterial3D.new()
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	match kind:
-		"spark":
-			mat.albedo_color = Color(1.0, 0.86, 0.2, 0.95)
-			mat.emission_enabled = true
-			mat.emission = Color(1.0, 0.72, 0.1)
-		"explosion":
-			mat.albedo_color = Color(1.0, 0.45, 0.1, 0.85)
-			mat.emission_enabled = true
-			mat.emission = Color(1.0, 0.35, 0.05)
-		"heal":
-			mat.albedo_color = Color(0.25, 0.95, 0.45, 0.85)
-		"smoke":
-			base_r = clampf(0.35 * radius, 0.25, 1.2)
-			mat.albedo_color = Color(0.28, 0.28, 0.30, 0.72)
-		"fire":
-			base_r = clampf(0.28 * radius, 0.2, 0.9)
-			mat.albedo_color = Color(1.0, 0.42, 0.08, 0.88)
-			mat.emission_enabled = true
-			mat.emission = Color(1.0, 0.32, 0.04)
-		_:
-			mat.albedo_color = Color(0.88, 0.86, 0.8, 0.75)
-
+	var entry: VfxPoolEntry = mgr._acquire_entry(mgr._burst_free, mgr.MAX_BURSTS, 0, func() -> VfxPoolEntry:
+		var e := VfxPoolEntry.new()
+		e.kind = 0
+		var mi := MeshInstance3D.new()
+		mi.mesh = _get_shared_sphere()
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		e.node = mi
+		e.mesh_node = mi
+		return e
+	)
+	var burst := entry.mesh_node
+	burst.material_override = _get_shared_burst_mat(kind)
 	var diam: float = base_r * 2.0
+	var is_plume: bool = (kind == "smoke" or kind == "fire")
 	burst.scale = Vector3.ONE * diam
 	burst.position = world_pos
-	burst.material_override = mat
-	parent.add_child(burst)
-
-	var is_plume: bool = (kind == "smoke" or kind == "fire")
-	var dur: float = 0.55 if is_plume else 0.26
-	var tw: Tween = parent.create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(burst, "scale", Vector3.ONE * (diam * (2.2 if is_plume else 1.8)), dur)
-	if is_plume:
-		tw.tween_property(burst, "position", world_pos + Vector3(randf_range(-0.3, 0.3), 2.4, randf_range(-0.3, 0.3)), dur)
-	tw.tween_property(mat, "albedo_color:a", 0.0, dur)
-	tw.chain().tween_callback(burst.queue_free)
+	entry.start_pos = world_pos
+	entry.end_pos = (world_pos + Vector3(randf_range(-0.3, 0.3), 2.4, randf_range(-0.3, 0.3))) if is_plume else world_pos
+	entry.start_scale = Vector3.ONE * diam
+	entry.end_scale = Vector3.ONE * (diam * (2.2 if is_plume else 1.8))
+	entry.duration = 0.55 if is_plume else 0.26
 
 
-static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector3, weapon_kind: int) -> void:
-	if parent == null or DisplayServer.get_name().contains("headless"):
+static func spawn_muzzle_flash(parent: Node, world_pos: Vector3, aim_dir: Vector3, weapon_kind: int, force_in_headless: bool = false) -> void:
+	if parent == null or (not force_in_headless and DisplayServer.get_name().contains("headless")):
 		return
 	if weapon_kind == 5 or weapon_kind == 7 or weapon_kind == 10:
 		return
-	var flash_root := Node3D.new()
-	flash_root.position = world_pos
-	parent.add_child(flash_root)
+	if _is_beyond_vfx_distance(parent, world_pos, 110.0):
+		return
+	var mgr: VfxPoolManager = _get_pool_manager(parent)
+	if mgr == null:
+		return
 
 	var base_r: float = 0.16 if weapon_kind == 6 or weapon_kind == 2 else (0.14 if (weapon_kind == 4 or weapon_kind == 13) else 0.10)
 	var flash_col := Color(0.34, 0.94, 1.0, 0.95) if weapon_kind == 13 else Color(1.0, 0.90, 0.32, 0.95)
 	var mat: StandardMaterial3D = _get_shared_mat(flash_col, true)
 
-	var core := MeshInstance3D.new()
-	core.mesh = _get_shared_sphere()
+	var entry: VfxPoolEntry = mgr._acquire_entry(mgr._flash_free, mgr.MAX_FLASHES, 3, func() -> VfxPoolEntry:
+		var e := VfxPoolEntry.new()
+		e.kind = 3
+		var root := Node3D.new()
+		var core := MeshInstance3D.new()
+		core.name = "Core"
+		core.mesh = _get_shared_sphere()
+		core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(core)
+		var streak := MeshInstance3D.new()
+		streak.name = "Streak"
+		streak.mesh = _get_shared_cone()
+		streak.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		streak.rotation.x = -PI * 0.5
+		root.add_child(streak)
+		e.node = root
+		e.mesh_node = core
+		e.aux_mesh_node = streak
+		return e
+	)
+	var flash_root := entry.node
+	flash_root.position = world_pos
+	flash_root.scale = Vector3.ONE
+	var core := entry.mesh_node
 	core.scale = Vector3.ONE * (base_r * 2.0)
 	core.material_override = mat
-	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	flash_root.add_child(core)
-
-	var streak := MeshInstance3D.new()
-	streak.mesh = _get_shared_cone()
+	var streak := entry.aux_mesh_node
 	streak.scale = Vector3(base_r * 1.7, base_r * 3.4, base_r * 1.7)
 	streak.material_override = mat
-	streak.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var dir_n: Vector3 = aim_dir.normalized() if aim_dir.length_squared() > 0.001 else Vector3.FORWARD
-	var look_target: Vector3 = world_pos + dir_n
-	if absf(dir_n.dot(Vector3.UP)) < 0.98:
-		flash_root.look_at(look_target, Vector3.UP)
-	streak.rotation.x = -PI * 0.5
 	streak.position.z = -base_r * 1.5
-	flash_root.add_child(streak)
-
-	var tw: Tween = parent.create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(flash_root, "scale", Vector3.ONE * 1.55, 0.07)
-	tw.tween_property(core, "transparency", 1.0, 0.07)
-	tw.tween_property(streak, "transparency", 1.0, 0.07)
-	tw.chain().tween_callback(flash_root.queue_free)
+	var dir_n: Vector3 = aim_dir.normalized() if aim_dir.length_squared() > 0.001 else Vector3.FORWARD
+	if absf(dir_n.dot(Vector3.UP)) < 0.98 and flash_root.is_inside_tree():
+		flash_root.look_at(world_pos + dir_n, Vector3.UP)
+	entry.start_scale = Vector3.ONE
+	entry.end_scale = Vector3.ONE * 1.55
+	entry.duration = 0.07
 
 
-static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, weapon_kind: int) -> void:
-	if parent == null or DisplayServer.get_name().contains("headless"):
+static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, weapon_kind: int, force_in_headless: bool = false) -> void:
+	if parent == null or (not force_in_headless and DisplayServer.get_name().contains("headless")):
 		return
 	if weapon_kind == 5 or weapon_kind == 6 or weapon_kind == 7 or weapon_kind == 9 or weapon_kind == 10:
 		return
 	if arc_points.size() < 2:
 		return
+	var start_p: Vector3 = arc_points[0]
+	var end_p: Vector3 = arc_points[arc_points.size() - 1]
+	if _is_beyond_vfx_distance(parent, start_p, 110.0) and _is_beyond_vfx_distance(parent, end_p, 110.0):
+		return
+	var mgr: VfxPoolManager = _get_pool_manager(parent)
+	if mgr == null:
+		return
 	if weapon_kind == 8:
-		var start_p: Vector3 = arc_points[0]
-		var end_p: Vector3 = arc_points[arc_points.size() - 1]
 		var jet_vec: Vector3 = end_p - start_p
 		var jet_len: float = jet_vec.length()
 		if jet_len < 0.15:
@@ -728,7 +1033,7 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 		var up_v: Vector3 = right_v.cross(jet_dir).normalized()
 		var jet_basis := Basis(right_v, jet_dir, up_v)
 
-		const FLAME_STAGES: int = 8
+		const FLAME_STAGES: int = 4
 		var col_core := Color(1.0, 0.94, 0.62, 0.55)
 		var col_mid := Color(1.0, 0.56, 0.10, 0.48)
 		var col_tip := Color(0.95, 0.24, 0.04, 0.35)
@@ -740,10 +1045,19 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 			var stage_col: Color = col_core.lerp(col_mid, t * 2.0) if t < 0.5 else col_mid.lerp(col_tip, (t - 0.5) * 2.0)
 			var f_mat: StandardMaterial3D = _get_shared_mat(stage_col, true)
 
-			var stage := MeshInstance3D.new()
+			var f_entry: VfxPoolEntry = mgr._acquire_entry(mgr._tracer_free, mgr.MAX_TRACERS, 2, func() -> VfxPoolEntry:
+				var e := VfxPoolEntry.new()
+				e.kind = 2
+				var mi := MeshInstance3D.new()
+				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				e.node = mi
+				e.mesh_node = mi
+				return e
+			)
+			var stage := f_entry.mesh_node
+			f_entry.kind = 2
 			stage.mesh = jet_mesh
 			stage.material_override = f_mat
-			stage.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 			var swirl_ang: float = randf_range(0.0, TAU)
 			var swirl_vec: Vector3 = right_v * cos(swirl_ang) + up_v * sin(swirl_ang)
@@ -760,14 +1074,11 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 			stage.basis = jet_basis.rotated(jet_dir, stage_rot_y)
 			stage.position = p0
 			stage.scale = Vector3(r0, seg_h, r0)
-			parent.add_child(stage)
-			if stage.is_inside_tree():
-				var tw_f: Tween = stage.create_tween()
-				tw_f.set_parallel(true)
-				tw_f.tween_property(stage, "position", p1, 0.18)
-				tw_f.tween_property(stage, "scale", Vector3(r1, seg_h * 1.18, r1), 0.18)
-				tw_f.tween_property(stage, "transparency", 1.0, 0.18)
-				tw_f.chain().tween_callback(stage.queue_free)
+			f_entry.start_pos = p0
+			f_entry.end_pos = p1
+			f_entry.start_scale = Vector3(r0, seg_h, r0)
+			f_entry.end_scale = Vector3(r1, seg_h * 1.18, r1)
+			f_entry.duration = 0.18
 		return
 
 	var cum_dist := PackedFloat32Array()
@@ -781,45 +1092,31 @@ static func spawn_curved_tracer(parent: Node, arc_points: PackedVector3Array, we
 		return
 
 	var seg_len: float = clampf(total_len * 0.25, 1.2, 9.0 if weapon_kind == 4 else 5.5)
-	var tracer := MeshInstance3D.new()
 	var thick: float = 0.044 if weapon_kind == 13 else (0.036 if weapon_kind == 4 else 0.024)
-	tracer.mesh = _get_shared_box()
-	tracer.scale = Vector3(thick, thick, seg_len)
-	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-
 	var col := Color(0.34, 0.94, 1.0, 0.94) if weapon_kind == 13 else (Color(1.0, 0.94, 0.58, 0.88) if weapon_kind == 4 else Color(1.0, 0.86, 0.35, 0.80))
+
+	var t_entry: VfxPoolEntry = mgr._acquire_entry(mgr._tracer_free, mgr.MAX_TRACERS, 1, func() -> VfxPoolEntry:
+		var e := VfxPoolEntry.new()
+		e.kind = 1
+		var mi := MeshInstance3D.new()
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		e.node = mi
+		e.mesh_node = mi
+		return e
+	)
+	t_entry.kind = 1
+	var tracer := t_entry.mesh_node
+	tracer.mesh = _get_shared_box()
+	tracer.basis = Basis.IDENTITY
+	tracer.scale = Vector3(thick, thick, seg_len)
 	tracer.material_override = _get_shared_mat(col, true)
-
-	var start_d: float = minf(total_len * 0.5, seg_len * 0.5 + 0.15)
-	var end_d: float = maxf(start_d, total_len - minf(total_len * 0.12, seg_len * 0.35))
-	parent.add_child(tracer)
-
-	var update_pose := func(d: float) -> void:
-		if not is_instance_valid(tracer) or not tracer.is_inside_tree():
-			return
-		var seg_idx: int = 0
-		for i in range(arc_points.size() - 1):
-			if d <= cum_dist[i + 1] or i == arc_points.size() - 2:
-				seg_idx = i
-				break
-		var seg_span: float = maxf(0.001, cum_dist[seg_idx + 1] - cum_dist[seg_idx])
-		var local_t: float = clampf((d - cum_dist[seg_idx]) / seg_span, 0.0, 1.0)
-		var pos: Vector3 = arc_points[seg_idx].lerp(arc_points[seg_idx + 1], local_t)
-		var seg_dir: Vector3 = arc_points[seg_idx + 1] - arc_points[seg_idx]
-		tracer.position = pos
-		if seg_dir.length_squared() > 0.0001:
-			var dir_n: Vector3 = seg_dir.normalized()
-			if absf(dir_n.dot(Vector3.UP)) < 0.98:
-				tracer.look_at(pos + dir_n, Vector3.UP)
-
-	update_pose.call(start_d)
-
-	var travel_t: float = clampf(total_len / 300.0, 0.055, 0.36)
-	var tw: Tween = parent.create_tween()
-	tw.set_parallel(true)
-	tw.tween_method(update_pose, start_d, end_d, travel_t)
-	tw.tween_property(tracer, "transparency", 1.0, travel_t)
-	tw.chain().tween_callback(tracer.queue_free)
+	t_entry.start_scale = Vector3(thick, thick, seg_len)
+	t_entry.arc_points = arc_points
+	t_entry.cum_dist = cum_dist
+	t_entry.start_d = minf(total_len * 0.5, seg_len * 0.5 + 0.15)
+	t_entry.end_d = maxf(t_entry.start_d, total_len - minf(total_len * 0.12, seg_len * 0.35))
+	t_entry.duration = clampf(total_len / 300.0, 0.055, 0.36)
+	_apply_tracer_pose(tracer, arc_points, cum_dist, t_entry.start_d)
 
 
 static func spawn_bullet_tracer(parent: Node, start_pos: Vector3, end_pos: Vector3, weapon_kind: int) -> void:
@@ -1389,24 +1686,34 @@ static func spawn_mortar_warning_ring(parent: Node, origin: Vector3, radius: flo
 static func _spawn_mortar_trail_puff(parent: Node, pos: Vector3) -> void:
 	if parent == null or DisplayServer.get_name().contains("headless"):
 		return
+	if _is_beyond_vfx_distance(parent, pos, 110.0):
+		return
 	warm_shared_meshes()
-	var puff := MeshInstance3D.new()
+	var mgr: VfxPoolManager = _get_pool_manager(parent)
+	if mgr == null:
+		return
+	var entry: VfxPoolEntry = mgr._acquire_entry(mgr._mote_free, mgr.MAX_MOTES, 4, func() -> VfxPoolEntry:
+		var e := VfxPoolEntry.new()
+		e.kind = 4
+		var mi := MeshInstance3D.new()
+		mi.mesh = _get_shared_sphere()
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		e.node = mi
+		e.mesh_node = mi
+		return e
+	)
+	var puff := entry.mesh_node
 	puff.mesh = _get_shared_sphere()
+	if entry.aux_mesh_node != null:
+		entry.aux_mesh_node.visible = false
 	puff.material_override = _get_shared_mat(Color(0.86, 0.84, 0.80, 0.55), false)
 	puff.position = pos
 	puff.scale = Vector3(0.32, 0.32, 0.32)
-	puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	puff.add_to_group("mortar_rings")
-	parent.add_child(puff)
-	var tw: Tween = puff.create_tween() if puff.is_inside_tree() else null
-	if tw != null:
-		tw.set_parallel(true)
-		tw.tween_property(puff, "scale", Vector3(0.95, 0.95, 0.95), 0.38)
-		tw.tween_property(puff, "position", pos + Vector3(0.0, 0.45, 0.0), 0.38)
-		tw.tween_property(puff, "transparency", 1.0, 0.38)
-		tw.chain().tween_callback(puff.queue_free)
-	else:
-		puff.queue_free()
+	entry.start_pos = pos
+	entry.end_pos = pos + Vector3(0.0, 0.45, 0.0)
+	entry.start_scale = Vector3(0.32, 0.32, 0.32)
+	entry.end_scale = Vector3(0.95, 0.95, 0.95)
+	entry.duration = 0.38
 
 
 static func spawn_mortar_shell_arc(parent: Node, origin: Vector3, target: Vector3, duration: float = 1.25) -> Node3D:

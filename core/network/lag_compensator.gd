@@ -19,9 +19,12 @@ class HeroHitboxSnapshot extends RefCounted:
 class FrameRecord extends RefCounted:
 	var server_tick: int = -1
 	var entries: Dictionary = {} # entity_id -> HeroHitboxSnapshot
+	var _snap_pool: Dictionary = {} # entity_id -> reusable HeroHitboxSnapshot
 
 
 var _history: Array[FrameRecord] = []
+var _ray_query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.new()
+var _ray_excludes: Array[RID] = []
 
 
 func _init() -> void:
@@ -41,16 +44,15 @@ func record_frame(server_tick: int, heroes_by_id: Dictionary) -> void:
 			continue
 		if hero.current_vehicle_id >= 0 and hero.current_seat_enclosed:
 			continue
-		var snap := HeroHitboxSnapshot.new()
-		snap.entity_id = hero.entity_id
+		var eid: int = hero.entity_id
+		var snap: HeroHitboxSnapshot = slot._snap_pool.get(eid, null) as HeroHitboxSnapshot
+		if snap == null:
+			snap = HeroHitboxSnapshot.new()
+			slot._snap_pool[eid] = snap
+		snap.entity_id = eid
 		snap.team = hero.team
-		var bounds: Dictionary = _compute_hero_bounds(hero)
-		snap.body_radius = float(bounds["body_radius"])
-		snap.body_bottom = bounds["body_bottom"]
-		snap.body_top = bounds["body_top"]
-		snap.head_center = bounds["head_center"]
-		snap.head_radius = float(bounds["head_radius"])
-		slot.entries[hero.entity_id] = snap
+		_fill_hero_bounds_into_snapshot(hero, snap)
+		slot.entries[eid] = snap
 
 
 func get_frame(target_tick: int, current_tick: int) -> FrameRecord:
@@ -107,17 +109,18 @@ func trace_rewound_ray_piercing(
 	if world_3d != null:
 		var space: PhysicsDirectSpaceState3D = world_3d.direct_space_state
 		if space != null:
-			var query := PhysicsRayQueryParameters3D.create(ray_origin, seg_end, 1 | 8 | 64)
-			query.hit_from_inside = true
-			var excludes: Array[RID] = []
+			_ray_query.from = ray_origin
+			_ray_query.to = seg_end
+			_ray_query.collision_mask = 1 | 8 | 64
+			_ray_query.hit_from_inside = true
+			_ray_excludes.clear()
 			if shooter != null:
-				excludes.append(shooter.get_rid())
+				_ray_excludes.append(shooter.get_rid())
 			for rid in exclude_rids:
-				if not excludes.has(rid):
-					excludes.append(rid)
-			if not excludes.is_empty():
-				query.exclude = excludes
-			var res: Dictionary = space.intersect_ray(query)
+				if not _ray_excludes.has(rid):
+					_ray_excludes.append(rid)
+			_ray_query.exclude = _ray_excludes
+			var res: Dictionary = space.intersect_ray(_ray_query)
 			if not res.is_empty():
 				stop_pos = res["position"]
 				stop_dist = ray_origin.distance_to(stop_pos)
@@ -400,21 +403,18 @@ func _trace_segment(
 	if world_3d != null:
 		var space: PhysicsDirectSpaceState3D = world_3d.direct_space_state
 		if space != null:
-			var query := PhysicsRayQueryParameters3D.create(
-				seg_start,
-				seg_end,
-				1 | 8 | 64 # Layer 1 World (1) + Layer 4 Vehicle (8) + Layer 7 Destructible (64)
-			)
-			query.hit_from_inside = true
-			var excludes: Array[RID] = []
+			_ray_query.from = seg_start
+			_ray_query.to = seg_end
+			_ray_query.collision_mask = 1 | 8 | 64 # Layer 1 World (1) + Layer 4 Vehicle (8) + Layer 7 Destructible (64)
+			_ray_query.hit_from_inside = true
+			_ray_excludes.clear()
 			if shooter != null:
-				excludes.append(shooter.get_rid())
+				_ray_excludes.append(shooter.get_rid())
 			for rid in exclude_rids:
-				if not excludes.has(rid):
-					excludes.append(rid)
-			if not excludes.is_empty():
-				query.exclude = excludes
-			var res: Dictionary = space.intersect_ray(query)
+				if not _ray_excludes.has(rid):
+					_ray_excludes.append(rid)
+			_ray_query.exclude = _ray_excludes
+			var res: Dictionary = space.intersect_ray(_ray_query)
 			if not res.is_empty():
 				best_pos = res["position"]
 				best_dist = seg_start.distance_to(best_pos)
@@ -460,6 +460,20 @@ func _trace_segment(
 		"hit_pos": best_pos,
 		"distance": best_dist,
 	}
+
+
+static func _fill_hero_bounds_into_snapshot(hero: HeroCharacter, snap: HeroHitboxSnapshot) -> void:
+	var h_pos: Vector3 = hero.global_position if hero.is_inside_tree() else hero.position
+	var r: float = maxf(hero.capsule_radius, 0.46)
+	snap.body_radius = r
+	snap.body_bottom = h_pos + Vector3(0.0, r, 0.0)
+	snap.head_radius = 0.30
+	if hero.is_crouching:
+		snap.body_top = h_pos + Vector3(0.0, 1.18, 0.0)
+		snap.head_center = h_pos + Vector3(0.0, 1.34, 0.0)
+	else:
+		snap.body_top = h_pos + Vector3(0.0, 1.55, 0.0)
+		snap.head_center = h_pos + Vector3(0.0, 1.66, 0.0)
 
 
 static func _compute_hero_bounds(hero: HeroCharacter) -> Dictionary:

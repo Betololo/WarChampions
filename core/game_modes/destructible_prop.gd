@@ -8,6 +8,10 @@ enum PropKind {
 	RED_BARREL,
 }
 
+static var _shared_meshes: Dictionary = {}
+static var _shared_shapes: Dictionary = {}
+static var _shared_mats: Dictionary = {}
+
 var kind: int = PropKind.CRATE
 var max_hp: int = 45
 var hp: int = 45
@@ -16,6 +20,50 @@ var _respawn_timer: float = 0.0
 var _mesh: MeshInstance3D
 var _col: CollisionShape3D
 var _context: Dictionary = {}
+
+
+static func clear_shared_caches() -> void:
+	_shared_meshes.clear()
+	_shared_shapes.clear()
+	_shared_mats.clear()
+
+
+static func _get_shared_prop_assets(prop_kind: int) -> Dictionary:
+	if not _shared_meshes.has(prop_kind):
+		var mat := StandardMaterial3D.new()
+		if prop_kind == PropKind.WHITE_FENCE:
+			var box := BoxMesh.new()
+			box.size = Vector3(3.6, 1.25, 0.25)
+			var shape := BoxShape3D.new()
+			shape.size = box.size
+			mat.albedo_color = Color(0.95, 0.94, 0.90)
+			_shared_meshes[prop_kind] = box
+			_shared_shapes[prop_kind] = shape
+		elif prop_kind == PropKind.RED_BARREL:
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.45
+			cyl.bottom_radius = 0.45
+			cyl.height = 1.25
+			var cshape := CylinderShape3D.new()
+			cshape.radius = 0.45
+			cshape.height = 1.25
+			mat.albedo_color = Color(0.86, 0.14, 0.12)
+			_shared_meshes[prop_kind] = cyl
+			_shared_shapes[prop_kind] = cshape
+		else:
+			var cbox := BoxMesh.new()
+			cbox.size = Vector3(1.3, 1.3, 1.3)
+			var cbox_shape := BoxShape3D.new()
+			cbox_shape.size = cbox.size
+			mat.albedo_color = Color(0.68, 0.48, 0.24)
+			_shared_meshes[prop_kind] = cbox
+			_shared_shapes[prop_kind] = cbox_shape
+		_shared_mats[prop_kind] = mat
+	return {
+		"mesh": _shared_meshes[prop_kind],
+		"shape": _shared_shapes[prop_kind],
+		"mat": _shared_mats[prop_kind],
+	}
 
 
 func setup(p_kind: int, p_pos: Vector3, p_rot_y: float = 0.0, p_ctx: Dictionary = {}) -> void:
@@ -44,45 +92,22 @@ func reset_prop() -> void:
 func _build_prop() -> void:
 	_mesh = MeshInstance3D.new()
 	_col = CollisionShape3D.new()
-	var mat := StandardMaterial3D.new()
+	var assets: Dictionary = _get_shared_prop_assets(kind)
+	_mesh.mesh = assets["mesh"] as Mesh
+	_mesh.material_override = assets["mat"] as Material
+	_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_col.shape = assets["shape"] as Shape3D
 	if kind == PropKind.WHITE_FENCE:
 		max_hp = 30
-		var box := BoxMesh.new()
-		box.size = Vector3(3.6, 1.25, 0.25)
-		_mesh.mesh = box
 		_mesh.position = Vector3(0.0, 0.62, 0.0)
-		var shape := BoxShape3D.new()
-		shape.size = box.size
-		_col.shape = shape
-		_col.position = _mesh.position
-		mat.albedo_color = Color(0.95, 0.94, 0.90)
 	elif kind == PropKind.RED_BARREL:
 		max_hp = 25
-		var cyl := CylinderMesh.new()
-		cyl.top_radius = 0.45
-		cyl.bottom_radius = 0.45
-		cyl.height = 1.25
-		_mesh.mesh = cyl
 		_mesh.position = Vector3(0.0, 0.62, 0.0)
-		var cshape := CylinderShape3D.new()
-		cshape.radius = 0.45
-		cshape.height = 1.25
-		_col.shape = cshape
-		_col.position = _mesh.position
-		mat.albedo_color = Color(0.86, 0.14, 0.12)
 	else:
 		max_hp = 45
-		var cbox := BoxMesh.new()
-		cbox.size = Vector3(1.3, 1.3, 1.3)
-		_mesh.mesh = cbox
 		_mesh.position = Vector3(0.0, 0.65, 0.0)
-		var cbox_shape := BoxShape3D.new()
-		cbox_shape.size = cbox.size
-		_col.shape = cbox_shape
-		_col.position = _mesh.position
-		mat.albedo_color = Color(0.68, 0.48, 0.24)
+	_col.position = _mesh.position
 	hp = max_hp
-	_mesh.material_override = mat
 	add_child(_mesh)
 	add_child(_col)
 

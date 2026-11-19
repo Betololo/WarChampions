@@ -73,6 +73,23 @@ func _drive_physics(driver: HeroCharacter, delta: float, context: Dictionary) ->
 		return
 	_crash_armed_time += delta
 
+	var parked_unmanned: bool = (
+		driver == null
+		and not _was_airborne
+		and _airspeed <= 0.05
+		and linear_velocity.length_squared() < 0.01
+		and angular_velocity.length_squared() < 0.01
+		and absf(rotation.x) < 0.02
+		and absf(rotation.z) < 0.02
+	)
+	if parked_unmanned:
+		gravity_scale = 1.0
+		_airspeed = 0.0
+		_prev_vel = linear_velocity
+		if _crash_armed_time >= 0.25 and global_position.y <= HeroCharacter.WATER_LEVEL - 0.15:
+			_detonate_plane_crash(context)
+		return
+
 	var ground_dist: float = _probe_ground_distance(6.5)
 	if _check_crash_impact(driver, context, ground_dist):
 		return

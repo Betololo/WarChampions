@@ -62,7 +62,7 @@ func _ready() -> void:
 	camera = Camera3D.new()
 	camera.name = "Camera3D"
 	camera.fov = TPS_FOV
-	camera.far = 2800.0
+	camera.far = 1500.0
 	spring_arm.add_child(camera)
 	pivot.position = TPS_SHOULDER_OFFSET
 

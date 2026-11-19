@@ -136,6 +136,12 @@ func _process(delta: float) -> void:
 
 
 func _build_sky_and_lighting() -> void:
+	if OS.has_feature("web"):
+		if get_viewport() != null:
+			get_viewport().msaa_3d = Viewport.MSAA_DISABLED
+		RenderingServer.directional_shadow_atlas_set_size(1024, true)
+		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_HARD)
+
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
@@ -143,15 +149,16 @@ func _build_sky_and_lighting() -> void:
 	sky_mat.shader = TOON_SKY_SHADER
 	sky.sky_material = sky_mat
 	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.78
-	# Subtle distant aerial haze past 950m so the entire 1600m island remains vivid and crisp
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.62, 0.72, 0.84)
+	env.ambient_light_energy = 0.55
+	# Subtle distant aerial haze past 700m so the entire 1600m island remains vivid and crisp
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_DEPTH
 	env.fog_light_color = Color(0.68, 0.88, 1.0)
 	env.fog_sky_affect = 0.20
-	env.fog_depth_begin = 950.0
-	env.fog_depth_end = 2750.0
+	env.fog_depth_begin = 700.0
+	env.fog_depth_end = 1480.0
 
 	var world_env := WorldEnvironment.new()
 	world_env.name = "WorldEnvironment"
@@ -164,7 +171,7 @@ func _build_sky_and_lighting() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.86)
 	sun.rotation_degrees = Vector3(-46.0, 36.0, 0.0)
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	sun.directional_shadow_max_distance = 190.0
+	sun.directional_shadow_max_distance = 120.0
 	sun.directional_shadow_blend_splits = false
 	sun.shadow_enabled = not DisplayServer.get_name().contains("headless")
 	add_child(sun)
@@ -268,30 +275,9 @@ func _build_ocean_and_terrain() -> void:
 			top_faces[tf_idx] = p00; top_faces[tf_idx + 1] = p11; top_faces[tf_idx + 2] = p01
 			tf_idx += 3
 
-	# 2. Watertight bottom plate at Y = -8.0 (outward CW from below)
+	# 2. 4 Perimeter Skirts connecting boundary down to Y = -8.0 (buried bottom plate omitted to save 24,120 tris)
 	var bot_col := Color(0.28, 0.28, 0.28)
 	var bot_y: float = -8.0
-	for j in range(nz):
-		for i in range(nx):
-			var p00: Vector3 = grid_pts[j * (nx + 1) + i]
-			var p10: Vector3 = grid_pts[j * (nx + 1) + (i + 1)]
-			var p11: Vector3 = grid_pts[(j + 1) * (nx + 1) + (i + 1)]
-			var p01: Vector3 = grid_pts[(j + 1) * (nx + 1) + i]
-
-			var b00 := Vector3(p00.x, bot_y, p00.z)
-			var b10 := Vector3(p10.x, bot_y, p10.z)
-			var b11 := Vector3(p11.x, bot_y, p11.z)
-			var b01 := Vector3(p01.x, bot_y, p01.z)
-
-			st.set_color(bot_col); st.set_uv(Vector2.ZERO); st.add_vertex(b00)
-			st.set_color(bot_col); st.set_uv(Vector2.ZERO); st.add_vertex(b01)
-			st.set_color(bot_col); st.set_uv(Vector2.ZERO); st.add_vertex(b11)
-
-			st.set_color(bot_col); st.set_uv(Vector2.ZERO); st.add_vertex(b00)
-			st.set_color(bot_col); st.set_uv(Vector2.ZERO); st.add_vertex(b11)
-			st.set_color(bot_col); st.set_uv(Vector2.ZERO); st.add_vertex(b10)
-
-	# 3. 4 Perimeter Skirts connecting boundary down to Y = -8.0
 	# North skirt (j = 0, z = -540.0)
 	for i in range(nx):
 		var t0: Vector3 = grid_pts[i]
@@ -383,22 +369,23 @@ func _build_ocean_and_terrain() -> void:
 	_create_ramp("BeachRampSE", Vector3(18.0, 1.4, 24.0), Vector3(190.0, 1.0, 466.0), Vector3(-0.08, 0.0, 0.0), beach_ramp_mat)
 
 	# North-West Windmill Hill (Flag B, top Y = 12.15) with limestone cliff walls + turf cap & 3 driving ramps
+	var no_shadow := GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var cliff_stone := BuildingMeshBuilder.make_mat(Color(0.84, 0.79, 0.72), "stone_masonry", 0.88, 0.02, 1.0, Vector2(18.0, 3.0))
 	_create_solid_box("WindmillPlateau", Vector3(159.2, 9.35, 159.2), Vector3(-230.0, 6.825, -240.0), cliff_stone)
-	_create_solid_box("WindmillTurfCap", Vector3(160.0, 0.66, 160.0), Vector3(-230.0, 11.82, -240.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(12, 12)))
+	_create_solid_box("WindmillTurfCap", Vector3(160.0, 0.66, 160.0), Vector3(-230.0, 11.82, -240.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(12, 12)), no_shadow)
 	_create_ramp("WindmillRampS", Vector3(26.0, 2.0, 62.0), Vector3(-230.0, 6.20, -132.0), Vector3(0.165, 0.0, 0.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(3, 8)))
 	_create_ramp("WindmillRampW", Vector3(62.0, 2.0, 26.0), Vector3(-338.0, 6.20, -240.0), Vector3(0.0, 0.0, 0.165), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(8, 3)))
 	_create_ramp("WindmillRampE", Vector3(62.0, 2.0, 26.0), Vector3(-122.0, 6.20, -240.0), Vector3(0.0, 0.0, -0.165), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(8, 3)))
 
 	# North-East Harbor Ruins Cliff (Flag D, top Y = 7.65) with limestone cliff walls + turf cap & 2 driving ramps
 	_create_solid_box("RuinsCliff", Vector3(159.2, 4.85, 159.2), Vector3(280.0, 4.575, -240.0), cliff_stone)
-	_create_solid_box("RuinsTurfCap", Vector3(160.0, 0.66, 160.0), Vector3(280.0, 7.32, -240.0), CartoonAssets.make_standard_material("grass", Color(0.86, 0.93, 0.78), Vector2(12, 12)))
+	_create_solid_box("RuinsTurfCap", Vector3(160.0, 0.66, 160.0), Vector3(280.0, 7.32, -240.0), CartoonAssets.make_standard_material("grass", Color(0.86, 0.93, 0.78), Vector2(12, 12)), no_shadow)
 	_create_ramp("RuinsRampS", Vector3(26.0, 2.0, 42.0), Vector3(280.0, 3.90, -140.0), Vector3(0.137, 0.0, 0.0), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(3, 5)))
 	_create_ramp("RuinsRampW", Vector3(42.0, 2.0, 26.0), Vector3(180.0, 3.90, -240.0), Vector3(0.0, 0.0, 0.137), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(5, 3)))
 
 	# South-West Lighthouse Cliff (top Y = 6.15 overlooking ocean cove & Flag A) with limestone cliff walls + turf cap
 	_create_solid_box("LighthouseCliff", Vector3(119.2, 3.35, 119.2), Vector3(-470.0, 3.825, 315.0), cliff_stone)
-	_create_solid_box("LighthouseTurfCap", Vector3(120.0, 0.66, 120.0), Vector3(-470.0, 5.82, 315.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(9, 9)))
+	_create_solid_box("LighthouseTurfCap", Vector3(120.0, 0.66, 120.0), Vector3(-470.0, 5.82, 315.0), CartoonAssets.make_standard_material("grass", Color.WHITE, Vector2(9, 9)), no_shadow)
 	_create_ramp("LighthouseRampE", Vector3(42.0, 2.0, 24.0), Vector3(-390.0, 3.15, 315.0), Vector3(0.0, 0.0, -0.10), CartoonAssets.make_standard_material("cobble", Color.WHITE, Vector2(5, 3)))
 
 
@@ -468,9 +455,9 @@ func _build_streetlamps_and_bunting() -> void:
 		if absf(px_n - get_river_center_x(29.2)) < 36.0 or absf(px_s - get_river_center_x(50.8)) < 36.0:
 			continue
 		if absf(px_n) >= 54.0:
-			_create_solid_box("PoleN_%d" % x, Vector3(0.36, 9.2, 0.36), Vector3(px_n, 6.75, 29.2), wood_mat)
+			_create_solid_box("PoleN_%d" % x, Vector3(0.36, 9.2, 0.36), Vector3(px_n, 6.75, 29.2), wood_mat, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 		if absf(px_s) >= 54.0:
-			_create_solid_box("PoleS_%d" % x, Vector3(0.36, 9.2, 0.36), Vector3(px_s, 6.75, 50.8), wood_mat)
+			_create_solid_box("PoleS_%d" % x, Vector3(0.36, 9.2, 0.36), Vector3(px_s, 6.75, 50.8), wood_mat, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 		if absi(x) <= 260 and absf(px_n) >= 54.0:
 			var lamp := MeshInstance3D.new()
 			var lm := CylinderMesh.new()
@@ -758,10 +745,32 @@ func _build_trees_and_foliage() -> void:
 		var ty: float = get_terrain_height(tx, tz)
 		tree_specs.append({"pos": Vector3(tx, ty, tz), "var": v_kind, "scale": rng.randf_range(0.88, 1.28)})
 
+	var transforms_by_var: Array[Array] = [[], [], []]
 	for i in range(tree_specs.size()):
 		var ts: Dictionary = tree_specs[i]
-		var t_node: Node3D = BuildingMeshBuilder.build_layered_tree(self, ts["pos"], int(ts["var"]), float(ts["scale"]))
-		t_node.name = "Tree_%d" % i
+		var v_kind: int = posmod(int(ts["var"]), 3)
+		var s: float = maxf(0.6, float(ts["scale"]))
+		var pos: Vector3 = ts["pos"]
+		var t_node: Node3D = BuildingMeshBuilder.build_layered_tree(self, pos, v_kind, s, false)
+		t_node.name = "LayeredTree_%d" % i
+		transforms_by_var[v_kind].append(Transform3D(Basis.from_scale(Vector3(s, s, s)), pos))
+
+	for v_kind in range(3):
+		var xforms: Array = transforms_by_var[v_kind]
+		if xforms.is_empty():
+			continue
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = BuildingMeshBuilder.get_cached_tree_mesh(v_kind)
+		mm.instance_count = xforms.size()
+		for idx in range(xforms.size()):
+			mm.set_instance_transform(idx, xforms[idx] as Transform3D)
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "TreeBatch_%d" % v_kind
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 520.0
+		add_child(mmi)
 
 
 func _is_tree_zone_blocked(tx: float, tz: float) -> bool:
@@ -986,7 +995,14 @@ func _create_solid_box(
 	return body
 
 
-func _create_ramp(node_name: String, size: Vector3, pos: Vector3, rot: Vector3, material: Material) -> StaticBody3D:
-	var body := _create_solid_box(node_name, size, pos, material)
+func _create_ramp(
+	node_name: String,
+	size: Vector3,
+	pos: Vector3,
+	rot: Vector3,
+	material: Material,
+	shadow_mode: GeometryInstance3D.ShadowCastingSetting = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+) -> StaticBody3D:
+	var body := _create_solid_box(node_name, size, pos, material, shadow_mode)
 	body.rotation = rot
 	return body

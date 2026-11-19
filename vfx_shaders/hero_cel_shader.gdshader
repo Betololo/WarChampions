@@ -15,7 +15,9 @@ void fragment() {
 	if (use_tex) {
 		base *= texture(albedo_tex, UV).rgb;
 	}
-	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), rim_power);
+	float inv_ndv = 1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0);
+	float inv_ndv2 = inv_ndv * inv_ndv;
+	float fresnel = mix(inv_ndv2, inv_ndv2 * inv_ndv2, clamp((rim_power - 2.0) * 0.5, 0.0, 1.0));
 	ALBEDO = base;
 	EMISSION = rim_color.rgb * fresnel * (rim_strength * 0.14);
 	ROUGHNESS = clamp(specular_roughness, 0.05, 1.0);
@@ -29,17 +31,21 @@ void light() {
 	float ramp = smoothstep(0.16, 0.78, wrap);
 	vec3 shadow_col = ALBEDO * vec3(0.44, 0.48, 0.60);
 	vec3 lit_col = min(ALBEDO * vec3(1.00, 0.98, 0.94), vec3(0.94));
-	float fresnel = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), rim_power);
+	float inv_ndv = 1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0);
+	float inv_ndv2 = inv_ndv * inv_ndv;
+	float fresnel = mix(inv_ndv2, inv_ndv2 * inv_ndv2, clamp((rim_power - 2.0) * 0.5, 0.0, 1.0));
 	float rim_suppress = 1.0 - smoothstep(0.70, 0.95, max(ALBEDO.r, max(ALBEDO.g, ALBEDO.b))) * 0.55;
 	DIFFUSE_LIGHT += mix(shadow_col, lit_col, ramp) * LIGHT_COLOR * ATTENUATION * 0.64;
 	DIFFUSE_LIGHT += rim_color.rgb * LIGHT_COLOR * fresnel * rim_strength * 0.22 * rim_suppress * clamp(dot(NORMAL, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5, 0.0, 1.0);
 
 	// Crisp cel specular strictly gated to glossy parts (sunglasses, helmets, boots, metal <= 0.48); zero on matte (>= 0.55)
 	float gloss_mask = 1.0 - smoothstep(0.38, 0.54, ROUGHNESS);
-	vec3 half_vec = normalize(LIGHT + VIEW);
-	float ndh = max(dot(NORMAL, half_vec), 0.0);
-	float shininess = mix(112.0, 32.0, clamp((ROUGHNESS - 0.10) / 0.42, 0.0, 1.0));
-	float spec_band = smoothstep(0.28, 0.58, pow(ndh, shininess));
-	float spec_strength = mix(0.68, 0.16, clamp((ROUGHNESS - 0.15) / 0.35, 0.0, 1.0)) * gloss_mask * (1.0 - cloak_amount * 0.90);
-	SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec_band * spec_strength * max(ndl, 0.0);
+	if (gloss_mask > 0.001 && ndl > 0.0) {
+		vec3 half_vec = normalize(LIGHT + VIEW);
+		float ndh = max(dot(NORMAL, half_vec), 0.0);
+		float shininess = mix(112.0, 32.0, clamp((ROUGHNESS - 0.10) / 0.42, 0.0, 1.0));
+		float spec_band = smoothstep(0.28, 0.58, pow(ndh, shininess));
+		float spec_strength = mix(0.68, 0.16, clamp((ROUGHNESS - 0.15) / 0.35, 0.0, 1.0)) * gloss_mask * (1.0 - cloak_amount * 0.90);
+		SPECULAR_LIGHT += LIGHT_COLOR * ATTENUATION * spec_band * spec_strength * ndl;
+	}
 }

@@ -90,7 +90,7 @@ func _ready() -> void:
 	collision_layer = 8 # Layer 4 Vehicle
 	collision_mask = 1 | 2 | 8 | 64
 	add_to_group("vehicles")
-	can_sleep = false
+	can_sleep = true
 	contact_monitor = true
 	max_contacts_reported = 4
 	if physics_material_override == null:
@@ -256,6 +256,8 @@ func try_enter_hero(hero: HeroCharacter) -> int:
 	for s in seats:
 		if s.occupant_id < 0:
 			s.occupant_id = hero.entity_id
+			can_sleep = false
+			sleeping = false
 			_last_heroes_by_id[hero.entity_id] = hero
 			hero.current_vehicle_id = id
 			hero.current_seat_index = s.seat_index
@@ -599,6 +601,13 @@ func step_vehicle_server(delta: float, heroes_by_id: Dictionary, context: Dictio
 	if _driver_fire_cd > 0.0:
 		_driver_fire_cd = maxf(0.0, _driver_fire_cd - delta)
 	sync_occupants(heroes_by_id, delta, context)
+	var occ_count: int = get_occupant_count()
+	var can_park_sleep: bool = (occ_count == 0) and (linear_velocity.length_squared() < 0.01) and (angular_velocity.length_squared() < 0.01)
+	if is_watercraft():
+		can_park_sleep = can_park_sleep and absf(_get_world_y() - (HeroCharacter.WATER_LEVEL - 0.34)) <= 0.12
+	can_sleep = can_park_sleep
+	if not can_park_sleep and sleeping:
+		sleeping = false
 	var driver: HeroCharacter = get_driver_hero(heroes_by_id)
 	_drive_physics(driver, delta, context)
 	for s in seats:
@@ -623,6 +632,8 @@ func _apply_arcade_drive(
 	idle_drag: float,
 	reverse_mult: float = 0.65
 ) -> void:
+	if cmd == null and can_sleep and linear_velocity.length_squared() < 0.01 and angular_velocity.length_squared() < 0.01 and absf(rotation.x) < 0.02 and absf(rotation.z) < 0.02 and not is_submerged_in_water():
+		return
 	var basis_ref: Basis = global_transform.basis if is_inside_tree() else transform.basis
 	var forward_3d: Vector3 = -basis_ref.z
 	var right_3d: Vector3 = basis_ref.x

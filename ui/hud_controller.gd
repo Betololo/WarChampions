@@ -104,6 +104,70 @@ class SniperScopeOverlay extends Control:
 		draw_circle(center, 3.2, Color(1.0, 0.30, 0.14, 0.98))
 		draw_circle(center, 1.4, Color(1.0, 0.92, 0.55, 1.0))
 
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED and visible:
+			queue_redraw()
+
+
+class _MinimapStaticLayer extends Control:
+	var owner_minimap: _TacticalMinimapControl = null
+	var draw_count: int = 0
+
+	func _draw() -> void:
+		if owner_minimap == null:
+			return
+		draw_count += 1
+		var s: Vector2 = owner_minimap._get_effective_size()
+		var proj: Dictionary = owner_minimap._get_projection_params()
+		var sc: float = float(proj["px_per_m"])
+
+		var ocean_col := Color(0.11, 0.28, 0.44)
+		draw_rect(Rect2(Vector2.ZERO, s), ocean_col)
+
+		var shore_poly: PackedVector2Array = owner_minimap._build_rounded_land_poly(710.0, 450.0, 46.0)
+		draw_colored_polygon(shore_poly, Color(0.68, 0.62, 0.44))
+		var land_poly: PackedVector2Array = owner_minimap._build_rounded_land_poly(710.0, 450.0, 35.0)
+		draw_colored_polygon(land_poly, Color(0.24, 0.36, 0.22))
+
+		draw_circle(owner_minimap.world_to_minimap(Vector3(-230.0, 0.0, -240.0)), maxf(4.0, 72.0 * sc), Color(0.28, 0.41, 0.25))
+		draw_circle(owner_minimap.world_to_minimap(Vector3(-470.0, 0.0, 315.0)), maxf(4.0, 56.0 * sc), Color(0.28, 0.41, 0.25))
+
+		var river_pts := PackedVector2Array()
+		var r_steps: int = 24
+		for ri in range(r_steps + 1):
+			var z_val: float = lerpf(_TacticalMinimapControl.WORLD_MIN_Z, _TacticalMinimapControl.WORLD_MAX_Z, float(ri) / float(r_steps))
+			var x_val: float = MapSeasideFrontline.get_river_center_x(z_val)
+			river_pts.append(owner_minimap.world_to_minimap(Vector3(x_val, 0.0, z_val)))
+		draw_polyline(river_pts, ocean_col, maxf(3.0, 34.0 * sc), true)
+
+		var road_col := Color(0.36, 0.34, 0.30)
+		var runway_col := Color(0.28, 0.29, 0.32)
+		var pier_col := Color(0.46, 0.38, 0.28)
+		var bridge_col := Color(0.54, 0.49, 0.40)
+
+		_draw_world_rect_on(owner_minimap, -259.0, 40.0, 762.0, 16.0, road_col)
+		_draw_world_rect_on(owner_minimap, 424.0, 40.0, 432.0, 16.0, road_col)
+		_draw_world_rect_on(owner_minimap, 0.0, 50.0, 15.0, 820.0, road_col)
+		_draw_world_rect_on(owner_minimap, 0.0, 40.0, 106.0, 94.0, road_col)
+		_draw_world_rect_on(owner_minimap, -149.0, 444.0, 542.0, 13.0, road_col)
+		_draw_world_rect_on(owner_minimap, 311.0, 444.0, 218.0, 13.0, road_col)
+		_draw_world_rect_on(owner_minimap, -345.0, 246.0, 13.0, 412.0, road_col)
+
+		_draw_world_rect_on(owner_minimap, -490.0, -90.0, 220.0, 24.0, runway_col)
+		_draw_world_rect_on(owner_minimap, 490.0, 105.0, 220.0, 24.0, runway_col)
+
+		_draw_world_rect_on(owner_minimap, -370.0, 510.0, 14.0, 104.0, pier_col)
+		_draw_world_rect_on(owner_minimap, 0.0, 510.0, 14.0, 104.0, pier_col)
+		_draw_world_rect_on(owner_minimap, 370.0, 510.0, 14.0, 104.0, pier_col)
+
+		_draw_world_rect_on(owner_minimap, MapSeasideFrontline.get_river_center_x(40.0), 40.0, 64.0, 18.0, bridge_col)
+		_draw_world_rect_on(owner_minimap, MapSeasideFrontline.get_river_center_x(444.0), 444.0, 64.0, 15.0, bridge_col)
+
+	func _draw_world_rect_on(mm: _TacticalMinimapControl, cx: float, cz: float, w_x: float, w_z: float, col: Color) -> void:
+		var tl: Vector2 = mm.world_to_minimap(Vector3(cx - w_x * 0.5, 0.0, cz - w_z * 0.5))
+		var br: Vector2 = mm.world_to_minimap(Vector3(cx + w_x * 0.5, 0.0, cz + w_z * 0.5))
+		draw_rect(Rect2(tl, br - tl), col)
+
 
 class _TacticalMinimapControl extends Control:
 	const WORLD_MIN_X: float = -780.0
@@ -115,6 +179,43 @@ class _TacticalMinimapControl extends Control:
 	var hud_owner: HUDController = null
 	var mortar_active: bool = false
 	var hover_local_pos: Vector2 = Vector2(-1.0, -1.0)
+	var _static_layer: _MinimapStaticLayer = null
+	var _last_static_size: Vector2 = Vector2.ZERO
+	var _last_static_mortar: bool = false
+	var _static_dirty: bool = true
+	var _cached_structure_markers: Array[Dictionary] = []
+	var _structure_cache_msec: int = -1000
+	var dynamic_draw_count: int = 0
+
+	func _init() -> void:
+		_static_layer = _MinimapStaticLayer.new()
+		_static_layer.name = "MinimapStaticLayer"
+		_static_layer.owner_minimap = self
+		_static_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_static_layer.show_behind_parent = true
+		_static_layer.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		add_child(_static_layer)
+
+	func invalidate_static_layer() -> void:
+		_static_dirty = true
+		_structure_cache_msec = -1000
+		_sync_static_layer()
+
+	func _sync_static_layer() -> void:
+		if _static_layer == null:
+			return
+		var eff_sz: Vector2 = _get_effective_size()
+		if _static_dirty or _last_static_size != eff_sz or _last_static_mortar != mortar_active:
+			_static_dirty = false
+			_last_static_size = eff_sz
+			_last_static_mortar = mortar_active
+			_static_layer.size = eff_sz
+			_static_layer.queue_redraw()
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			_static_dirty = true
+			_sync_static_layer()
 
 	func _get_effective_size() -> Vector2:
 		return Vector2(
@@ -244,60 +345,17 @@ class _TacticalMinimapControl extends Control:
 				})
 		return markers
 
+	func _get_cached_structure_markers() -> Array[Dictionary]:
+		var now_ms: int = Time.get_ticks_msec()
+		if _structure_cache_msec < 0 or (now_ms - _structure_cache_msec) >= 250:
+			_structure_cache_msec = now_ms
+			_cached_structure_markers = get_visible_structure_markers()
+		return _cached_structure_markers
+
 	func _draw() -> void:
+		dynamic_draw_count += 1
+		_sync_static_layer()
 		var s: Vector2 = _get_effective_size()
-		var proj: Dictionary = _get_projection_params()
-		var sc: float = float(proj["px_per_m"])
-
-		# 1. Ocean water background
-		var ocean_col := Color(0.11, 0.28, 0.44)
-		draw_rect(Rect2(Vector2.ZERO, s), ocean_col)
-
-		# 2. Sculpted island coastline (sandy shore + green landmass + hill contours)
-		var shore_poly: PackedVector2Array = _build_rounded_land_poly(710.0, 450.0, 46.0)
-		draw_colored_polygon(shore_poly, Color(0.68, 0.62, 0.44))
-		var land_poly: PackedVector2Array = _build_rounded_land_poly(710.0, 450.0, 35.0)
-		draw_colored_polygon(land_poly, Color(0.24, 0.36, 0.22))
-
-		# Subtle hill contours (Windmill Hill & Lighthouse Cliff)
-		draw_circle(world_to_minimap(Vector3(-230.0, 0.0, -240.0)), maxf(4.0, 72.0 * sc), Color(0.28, 0.41, 0.25))
-		draw_circle(world_to_minimap(Vector3(-470.0, 0.0, 315.0)), maxf(4.0, 56.0 * sc), Color(0.28, 0.41, 0.25))
-
-		# 3. Winding central river ribbon
-		var river_pts := PackedVector2Array()
-		var r_steps: int = 24
-		for ri in range(r_steps + 1):
-			var z_val: float = lerpf(WORLD_MIN_Z, WORLD_MAX_Z, float(ri) / float(r_steps))
-			var x_val: float = MapSeasideFrontline.get_river_center_x(z_val)
-			river_pts.append(world_to_minimap(Vector3(x_val, 0.0, z_val)))
-		draw_polyline(river_pts, ocean_col, maxf(3.0, 34.0 * sc), true)
-
-		# 4. Main Roads, Plaza, Runways, Piers & River Bridges
-		var road_col := Color(0.36, 0.34, 0.30)
-		var runway_col := Color(0.28, 0.29, 0.32)
-		var pier_col := Color(0.46, 0.38, 0.28)
-		var bridge_col := Color(0.54, 0.49, 0.40)
-
-		_draw_world_rect(-259.0, 40.0, 762.0, 16.0, road_col)
-		_draw_world_rect(424.0, 40.0, 432.0, 16.0, road_col)
-		_draw_world_rect(0.0, 50.0, 15.0, 820.0, road_col)
-		_draw_world_rect(0.0, 40.0, 106.0, 94.0, road_col)
-		_draw_world_rect(-149.0, 444.0, 542.0, 13.0, road_col)
-		_draw_world_rect(311.0, 444.0, 218.0, 13.0, road_col)
-		_draw_world_rect(-345.0, 246.0, 13.0, 412.0, road_col)
-
-		# Runways
-		_draw_world_rect(-490.0, -90.0, 220.0, 24.0, runway_col)
-		_draw_world_rect(490.0, 105.0, 220.0, 24.0, runway_col)
-
-		# Piers
-		_draw_world_rect(-370.0, 510.0, 14.0, 104.0, pier_col)
-		_draw_world_rect(0.0, 510.0, 14.0, 104.0, pier_col)
-		_draw_world_rect(370.0, 510.0, 14.0, 104.0, pier_col)
-
-		# Bridges spanning the river
-		_draw_world_rect(MapSeasideFrontline.get_river_center_x(40.0), 40.0, 64.0, 18.0, bridge_col)
-		_draw_world_rect(MapSeasideFrontline.get_river_center_x(444.0), 444.0, 64.0, 15.0, bridge_col)
 
 		if hud_owner == null:
 			draw_rect(Rect2(Vector2.ZERO, s), Color(0.08, 0.12, 0.18, 0.95), false, 2.0)
@@ -330,8 +388,8 @@ class _TacticalMinimapControl extends Control:
 				if font != null:
 					draw_string(font, mp + Vector2(-3.5 if not mortar_active else -4.5, 3.5 if not mortar_active else 4.5), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz, Color.WHITE)
 
-		# 6. Structures (ArmorKit, Trench, Client Trench, Deployed Turret) when allied or nearby
-		for m in get_visible_structure_markers():
+		# 6. Structures (ArmorKit, Trench, Client Trench, Deployed Turret) cached @ 4 Hz
+		for m in _get_cached_structure_markers():
 			var grp_name: String = str(m["group"])
 			var sp: Vector2 = m["pos"] as Vector2
 			if grp_name == "deployed_turrets":
@@ -547,9 +605,13 @@ var _alt_hint_lbl: Label = null
 var _hotbar_alt_hint_lbl: Label = null
 
 var _minimap: _TacticalMinimapControl = null
+var _minimap_redraw_accum: float = 0.1
 var _mortar_targeting_active: bool = false
 var _mortar_target_callback: Callable = Callable()
 var _mortar_banner_lbl: Label = null
+var _applied_spread: float = -1.0
+var _last_skill_cd_state: PackedInt32Array = PackedInt32Array()
+var _last_widget_cd_state: PackedInt32Array = PackedInt32Array()
 
 var _build_panel: PanelContainer = null
 var _build_label: Label = null
@@ -650,9 +712,14 @@ func set_local_hero(hero: HeroCharacter) -> void:
 	_reset_seat_diagram_cache()
 	_crosshair_bloom = 0.0
 	_crosshair_spread_px = 6.0
+	_applied_spread = -1.0
+	_last_skill_cd_state.clear()
+	_last_widget_cd_state.clear()
 	_apply_crosshair_spread(_crosshair_spread_px)
 	stop_build_progress()
 	_refresh_hotbar_icons()
+	if _minimap != null:
+		_minimap.queue_redraw()
 
 
 func trigger_crosshair_bloom(amount: float = 6.0) -> void:
@@ -770,6 +837,9 @@ func _make_crosshair_bar(node_name: String, outer_size: Vector2, inner_size: Vec
 
 
 func _apply_crosshair_spread(gap: float) -> void:
+	if absf(gap - _applied_spread) < 0.05:
+		return
+	_applied_spread = gap
 	if _crosshair_top != null:
 		_crosshair_top.position = Vector2(-2.0, -gap - 10.0)
 	if _crosshair_bottom != null:
@@ -1891,7 +1961,9 @@ func set_mortar_targeting_mode(active: bool, callback: Callable = Callable(), no
 			_minimap.offset_bottom = 194.0
 			_minimap.size = Vector2(182.0, 182.0)
 			_minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_minimap.invalidate_static_layer()
 		_minimap.queue_redraw()
+		_minimap_redraw_accum = 0.0
 	if active:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	elif not _alt_cursor_mode and not Input.is_key_pressed(KEY_ALT) and not DisplayServer.get_name().contains("headless"):
@@ -1947,23 +2019,32 @@ func _refresh_slot_cooldowns_immediate() -> void:
 	var sm := _local_hero.skill_manager as SkillManager
 	var num_skills: int = sm.skill_ranks.size()
 	var skill_order: Array[int] = InputCmd.get_active_skill_order(num_skills)
+	if _last_skill_cd_state.size() != _skill_slot_boxes.size():
+		_last_skill_cd_state.resize(_skill_slot_boxes.size())
+		_last_skill_cd_state.fill(-999)
 	for vis_s in range(_skill_slot_boxes.size()):
 		var has_slot: bool = vis_s < skill_order.size()
 		if _skill_slot_boxes[vis_s].visible != has_slot:
 			_skill_slot_boxes[vis_s].visible = has_slot
 		if not has_slot:
+			_last_skill_cd_state[vis_s] = -999
 			continue
 		var logical_s: int = skill_order[vis_s]
 		var rank: int = sm.skill_ranks[logical_s]
 		var cd: float = sm.skill_cooldowns[logical_s]
+		var cd_ceil: int = int(ceilf(cd)) if cd > 0.0 else 0
+		var state_val: int = -100 if rank <= 0 else (cd_ceil if cd_ceil > 0 else -rank)
+		if state_val == _last_skill_cd_state[vis_s]:
+			continue
+		_last_skill_cd_state[vis_s] = state_val
 		var target_cd_txt: String
 		var target_col: Color
 		if rank <= 0:
 			target_col = Color(0.45, 0.45, 0.45, 0.55)
 			target_cd_txt = ""
-		elif cd > 0.0:
+		elif cd_ceil > 0:
 			target_col = Color(0.55, 0.55, 0.55, 0.72)
-			target_cd_txt = "%.0fs" % ceilf(cd)
+			target_cd_txt = "%ds" % cd_ceil
 		else:
 			target_col = Color.WHITE
 			target_cd_txt = "R%d" % rank
@@ -1973,11 +2054,19 @@ func _refresh_slot_cooldowns_immediate() -> void:
 			_skill_slot_cd_lbls[vis_s].text = target_cd_txt
 
 	var widget_order: Array[int] = InputCmd.get_active_widget_order(4)
-	for vis_w in range(mini(widget_order.size(), _widget_slot_icons.size())):
+	var w_count: int = mini(widget_order.size(), _widget_slot_icons.size())
+	if _last_widget_cd_state.size() != _widget_slot_icons.size():
+		_last_widget_cd_state.resize(_widget_slot_icons.size())
+		_last_widget_cd_state.fill(-999)
+	for vis_w in range(w_count):
 		var logical_w: int = widget_order[vis_w]
 		var wcd: float = sm.widget_cooldowns[logical_w]
-		var w_txt: String = "%.0fs" % ceilf(wcd) if wcd > 0.0 else ""
-		var w_col: Color = Color(0.55, 0.55, 0.55, 0.72) if wcd > 0.0 else Color.WHITE
+		var wcd_ceil: int = int(ceilf(wcd)) if wcd > 0.0 else 0
+		if wcd_ceil == _last_widget_cd_state[vis_w]:
+			continue
+		_last_widget_cd_state[vis_w] = wcd_ceil
+		var w_txt: String = "%ds" % wcd_ceil if wcd_ceil > 0 else ""
+		var w_col: Color = Color(0.55, 0.55, 0.55, 0.72) if wcd_ceil > 0 else Color.WHITE
 		if _widget_slot_icons[vis_w].modulate != w_col:
 			_widget_slot_icons[vis_w].modulate = w_col
 		if _widget_slot_cd_lbls[vis_w].text != w_txt:
@@ -1985,6 +2074,8 @@ func _refresh_slot_cooldowns_immediate() -> void:
 
 
 func _refresh_hotbar_icons() -> void:
+	_last_skill_cd_state.clear()
+	_last_widget_cd_state.clear()
 	_update_hotkey_label_texts()
 	_refresh_widget_hotbar_icons()
 	if _local_hero == null or not is_instance_valid(_local_hero):
@@ -2117,7 +2208,9 @@ func _process(delta: float) -> void:
 	if _local_hero == null or not is_instance_valid(_local_hero):
 		_local_hero = null
 		_hide_local_hud_overlays()
-		if _minimap != null:
+		_minimap_redraw_accum += delta
+		if _minimap != null and _minimap_redraw_accum >= (1.0 / 12.0):
+			_minimap_redraw_accum = 0.0
 			_minimap.queue_redraw()
 		return
 
@@ -2161,9 +2254,9 @@ func _process(delta: float) -> void:
 		_shield_value_lbl.text = ("+%d ESCUDO" % _local_hero.shield) if _local_hero.shield > 0 else ""
 
 	var is_scoped: bool = _local_hero.is_scoping or (_local_hero.hero_camera != null and _local_hero.hero_camera.is_scoped)
-	if _scope_overlay != null:
+	if _scope_overlay != null and _scope_overlay.visible != is_scoped:
 		_scope_overlay.visible = is_scoped
-		if _scope_overlay.visible:
+		if is_scoped:
 			_scope_overlay.queue_redraw()
 	if _crosshair != null:
 		_crosshair.visible = not is_scoped and not _mortar_targeting_active
@@ -2245,7 +2338,9 @@ func _process(delta: float) -> void:
 	_update_interact_prompt()
 	_update_vehicle_hp_panel(delta)
 	_update_sixth_sense_markers()
-	if _minimap != null:
+	_minimap_redraw_accum += delta
+	if _minimap != null and _minimap_redraw_accum >= (1.0 / 12.0):
+		_minimap_redraw_accum = 0.0
 		_minimap.queue_redraw()
 
 
@@ -2493,6 +2588,7 @@ func _update_sixth_sense_markers() -> void:
 	if _local_hero == null or _local_hero.hero_camera == null or _local_hero.hero_camera.camera == null:
 		_hide_all_sixth_sense_markers()
 		return
+	StatusEffectContainer.refresh_sixth_sense_cache(_heroes_ref)
 	var pulse_alpha: float = 0.52 + 0.48 * (0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.008))
 	var cam: Camera3D = _local_hero.hero_camera.camera
 	var used_count: int = 0

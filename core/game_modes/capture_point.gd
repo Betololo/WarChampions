@@ -17,6 +17,9 @@ var progress: float = 0.0 # 0.0 neutral .. 1.0 fully captured
 var _flag_mesh: MeshInstance3D
 var _ring_mesh: MeshInstance3D
 var _flag_label_3d: Label3D
+var _last_vis_owner: int = -99
+var _last_vis_cap_team: int = -99
+var _last_vis_progress_q: int = -1
 
 
 func setup(p_index: int, p_name: String, p_pos: Vector3, initial_owner: int = -1) -> void:
@@ -28,6 +31,8 @@ func setup(p_index: int, p_name: String, p_pos: Vector3, initial_owner: int = -1
 	capturing_team = -1
 	progress = 1.0 if initial_owner >= 0 else 0.0
 	name = "CapturePoint_%d" % p_index
+	if _flag_label_3d != null:
+		_flag_label_3d.text = "[%s] %s" % [String.chr(65 + point_index), point_name]
 
 
 func reset_point() -> void:
@@ -53,6 +58,7 @@ func _build_flagpole_visual() -> void:
 	var pl_mat := StandardMaterial3D.new()
 	pl_mat.albedo_color = Color(0.55, 0.56, 0.60)
 	plinth.material_override = pl_mat
+	plinth.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(plinth)
 
 	var pole := MeshInstance3D.new()
@@ -99,6 +105,7 @@ func _build_flagpole_visual() -> void:
 	rmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	rmat.albedo_color = Color(1.0, 1.0, 1.0, 0.16)
 	_ring_mesh.material_override = rmat
+	_ring_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_ring_mesh)
 
 	_flag_label_3d = Label3D.new()
@@ -168,6 +175,13 @@ func apply_snapshot_state(p_owner: int, p_cap_team: int, p_progress: float) -> v
 func _update_visuals() -> void:
 	if _flag_mesh == null:
 		return
+	var prog_q: int = int(roundf(clampf(progress, 0.0, 1.0) * 100.0))
+	if owner_team == _last_vis_owner and capturing_team == _last_vis_cap_team and prog_q == _last_vis_progress_q:
+		return
+	_last_vis_owner = owner_team
+	_last_vis_cap_team = capturing_team
+	_last_vis_progress_q = prog_q
+
 	var col: Color = Color(0.92, 0.92, 0.92)
 	var lbl_col: Color = Color(1.0, 0.95, 0.72)
 	if owner_team == NetworkManager.TEAM_ROYAL:
@@ -189,7 +203,6 @@ func _update_visuals() -> void:
 		(_ring_mesh.material_override as StandardMaterial3D).albedo_color = Color(col.r, col.g, col.b, 0.18)
 
 	if _flag_label_3d != null:
-		_flag_label_3d.text = "[%s] %s" % [String.chr(65 + point_index), point_name]
 		_flag_label_3d.modulate = lbl_col
 
 

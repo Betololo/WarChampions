@@ -50,6 +50,13 @@ const SIXTH_SENSE_RADIUS: float = 55.0
 const MARK_TARGET_MAX_RANGE: float = 2500.0
 const MARK_CROSSHAIR_MAX_ANGLE_DEG: float = 2.8
 
+static var _sixth_sense_casters_royal: Array[HeroCharacter] = []
+static var _sixth_sense_casters_national: Array[HeroCharacter] = []
+static var _sixth_sense_cache_active: bool = false
+static var _sixth_sense_cache_dict: Dictionary = {}
+static var _sixth_sense_cache_proc_frame: int = -1
+static var _sixth_sense_cache_phys_frame: int = -1
+
 var hot_timer: float = 0.0
 var hot_tick_accum: float = 0.0
 var hot_heal_per_tick: int = 4
@@ -233,6 +240,7 @@ func _physics_process(delta: float) -> void:
 func _sync_flags() -> void:
 	if owner_hero == null:
 		return
+	var prev_ss: bool = (owner_hero.active_flags & NetSerializer.SNAP_SIXTH_SENSE) != 0
 	var f: int = owner_hero.active_flags
 	f &= ~(NetSerializer.SNAP_BURNING | NetSerializer.SNAP_POISONED | NetSerializer.SNAP_SPEED_BOOST | NetSerializer.SNAP_SIXTH_SENSE | NetSerializer.SNAP_EAT_GRENADES | NetSerializer.SNAP_STEALTHED | NetSerializer.SNAP_SHIELDED | NetSerializer.SNAP_MARKED_TARGET | NetSerializer.SNAP_KEG_CONCUSSED)
 	if burn_timer > 0.0:
@@ -254,6 +262,8 @@ func _sync_flags() -> void:
 	if slow_timer > 0.0:
 		f |= NetSerializer.SNAP_KEG_CONCUSSED
 	owner_hero.active_flags = f
+	if ((f & NetSerializer.SNAP_SIXTH_SENSE) != 0) != prev_ss:
+		invalidate_sixth_sense_cache()
 	_sync_buffs()
 
 
@@ -586,7 +596,38 @@ func has_piercing_shot() -> bool:
 func activate_sixth_sense(radius: float, duration: float) -> void:
 	sixth_sense_radius = maxf(sixth_sense_radius, radius)
 	sixth_sense_timer = maxf(sixth_sense_timer, duration)
+	invalidate_sixth_sense_cache()
 	_sync_flags()
+
+
+static func invalidate_sixth_sense_cache() -> void:
+	_sixth_sense_cache_active = false
+
+
+static func clear_sixth_sense_cache() -> void:
+	_sixth_sense_cache_active = false
+	_sixth_sense_casters_royal.clear()
+	_sixth_sense_casters_national.clear()
+	_sixth_sense_cache_dict = {}
+	_sixth_sense_cache_proc_frame = -1
+	_sixth_sense_cache_phys_frame = -1
+
+
+static func refresh_sixth_sense_cache(heroes_by_id: Dictionary) -> void:
+	_sixth_sense_casters_royal.clear()
+	_sixth_sense_casters_national.clear()
+	for id_key in heroes_by_id.keys():
+		var ally: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+		if not _hero_has_sixth_sense_active(ally):
+			continue
+		if ally.team == NetworkManager.TEAM_ROYAL:
+			_sixth_sense_casters_royal.append(ally)
+		elif ally.team == NetworkManager.TEAM_NATIONAL:
+			_sixth_sense_casters_national.append(ally)
+	_sixth_sense_cache_dict = heroes_by_id
+	_sixth_sense_cache_proc_frame = Engine.get_process_frames()
+	_sixth_sense_cache_phys_frame = Engine.get_physics_frames()
+	_sixth_sense_cache_active = true
 
 
 static func _hero_has_sixth_sense_active(h: HeroCharacter) -> bool:
@@ -605,6 +646,23 @@ static func is_pos_sensed_by_team(world_pos: Vector3, viewer_team: int, heroes_b
 		var fv_pos: Vector3 = fallback_viewer.global_position if fallback_viewer.is_inside_tree() else fallback_viewer.position
 		if fv_pos.distance_squared_to(world_pos) <= r_sq:
 			return true
+	var use_cache: bool = (
+		_sixth_sense_cache_active
+		and is_same(heroes_by_id, _sixth_sense_cache_dict)
+		and _sixth_sense_cache_proc_frame == Engine.get_process_frames()
+		and _sixth_sense_cache_phys_frame == Engine.get_physics_frames()
+	)
+	if use_cache:
+		var casters: Array[HeroCharacter] = _sixth_sense_casters_royal if viewer_team == NetworkManager.TEAM_ROYAL else _sixth_sense_casters_national
+		if casters.is_empty():
+			return false
+		for ally in casters:
+			if not _hero_has_sixth_sense_active(ally):
+				continue
+			var a_pos: Vector3 = ally.global_position if ally.is_inside_tree() else ally.position
+			if a_pos.distance_squared_to(world_pos) <= r_sq:
+				return true
+		return false
 	for id_key in heroes_by_id.keys():
 		var ally: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
 		if ally == null or not is_instance_valid(ally) or ally.team != viewer_team:

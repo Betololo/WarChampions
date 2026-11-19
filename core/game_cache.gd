@@ -179,12 +179,28 @@ static func prewarm_gpu_pipelines(host_node: Node3D) -> Node3D:
 		mi.material_override = sm
 		root.add_child(mi)
 
+	var hero_tex_sh: Shader = load("res://vfx_shaders/hero_cel_shader.gdshader") as Shader
+	if hero_tex_sh != null:
+		var mi_tex := MeshInstance3D.new()
+		mi_tex.mesh = tiny_box
+		mi_tex.position = anchor + Vector3(0.0, 0.01, 0.0)
+		mi_tex.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var sm_tex := ShaderMaterial.new()
+		sm_tex.shader = hero_tex_sh
+		sm_tex.set_shader_parameter("use_tex", true)
+		sm_tex.set_shader_parameter("albedo_tex", CartoonAssets.get_texture("hero_jacket_royal"))
+		sm_tex.set_shader_parameter("cloak_amount", 0.0)
+		mi_tex.material_override = sm_tex
+		root.add_child(mi_tex)
+
 	var pal: Dictionary = BuildingMeshBuilder._make_palette()
 	var sample_mats: Array[Material] = [
 		pal.get("stone"),
 		pal.get("glass"),
 		pal.get("glow_gold"),
 	]
+	for vfx_m in StatusEffectsVFX.get_prewarm_materials():
+		sample_mats.append(vfx_m)
 	for j in range(sample_mats.size()):
 		if sample_mats[j] == null:
 			continue
@@ -194,6 +210,12 @@ static func prewarm_gpu_pipelines(host_node: Node3D) -> Node3D:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mi.material_override = sample_mats[j]
 		root.add_child(mi)
+
+	var lbl3d := Label3D.new()
+	lbl3d.text = "."
+	lbl3d.pixel_size = 0.001
+	lbl3d.position = anchor
+	root.add_child(lbl3d)
 
 	if not OS.has_feature("web"):
 		var gp := GPUParticles3D.new()

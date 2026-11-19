@@ -115,6 +115,18 @@ var _parachute_rig: Node3D
 var _defeat_prop: Node3D
 var _mesh_parts: Array[MeshInstance3D] = []
 var _last_vfx_key: String = ""
+var _last_vfx_hash: int = -1
+var _last_vfx_shader: Shader = null
+var _last_vfx_xray: ShaderMaterial = null
+var _last_vfx_rim_col: Color = Color(-1.0, -1.0, -1.0, -1.0)
+var _last_vfx_rim_str: float = -1.0
+var _last_vfx_cloak: float = -1.0
+var _cached_vehicle_ref: VehicleBase = null
+var _cached_vehicle_id: int = -1
+var _cached_class_menu: CanvasLayer = null
+var _cached_hud_ctrl: Node = null
+var _ik_lod_accum: float = 0.0
+var _ik_lod_parity: int = 0
 var _overhead_buff_row: Node3D = null
 var _overhead_buff_slots: Array[Sprite3D] = []
 var _speed_trail_timer: float = 0.0
@@ -449,7 +461,8 @@ func _create_arm_rig(
 	_torso_pivot.add_child(arm_pivot)
 	HeroMeshBuilder.add_part(arm_pivot, upper_mesh, Vector3.ZERO, Vector3.ZERO, upper_arm_mat, _mesh_parts)
 	if sleeve_cap_mesh != null:
-		HeroMeshBuilder.add_part(arm_pivot, sleeve_cap_mesh, Vector3.ZERO, Vector3.ZERO, cap_mat, _mesh_parts)
+		var cap_mi := HeroMeshBuilder.add_part(arm_pivot, sleeve_cap_mesh, Vector3.ZERO, Vector3.ZERO, cap_mat, _mesh_parts)
+		cap_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	var forearm_pivot := Node3D.new()
 	forearm_pivot.position = Vector3(0.0, -_upper_arm_len, 0.0)
@@ -460,7 +473,8 @@ func _create_arm_rig(
 		cuff_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		cuff_mi.visibility_range_end = 220.0
 	var hand_rot := Vector3(0.0, PI if side_sign < 0.0 else 0.0, 0.0)
-	HeroMeshBuilder.add_part(forearm_pivot, hand_mesh, Vector3(0.0, -_forearm_len, 0.0), hand_rot, hand_mat, _mesh_parts)
+	var hand_mi := HeroMeshBuilder.add_part(forearm_pivot, hand_mesh, Vector3(0.0, -_forearm_len, 0.0), hand_rot, hand_mat, _mesh_parts)
+	hand_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return [arm_pivot, forearm_pivot]
 
 
@@ -567,6 +581,12 @@ func _rebuild_cartoon_visuals() -> void:
 		child.queue_free()
 	_mesh_parts.clear()
 	_last_vfx_key = ""
+	_last_vfx_hash = -1
+	_last_vfx_shader = null
+	_last_vfx_xray = null
+	_last_vfx_rim_col = Color(-1.0, -1.0, -1.0, -1.0)
+	_last_vfx_rim_str = -1.0
+	_last_vfx_cloak = -1.0
 	_overhead_buff_row = null
 	_overhead_buff_slots.clear()
 	_held_riot_shield = null
@@ -683,6 +703,7 @@ func _rebuild_cartoon_visuals() -> void:
 			cord.position = Vector3(cx * 0.5, 2.35, cz * 0.5)
 			cord.rotation.z = -cx * 0.25
 			cord.rotation.x = cz * 0.25
+			cord.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			_parachute_rig.add_child(cord)
 	_parachute_rig.visible = false
 	visual_root.add_child(_parachute_rig)
@@ -695,11 +716,13 @@ func _rebuild_cartoon_visuals() -> void:
 	pbox.size = Vector3(0.04, 1.1, 0.04)
 	pole.mesh = pbox
 	pole.position = Vector3(0.45, 0.9, 0.0)
+	pole.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var flag := MeshInstance3D.new()
 	var fbox := BoxMesh.new()
 	fbox.size = Vector3(0.55, 0.35, 0.03)
 	flag.mesh = fbox
 	flag.position = Vector3(0.74, 1.25, 0.0)
+	flag.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var flag_mat := StandardMaterial3D.new()
 	flag_mat.albedo_color = Color.WHITE
 	flag.material_override = flag_mat
@@ -917,6 +940,12 @@ func apply_character_shader(shader: Shader) -> void:
 	if shader == null:
 		return
 	_last_vfx_key = ""
+	_last_vfx_hash = -1
+	_last_vfx_shader = shader
+	_last_vfx_xray = null
+	_last_vfx_rim_col = Color(-1.0, -1.0, -1.0, -1.0)
+	_last_vfx_rim_str = -1.0
+	_last_vfx_cloak = -1.0
 	for mi in _mesh_parts:
 		if mi.material_override is ShaderMaterial:
 			var existing := mi.material_override as ShaderMaterial
@@ -1004,12 +1033,16 @@ func get_muzzle_world_position(hand_override: int = -1) -> Vector3:
 func _is_ui_cursor_locked_open() -> bool:
 	if not is_inside_tree():
 		return false
-	for m in get_tree().get_nodes_in_group("class_select_menus"):
-		if m is CanvasLayer and (m as CanvasLayer).visible:
-			return true
-	for h in get_tree().get_nodes_in_group("hud_controllers"):
-		if h != null and h.has_method("is_mortar_targeting_active") and h.is_mortar_targeting_active():
-			return true
+	if _cached_class_menu == null or not is_instance_valid(_cached_class_menu):
+		var menus := get_tree().get_nodes_in_group("class_select_menus")
+		_cached_class_menu = menus[0] as CanvasLayer if not menus.is_empty() and menus[0] is CanvasLayer else null
+	if _cached_class_menu != null and _cached_class_menu.visible:
+		return true
+	if _cached_hud_ctrl == null or not is_instance_valid(_cached_hud_ctrl):
+		var huds := get_tree().get_nodes_in_group("hud_controllers")
+		_cached_hud_ctrl = huds[0] if not huds.is_empty() else null
+	if _cached_hud_ctrl != null and _cached_hud_ctrl.has_method("is_mortar_targeting_active") and _cached_hud_ctrl.is_mortar_targeting_active():
+		return true
 	return false
 
 
@@ -1117,7 +1150,6 @@ func _process(delta: float) -> void:
 			visual_root.global_position = global_position
 			visual_root.rotation.y = aim_yaw
 
-	_rebuild_held_weapon_mesh()
 	_animate_character(delta)
 
 
@@ -1140,6 +1172,24 @@ func _animate_character(delta: float) -> void:
 	_fire_pose_timer = maxf(0.0, _fire_pose_timer - delta)
 	_cycle_anim_timer = maxf(0.0, _cycle_anim_timer - delta)
 	_skill_anim_timer = maxf(0.0, _skill_anim_timer - delta)
+
+	if not is_local_player and is_inside_tree() and get_viewport() != null:
+		var lod_cam: Camera3D = get_viewport().get_camera_3d()
+		if lod_cam != null:
+			var hero_wpos: Vector3 = visual_root.global_position if visual_root != null else global_position
+			var cam_dist_sq: float = lod_cam.global_position.distance_squared_to(hero_wpos)
+			if cam_dist_sq > 9025.0 or (cam_dist_sq > 144.0 and lod_cam.is_position_behind(hero_wpos)):
+				_ik_lod_accum += delta
+				return
+			if cam_dist_sq > 2025.0:
+				_ik_lod_accum += delta
+				_ik_lod_parity = (_ik_lod_parity + 1) & 1
+				if _ik_lod_parity == 1:
+					return
+				delta = _ik_lod_accum
+				_ik_lod_accum = 0.0
+			else:
+				_ik_lod_accum = 0.0
 
 	if not is_defeated:
 		_defeat_elapsed = 0.0
@@ -2482,6 +2532,12 @@ func clear_vehicle_state() -> void:
 	_pred_error_offset = Vector3.ZERO
 	visual_error_offset = Vector3.ZERO
 	_last_vfx_key = ""
+	_last_vfx_hash = -1
+	_last_vfx_shader = null
+	_last_vfx_xray = null
+	_last_vfx_rim_col = Color(-1.0, -1.0, -1.0, -1.0)
+	_last_vfx_rim_str = -1.0
+	_last_vfx_cloak = -1.0
 	_speed_trail_timer = 0.0
 	_build_anim_time = 0.0
 	_mortar_anim_phase = MortarAnimPhase.NONE
@@ -2490,6 +2546,8 @@ func clear_vehicle_state() -> void:
 	_mortar_prev_buff_active = false
 	_mortar_stow_completed = false
 	_mortar_root_posed = false
+	_cached_vehicle_ref = null
+	_cached_vehicle_id = -1
 	if _body_collision != null:
 		_body_collision.disabled = false
 	if hero_camera != null:
@@ -2505,15 +2563,33 @@ func clear_vehicle_state() -> void:
 
 ## Locates the current occupied VehicleBase instance across Host, Dedicated Server, and Remote Clients.
 func _resolve_current_vehicle() -> VehicleBase:
-	if current_vehicle_id < 0 or not is_inside_tree():
+	if current_vehicle_id < 0:
+		_cached_vehicle_ref = null
+		_cached_vehicle_id = -1
 		return null
+	if _cached_vehicle_id == current_vehicle_id and _cached_vehicle_ref != null and is_instance_valid(_cached_vehicle_ref) and _cached_vehicle_ref.id == current_vehicle_id:
+		return _cached_vehicle_ref
+	if not is_inside_tree():
+		return null
+	var p_root: Node = get_parent()
+	var mg: Node = p_root.get_parent() if p_root != null else null
+	if mg != null and "vehicles_by_id" in mg:
+		var v_map: Variant = mg.get("vehicles_by_id")
+		if v_map is Dictionary:
+			var found_v: VehicleBase = (v_map as Dictionary).get(current_vehicle_id, null) as VehicleBase
+			if found_v != null and is_instance_valid(found_v):
+				_cached_vehicle_ref = found_v
+				_cached_vehicle_id = current_vehicle_id
+				return found_v
 	var tree := get_tree()
 	if tree == null:
 		return null
 	var vehs := tree.get_nodes_in_group("vehicles")
 	for v in vehs:
 		if v is VehicleBase and (v as VehicleBase).id == current_vehicle_id:
-			return v as VehicleBase
+			_cached_vehicle_ref = v as VehicleBase
+			_cached_vehicle_id = current_vehicle_id
+			return _cached_vehicle_ref
 	return null
 
 
@@ -2851,6 +2927,12 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	_pred_error_offset = Vector3.ZERO
 	visual_error_offset = Vector3.ZERO
 	_last_vfx_key = ""
+	_last_vfx_hash = -1
+	_last_vfx_shader = null
+	_last_vfx_xray = null
+	_last_vfx_rim_col = Color(-1.0, -1.0, -1.0, -1.0)
+	_last_vfx_rim_str = -1.0
+	_last_vfx_cloak = -1.0
 	_speed_trail_timer = 0.0
 	_build_anim_time = 0.0
 	_mortar_anim_phase = MortarAnimPhase.NONE
@@ -2859,6 +2941,8 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	_mortar_prev_buff_active = false
 	_mortar_stow_completed = false
 	_mortar_root_posed = false
+	_cached_vehicle_ref = null
+	_cached_vehicle_id = -1
 	if visual_root != null:
 		visual_root.global_position = spawn_pos
 	if hero_camera != null:

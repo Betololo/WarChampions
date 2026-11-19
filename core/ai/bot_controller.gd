@@ -27,6 +27,15 @@ var _burst_timer: float = 0.0
 var _burst_firing: bool = true
 var _aim_time: float = 0.0
 var _aim_seed: float = 0.0
+var _reusable_cmd: InputCmd = InputCmd.new()
+var _ray_query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.new()
+var _ray_exclude: Array[RID] = []
+var _los_cache_ticks: int = 0
+var _los_cache_target_id: int = -1
+var _los_cache_ok: bool = false
+var _obj_candidates: Array[CapturePoint] = []
+var _scan_heroes: Array[HeroCharacter] = []
+var _scan_dists: Array[float] = []
 
 
 func setup(p_hero: HeroCharacter) -> void:
@@ -35,6 +44,12 @@ func setup(p_hero: HeroCharacter) -> void:
 	_retarget_timer = randf_range(0.0, 1.5)
 	_strafe_dir = -1.0 if randf() < 0.5 else 1.0
 	_aim_seed = float(p_hero.entity_id) * 1.731 + randf_range(0.0, TAU)
+	_ray_query.collision_mask = 1
+	_ray_query.hit_from_inside = true
+	_ray_exclude.clear()
+	if bot_hero != null:
+		_ray_exclude.append(bot_hero.get_rid())
+		_ray_query.exclude = _ray_exclude
 
 
 func is_in_vision_cone(target: HeroCharacter) -> bool:
@@ -55,12 +70,16 @@ func has_line_of_sight(space_state: PhysicsDirectSpaceState3D, target: HeroChara
 		return false
 	var bot_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
 	var target_pos: Vector3 = target.global_position if target.is_inside_tree() else target.position
-	var eye_from: Vector3 = bot_pos + Vector3(0.0, LOS_EYE_HEIGHT, 0.0)
-	var chest_to: Vector3 = target_pos + Vector3(0.0, LOS_TARGET_HEIGHT, 0.0)
-	var query := PhysicsRayQueryParameters3D.create(eye_from, chest_to, 1)
-	query.hit_from_inside = true
-	query.exclude = [bot_hero.get_rid()]
-	var ray: Dictionary = space_state.intersect_ray(query)
+	_ray_query.from = bot_pos + Vector3(0.0, LOS_EYE_HEIGHT, 0.0)
+	_ray_query.to = target_pos + Vector3(0.0, LOS_TARGET_HEIGHT, 0.0)
+	_ray_query.collision_mask = 1
+	_ray_query.hit_from_inside = true
+	var bot_rid: RID = bot_hero.get_rid()
+	if _ray_exclude.size() != 1 or _ray_exclude[0] != bot_rid:
+		_ray_exclude.resize(1)
+		_ray_exclude[0] = bot_rid
+		_ray_query.exclude = _ray_exclude
+	var ray: Dictionary = space_state.intersect_ray(_ray_query)
 	return ray.is_empty()
 
 
@@ -70,16 +89,24 @@ func compute_input(
 	heroes_by_id: Dictionary = {},
 	vehicles: Array[VehicleBase] = []
 ) -> InputCmd:
-	return step_ai(delta, capture_points, heroes_by_id, vehicles)
+	return step_ai(delta, capture_points, heroes_by_id, vehicles).duplicate_cmd()
 
 
 func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Dictionary, vehicles: Array[VehicleBase]) -> InputCmd:
-	var cmd := InputCmd.new()
+	var cmd: InputCmd = _reusable_cmd
 	_ai_tick += 1
 	cmd.tick = _ai_tick
+	cmd.move_dir = Vector2.ZERO
+	cmd.aim_yaw = 0.0
+	cmd.aim_pitch = 0.0
+	cmd.buttons = 0
+	cmd.selected_weapon_slot = 0
+	cmd.view_interp_tick_delta = 0
 
 	if bot_hero == null or bot_hero.is_defeated:
 		_engaged_target_id = -1
+		_los_cache_target_id = -1
+		_los_cache_ok = false
 		_memory_timer = 0.0
 		_reaction_timer = 0.0
 		return cmd
@@ -94,7 +121,7 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 	if bot_hero.is_inside_tree() and bot_hero.get_world_3d() != null:
 		space_state = bot_hero.get_world_3d().direct_space_state
 
-	# 1. Look for nearest visible enemy hero (stagger full scan every 6th tick per bot; validate engaged target in between)
+	# 1. Look for nearest visible enemy hero (stagger full scan every 6th tick per bot; validate engaged target with 4-tick LOS cache)
 	var target_enemy: HeroCharacter = null
 	var do_full_scan: bool = (_ai_tick == 1) or (((_ai_tick + bot_hero.entity_id) % 6) == 0)
 	if not do_full_scan and _engaged_target_id >= 0:
@@ -106,10 +133,25 @@ func step_ai(delta: float, capture_points: Array[CapturePoint], heroes_by_id: Di
 			var detect_r: float = cand.status_effects.stealth_detection_radius if cand.status_effects != null else 10.0
 			var visible_stealth: bool = (not cand.is_stealthed) or (dist_sq <= detect_r * detect_r) or ((cand.active_flags & NetSerializer.SNAP_MARKED_TARGET) != 0) or StatusEffectContainer.is_enemy_sensed_by_team(cand, bot_hero.team, heroes_by_id, bot_hero)
 			if dist_sq <= MAX_DETECT_RANGE * MAX_DETECT_RANGE and visible_stealth and is_in_vision_cone(cand):
-				if has_line_of_sight(space_state, cand):
+				var has_los: bool
+				if _los_cache_target_id == _engaged_target_id and (_ai_tick - _los_cache_ticks) < 4:
+					has_los = _los_cache_ok
+				else:
+					has_los = has_line_of_sight(space_state, cand)
+					_los_cache_target_id = _engaged_target_id
+					_los_cache_ticks = _ai_tick
+					_los_cache_ok = has_los
+				if has_los:
 					target_enemy = cand
 	elif do_full_scan:
 		target_enemy = _find_nearest_visible_enemy(heroes_by_id, space_state)
+		if target_enemy != null:
+			_los_cache_target_id = target_enemy.entity_id
+			_los_cache_ticks = _ai_tick
+			_los_cache_ok = true
+		else:
+			_los_cache_target_id = -1
+			_los_cache_ok = false
 	var desired_pos: Vector3 = _target_flag.global_position if _target_flag != null else Vector3.ZERO
 
 	# Heal or cleanse status effects if injured/burning/poisoned
@@ -348,8 +390,8 @@ func _apply_engineer_skill_triggers(
 	var turret_ready: bool = can_fire and dist < 35.0 and (eng_sm == null or (eng_sm.skill_cooldowns[1] <= 0.0 and eng_sm._active_turret == null))
 	var trench_ready: bool = (can_fire or dist > 12.0) and (eng_sm == null or (eng_sm.skill_cooldowns[0] <= 0.0 and eng_sm._active_trench == null))
 	var phase: int = (_ai_tick / 12) % 3
-	var order: Array[int] = [phase, (phase + 1) % 3, (phase + 2) % 3]
-	for idx in order:
+	for step_i in range(3):
+		var idx: int = (phase + step_i) % 3
 		if idx == 0 and mortar_ready:
 			cmd.set_button(InputCmd.BTN_SKILL_4, true) # Skill 3: Bot Mortar strike
 			return
@@ -364,20 +406,23 @@ func _apply_engineer_skill_triggers(
 func _pick_objective(capture_points: Array[CapturePoint]) -> void:
 	if capture_points.is_empty():
 		return
-	var candidates: Array[CapturePoint] = []
+	_obj_candidates.clear()
 	for cp in capture_points:
 		if cp.owner_team != bot_hero.team:
-			candidates.append(cp)
-	if candidates.is_empty():
+			_obj_candidates.append(cp)
+	if _obj_candidates.is_empty():
 		_target_flag = capture_points[randi() % capture_points.size()]
 	else:
-		_target_flag = candidates[randi() % candidates.size()]
+		_target_flag = _obj_candidates[randi() % _obj_candidates.size()]
 
 
 func _find_nearest_visible_enemy(heroes_by_id: Dictionary, space_state: PhysicsDirectSpaceState3D = null) -> HeroCharacter:
 	var max_range_sq: float = MAX_DETECT_RANGE * MAX_DETECT_RANGE
 	var bot_pos: Vector3 = bot_hero.global_position if bot_hero.is_inside_tree() else bot_hero.position
-	var candidates: Array = []
+	var best_cand: HeroCharacter = null
+	var best_dist_sq: float = INF
+	_scan_heroes.clear()
+	_scan_dists.clear()
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
 		if h == null or not is_instance_valid(h) or h.is_defeated or h.team == bot_hero.team:
@@ -393,15 +438,36 @@ func _find_nearest_visible_enemy(heroes_by_id: Dictionary, space_state: PhysicsD
 				continue
 		if not is_in_vision_cone(h):
 			continue
-		candidates.append([dist_sq, h])
+		_scan_heroes.append(h)
+		_scan_dists.append(dist_sq)
+		if dist_sq < best_dist_sq:
+			best_dist_sq = dist_sq
+			best_cand = h
 
-	if candidates.size() > 1:
-		candidates.sort_custom(func(a: Array, b: Array) -> bool:
-			return float(a[0]) < float(b[0])
-		)
+	if best_cand == null:
+		return null
+	if has_line_of_sight(space_state, best_cand):
+		return best_cand
+	if _scan_heroes.size() <= 1:
+		return null
 
-	for entry in candidates:
-		var cand: HeroCharacter = entry[1] as HeroCharacter
-		if has_line_of_sight(space_state, cand):
-			return cand
+	# Only when closest candidate is occluded, inspect remaining candidates in ascending distance without allocating arrays
+	var min_allowed: float = best_dist_sq
+	for _attempt in range(_scan_heroes.size() - 1):
+		var next_cand: HeroCharacter = null
+		var next_dist_sq: float = INF
+		for i in range(_scan_heroes.size()):
+			var d_sq: float = _scan_dists[i]
+			var cand_i: HeroCharacter = _scan_heroes[i]
+			if cand_i == best_cand:
+				continue
+			if d_sq >= min_allowed and d_sq < next_dist_sq:
+				next_dist_sq = d_sq
+				next_cand = cand_i
+		if next_cand == null:
+			break
+		if has_line_of_sight(space_state, next_cand):
+			return next_cand
+		best_cand = next_cand
+		min_allowed = next_dist_sq
 	return null

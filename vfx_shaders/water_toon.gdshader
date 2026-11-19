@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode cull_disabled;
+render_mode cull_back, depth_draw_always;
 
 uniform vec4 shallow_color : source_color = vec4(0.12, 0.74, 0.88, 0.88);
 uniform vec4 deep_color : source_color = vec4(0.04, 0.36, 0.64, 0.94);
@@ -17,5 +17,4 @@ void fragment() {
 	ALBEDO = mix(col, foam_color.rgb, foam * 0.45);
 	ROUGHNESS = 0.25;
 	SPECULAR = 0.6;
-	ALPHA = 0.9;
 }

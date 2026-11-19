@@ -58,6 +58,7 @@ func _ready() -> void:
 	await _test_phase12_task5_menus_5classes_integration()
 	await _test_phase12b_task1_engineer_build_channel()
 	await _test_phase12b_task2_mortar_anim_and_aoe()
+	await _test_phase12b_task3_perf_optimizations()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -9759,6 +9760,227 @@ func _test_phase12b_task2_mortar_anim_and_aoe() -> void:
 			str(cli_deploy_ok), str(cli_hold_ok), str(cli_stow_ok), str(cli_restored_ok),
 			str(shell_mid_ok), str(shell_freed_ok), str(cancel_ev_ok), str(cancel_restored_ok), str(defeat_cleared_ok),
 			str(grace_exit_ok), str(stow_latch_ok), str(cd_cancel_ok)
+		]
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+
+func _test_phase12b_task3_perf_optimizations() -> void:
+	print("--- Phase 12B Task 3: GPU & CPU Performance Overhaul Verification ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	# 1. Shaders & Project/Camera settings
+	var water_sh: Shader = load("res://vfx_shaders/water_toon.gdshader")
+	var sky_sh: Shader = load("res://vfx_shaders/toon_sky.gdshader")
+	var cel_sh: Shader = load("res://vfx_shaders/hero_cel_shader.gdshader")
+	var water_ok: bool = (
+		water_sh != null
+		and water_sh.code.contains("cull_back")
+		and water_sh.code.contains("depth_draw_always")
+		and not water_sh.code.contains("ALPHA")
+	)
+	var cel_ok: bool = (
+		cel_sh != null
+		and not cel_sh.code.contains("ALPHA")
+		and cel_sh.code.contains("rim_color")
+		and cel_sh.code.contains("rim_strength")
+		and cel_sh.code.contains("cloak_amount")
+		and not cel_sh.code.contains("pow(1.0 - clamp(dot(NORMAL, VIEW)")
+	)
+	var sky_ok: bool = (sky_sh != null and not sky_sh.code.contains("i < 4"))
+	var msaa_cfg: int = int(ProjectSettings.get_setting("rendering/anti_aliasing/quality/msaa_3d", -1))
+	var sh_size_cfg: int = int(ProjectSettings.get_setting("rendering/lights_and_shadows/directional_shadow/size", -1))
+	var sh_qual_cfg: int = int(ProjectSettings.get_setting("rendering/lights_and_shadows/directional_shadow/soft_shadow_filter_quality", -1))
+	var proj_ok: bool = (msaa_cfg == 1 and sh_size_cfg == 2048 and sh_qual_cfg == 1)
+
+	var cam_hero := HeroCharacter.new()
+	cam_hero.setup_identity(12601, "CamHero", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+	arena.add_child(cam_hero)
+	var cam_far_ok: bool = (cam_hero.hero_camera != null and cam_hero.hero_camera.camera != null and is_equal_approx(cam_hero.hero_camera.camera.far, 1500.0))
+
+	# 2. Map Terrain, MultiMesh Trees, Lighting, Fountain & DestructibleProp sharing
+	var p_map := MapSeasideFrontline.new()
+	var p_conq := ConquestManager.new()
+	var p_vehs := Node3D.new()
+	arena.add_child(p_conq)
+	arena.add_child(p_vehs)
+	arena.add_child(p_map)
+	p_map.build_map(p_conq, p_vehs, {})
+
+	var terrain_mi := p_map.get_node_or_null("SculptedTerrain/TerrainMesh") as MeshInstance3D
+	var terrain_col := p_map.get_node_or_null("SculptedTerrain/CollisionShape3D") as CollisionShape3D
+	var terrain_verts: int = 999999
+	if terrain_mi != null and terrain_mi.mesh is ArrayMesh:
+		var arrs: Array = (terrain_mi.mesh as ArrayMesh).surface_get_arrays(0)
+		if not arrs.is_empty():
+			terrain_verts = (arrs[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	var terrain_ok: bool = (terrain_verts > 70000 and terrain_verts < 80000 and terrain_col != null and terrain_col.shape is ConcavePolygonShape3D)
+
+	var batched_instances: int = 0
+	var tree_batches_ok: bool = true
+	for v_k in range(3):
+		var tb := p_map.get_node_or_null("TreeBatch_%d" % v_k) as MultiMeshInstance3D
+		if tb == null or tb.multimesh == null or tb.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+			tree_batches_ok = false
+		else:
+			batched_instances += tb.multimesh.instance_count
+	var collider_trees: int = 0
+	for ch in p_map.get_children():
+		if ch is StaticBody3D and ch.name.begins_with("LayeredTree_"):
+			collider_trees += 1
+	tree_batches_ok = tree_batches_ok and batched_instances >= 140 and collider_trees >= 140
+
+	var we := p_map.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	var sun := p_map.get_node_or_null("SunLight") as DirectionalLight3D
+	var env_ok: bool = (
+		we != null and we.environment != null
+		and we.environment.ambient_light_source == Environment.AMBIENT_SOURCE_COLOR
+		and is_equal_approx(we.environment.fog_depth_begin, 700.0)
+		and is_equal_approx(we.environment.fog_depth_end, 1480.0)
+		and sun != null and is_equal_approx(sun.directional_shadow_max_distance, 120.0)
+	)
+	var plume := p_map.get_node_or_null("CentralFountain/FountainPlume") as GPUParticles3D
+	var jet0 := p_map.get_node_or_null("CentralFountain/FountainJet_0") as GPUParticles3D
+	var splash0 := p_map.get_node_or_null("CentralFountain/FountainSplash_0") as GPUParticles3D
+	var fountain_ok: bool = (
+		plume != null and is_equal_approx(plume.visibility_range_end, 110.0) and plume.amount <= 16
+		and jet0 != null and is_equal_approx(jet0.visibility_range_end, 110.0) and jet0.amount <= 16
+		and splash0 != null and is_equal_approx(splash0.visibility_range_end, 110.0) and splash0.amount <= 12
+	)
+	var crate_a := DestructibleProp.new()
+	crate_a.setup(DestructibleProp.PropKind.CRATE, Vector3.ZERO)
+	var crate_b := DestructibleProp.new()
+	crate_b.setup(DestructibleProp.PropKind.CRATE, Vector3(3.0, 0.0, 0.0))
+	arena.add_child(crate_a)
+	arena.add_child(crate_b)
+	var prop_shared_ok: bool = (
+		crate_a._mesh.mesh == crate_b._mesh.mesh
+		and crate_a._mesh.material_override == crate_b._mesh.material_override
+		and crate_a._mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	)
+
+	# 3. O(1) Sixth Sense cache parity
+	var ss_ally := HeroCharacter.new()
+	ss_ally.setup_identity(12602, "SSAlly", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	var ss_enemy := HeroCharacter.new()
+	ss_enemy.setup_identity(12603, "SSEnemy", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+	arena.add_child(ss_ally)
+	arena.add_child(ss_enemy)
+	ss_ally.position = Vector3.ZERO
+	ss_enemy.position = Vector3(20.0, 0.0, 0.0)
+	var ss_dict: Dictionary = {12602: ss_ally, 12603: ss_enemy}
+	StatusEffectContainer.refresh_sixth_sense_cache(ss_dict)
+	var ss_off_ok: bool = not StatusEffectContainer.is_enemy_sensed_by_team(ss_enemy, NetworkManager.TEAM_ROYAL, ss_dict)
+	ss_ally.status_effects.activate_sixth_sense(55.0, 8.0)
+	StatusEffectContainer.refresh_sixth_sense_cache(ss_dict)
+	var ss_on_ok: bool = StatusEffectContainer.is_enemy_sensed_by_team(ss_enemy, NetworkManager.TEAM_ROYAL, ss_dict)
+	ss_enemy.position = Vector3(80.0, 0.0, 0.0)
+	var ss_far_ok: bool = not StatusEffectContainer.is_enemy_sensed_by_team(ss_enemy, NetworkManager.TEAM_ROYAL, ss_dict)
+	StatusEffectContainer.clear_sixth_sense_cache()
+	var ss_cache_ok: bool = ss_off_ok and ss_on_ok and ss_far_ok
+
+	# 4. StatusEffectsVFX Pooling & Shared Materials + GameCache prewarm
+	var vfx_host := Node3D.new()
+	arena.add_child(vfx_host)
+	StatusEffectsVFX.spawn_cartoon_burst(vfx_host, Vector3.ZERO, "spark", 0.5, true)
+	StatusEffectsVFX.spawn_curved_tracer(vfx_host, PackedVector3Array([Vector3.ZERO, Vector3(0.0, 0.0, -10.0)]), WeaponBase.WeaponKind.SMG, true)
+	StatusEffectsVFX.spawn_muzzle_flash(vfx_host, Vector3.ZERO, Vector3.FORWARD, WeaponBase.WeaponKind.SMG, true)
+	var mgr: StatusEffectsVFX.VfxPoolManager = StatusEffectsVFX._get_pool_manager(vfx_host)
+	var initial_created: int = mgr.total_created
+	mgr._process(0.60) # expire all active pooled entries back to free lists
+	StatusEffectsVFX.spawn_cartoon_burst(vfx_host, Vector3(1.0, 0.0, 0.0), "spark", 0.5, true)
+	StatusEffectsVFX.spawn_curved_tracer(vfx_host, PackedVector3Array([Vector3.ZERO, Vector3(0.0, 0.0, -10.0)]), WeaponBase.WeaponKind.SMG, true)
+	StatusEffectsVFX.spawn_muzzle_flash(vfx_host, Vector3.ZERO, Vector3.FORWARD, WeaponBase.WeaponKind.SMG, true)
+	var vfx_pool_ok: bool = (mgr.total_reused == 3 and mgr.total_created == initial_created and StatusEffectsVFX._get_shared_burst_mat("spark") == StatusEffectsVFX._get_shared_burst_mat("spark"))
+	StatusEffectsVFX.clear_pools(vfx_host)
+	await _flush_deferred()
+	var vfx_clear_ok: bool = not StatusEffectsVFX._pool_managers.has(vfx_host.get_instance_id())
+
+	GameCache.clear_all()
+	var prewarm_root: Node3D = GameCache.prewarm_gpu_pipelines(arena)
+	var prewarm_has_label3d: bool = false
+	if prewarm_root != null:
+		for ch in prewarm_root.get_children():
+			if ch is Label3D:
+				prewarm_has_label3d = true
+				break
+	GameCache.cleanup_prewarm(prewarm_root)
+
+	# 5. Minimap Static Layer Caching & 12 Hz Throttle
+	var p_hud := HUDController.new()
+	arena.add_child(p_hud)
+	p_hud.set_process(false)
+	p_hud.bind_context(p_conq, [] as Array[VehicleBase], ss_dict)
+	p_hud.set_local_hero(ss_ally)
+	await get_tree().process_frame
+	var static_layer: HUDController._MinimapStaticLayer = p_hud._minimap._static_layer
+	var s_draws_1: int = static_layer.draw_count
+	var dyn_start: int = p_hud._minimap.dynamic_draw_count
+	for _f in range(12):
+		p_hud._process(1.0 / 60.0)
+		await get_tree().process_frame
+	var dyn_delta_12frames: int = p_hud._minimap.dynamic_draw_count - dyn_start
+	var s_draws_after_pan: int = static_layer.draw_count
+	p_hud.set_mortar_targeting_mode(true, Callable(), false)
+	await get_tree().process_frame
+	var s_draws_after_mortar: int = static_layer.draw_count
+	p_hud.set_mortar_targeting_mode(false, Callable(), false)
+	var minimap_cache_ok: bool = (s_draws_1 >= 1 and s_draws_after_pan == s_draws_1 and s_draws_after_mortar > s_draws_after_pan and dyn_delta_12frames >= 2 and dyn_delta_12frames <= 3)
+
+	# 6. LagCompensator, SnapshotInterpolator, BotController & Vehicle Sleep
+	var lc := LagCompensator.new()
+	lc.record_frame(0, ss_dict)
+	var snap_first: LagCompensator.HeroHitboxSnapshot = lc.get_frame(0, 0).entries[12602]
+	lc.record_frame(LagCompensator.HISTORY_FRAMES, ss_dict)
+	var snap_reused: LagCompensator.HeroHitboxSnapshot = lc.get_frame(LagCompensator.HISTORY_FRAMES, LagCompensator.HISTORY_FRAMES).entries[12602]
+	var lc_reuse_ok: bool = (snap_first == snap_reused)
+	lc.free()
+
+	var si := SnapshotInterpolator.new()
+	si.push_snapshot(1, 100.0, Vector3.ZERO, Quaternion.IDENTITY)
+	si.push_snapshot(2, 200.0, Vector3(10.0, 0.0, 0.0), Quaternion.IDENTITY)
+	var si_a: SnapshotInterpolator.SnapshotSample = si.sample(250.0)
+	var si_b: SnapshotInterpolator.SnapshotSample = si.sample(260.0)
+	var si_reuse_ok: bool = (si_a == si._reusable_sample and si_b == si._reusable_sample)
+
+	var bot_brain := BotController.new()
+	bot_brain.setup(ss_ally)
+	arena.add_child(bot_brain)
+	var c1: InputCmd = bot_brain.step_ai(0.016, [], ss_dict, [])
+	var c2: InputCmd = bot_brain.step_ai(0.016, [], ss_dict, [])
+	var bot_reuse_ok: bool = (c1 == bot_brain._reusable_cmd and c2 == bot_brain._reusable_cmd)
+
+	var parked_jeep := VehicleJeep.new()
+	parked_jeep.id = 12610
+	arena.add_child(parked_jeep)
+	parked_jeep.linear_velocity = Vector3.ZERO
+	parked_jeep.angular_velocity = Vector3.ZERO
+	parked_jeep.step_vehicle_server(0.016, ss_dict, {})
+	var jeep_can_sleep_ok: bool = parked_jeep.can_sleep
+	var parked_plane := VehiclePlane.new()
+	parked_plane.id = 12611
+	arena.add_child(parked_plane)
+	parked_plane.linear_velocity = Vector3.ZERO
+	parked_plane.angular_velocity = Vector3.ZERO
+	parked_plane.step_vehicle_server(0.016, ss_dict, {})
+	var plane_can_sleep_ok: bool = parked_plane.can_sleep
+
+	_assert(
+		water_ok and cel_ok and sky_ok and proj_ok and cam_far_ok
+		and terrain_ok and tree_batches_ok and env_ok and fountain_ok and prop_shared_ok
+		and ss_cache_ok and vfx_pool_ok and vfx_clear_ok and prewarm_has_label3d
+		and minimap_cache_ok and lc_reuse_ok and si_reuse_ok and bot_reuse_ok
+		and jeep_can_sleep_ok and plane_can_sleep_ok,
+		"Phase 12B.3: Perf Overhaul (w=%s cel=%s sky=%s proj=%s far=%s ter=%d bat=%d/%d env=%s fnt=%s prp=%s ss=%s vp=%s vc=%s pw=%s mm=%s lc=%s si=%s bot=%s slp=%s/%s)" % [
+			str(water_ok), str(cel_ok), str(sky_ok), str(proj_ok), str(cam_far_ok),
+			terrain_verts, batched_instances, collider_trees, str(env_ok), str(fountain_ok), str(prop_shared_ok),
+			str(ss_cache_ok), str(vfx_pool_ok), str(vfx_clear_ok), str(prewarm_has_label3d),
+			str(minimap_cache_ok), str(lc_reuse_ok), str(si_reuse_ok), str(bot_reuse_ok),
+			str(jeep_can_sleep_ok), str(plane_can_sleep_ok)
 		]
 	)
 

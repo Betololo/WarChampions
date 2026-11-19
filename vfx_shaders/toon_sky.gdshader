@@ -34,12 +34,12 @@ float gnoise(vec2 p) {
 	);
 }
 
-// 4-octave Fractional Brownian Motion for layered billowing cumulus
+// 2-octave Fractional Brownian Motion for layered billowing cumulus (fast ALU)
 float fbm(vec2 p) {
 	float val = 0.0;
-	float amp = 0.5;
+	float amp = 0.62;
 	mat2 rot = mat2(vec2(0.80, 0.60), vec2(-0.60, 0.80));
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 2; i++) {
 		val += amp * (gnoise(p) * 0.5 + 0.5);
 		p = rot * p * 2.05 + vec2(1.7, 9.2);
 		amp *= 0.5;

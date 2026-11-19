@@ -32,6 +32,8 @@ var _switching_mode: bool = false
 var _loading_in_progress: bool = false
 var _skip_loading_screen: bool = false
 var _cached_combat_ctx: Dictionary = {}
+var _live_vehicles_cache: Array[VehicleBase] = []
+var _live_vehicles_dirty: bool = true
 
 var _loading_layer: CanvasLayer
 var _loading_stage_lbl: Label
@@ -39,6 +41,11 @@ var _loading_bar: ProgressBar
 
 
 func _ready() -> void:
+	if OS.has_feature("web"):
+		if get_viewport() != null:
+			get_viewport().msaa_3d = Viewport.MSAA_DISABLED
+		RenderingServer.directional_shadow_atlas_set_size(1024, true)
+		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_HARD)
 	heroes_root = Node3D.new()
 	heroes_root.name = "Heroes"
 	add_child(heroes_root)
@@ -110,6 +117,8 @@ func _check_cli_autostart() -> void:
 
 func _exit_tree() -> void:
 	SoundSynthesizer.stop_whistle_theme()
+	StatusEffectContainer.clear_sixth_sense_cache()
+	StatusEffectsVFX.clear_pools(projectiles_root)
 
 
 func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
@@ -155,6 +164,7 @@ func _load_map() -> void:
 	map_instance.build_map(conquest_manager, vehicles_root, _cached_combat_ctx)
 	for v in map_instance.spawned_vehicles:
 		vehicles_by_id[v.id] = v
+	_live_vehicles_dirty = true
 	_refresh_combat_context()
 	_sync_vehicle_authority_freeze()
 
@@ -433,6 +443,8 @@ func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
 	_prev_interact_state.clear()
+	StatusEffectContainer.clear_sixth_sense_cache()
+	StatusEffectsVFX.clear_pools(projectiles_root)
 	StatusEffectsVFX.clear_all_build_previews()
 	if hud != null:
 		hud.set_local_hero(null)
@@ -494,6 +506,7 @@ func _clear_match_entities() -> void:
 				(ch as DestructibleProp).reset_prop()
 	for vb in reset_vehs:
 		vb._respawn_vehicle()
+	_live_vehicles_dirty = true
 	_sync_vehicle_authority_freeze()
 	_refresh_combat_context()
 	_sync_hud_vehicles()
@@ -551,6 +564,7 @@ func _physics_process(delta: float) -> void:
 		if _cached_combat_ctx.is_empty():
 			_refresh_combat_context()
 		var combat_ctx: Dictionary = _cached_combat_ctx
+		StatusEffectContainer.refresh_sixth_sense_cache(heroes_by_id)
 
 		# 1. Step AI Bots
 		var cps: Array[CapturePoint] = map_instance.capture_points if map_instance != null else []
@@ -619,26 +633,27 @@ func _physics_process(delta: float) -> void:
 		conquest_manager.step_server(delta, heroes_by_id)
 		lag_compensator.record_frame(NetworkManager.server_tick, heroes_by_id)
 
-		# 4. Broadcast WorldSnapshot @ 30 Hz
+		# 4. Broadcast WorldSnapshot @ 30 Hz (only when remote ENet peers are connected)
 		if NetworkManager.should_broadcast_snapshot():
-			var hero_snaps: Array[Dictionary] = []
-			for id_key in heroes_by_id.keys():
-				hero_snaps.append((heroes_by_id[id_key] as HeroCharacter).build_snapshot_dict())
-			var veh_snaps: Array[Dictionary] = []
-			for v in veh_arr:
-				veh_snaps.append(v.build_snapshot_dict())
-			var flag_snaps: Array[Dictionary] = conquest_manager.build_flags_snapshot()
-			var srv_time_ms: int = int(roundf(float(NetworkManager.server_tick) * NetworkManager.TICK_INTERVAL_MS))
-			var snap_bytes: PackedByteArray = NetSerializer.pack_world_snapshot(
-				NetworkManager.server_tick,
-				srv_time_ms,
-				conquest_manager.royal_tickets,
-				conquest_manager.national_tickets,
-				hero_snaps,
-				veh_snaps,
-				flag_snaps
-			)
-			NetworkManager.broadcast_world_snapshot(snap_bytes)
+			if NetworkManager.is_active_enet_connected() and not multiplayer.get_peers().is_empty():
+				var hero_snaps: Array[Dictionary] = []
+				for id_key in heroes_by_id.keys():
+					hero_snaps.append((heroes_by_id[id_key] as HeroCharacter).build_snapshot_dict())
+				var veh_snaps: Array[Dictionary] = []
+				for v in veh_arr:
+					veh_snaps.append(v.build_snapshot_dict())
+				var flag_snaps: Array[Dictionary] = conquest_manager.build_flags_snapshot()
+				var srv_time_ms: int = int(roundf(float(NetworkManager.server_tick) * NetworkManager.TICK_INTERVAL_MS))
+				var snap_bytes: PackedByteArray = NetSerializer.pack_world_snapshot(
+					NetworkManager.server_tick,
+					srv_time_ms,
+					conquest_manager.royal_tickets,
+					conquest_manager.national_tickets,
+					hero_snaps,
+					veh_snaps,
+					flag_snaps
+				)
+				NetworkManager.broadcast_world_snapshot(snap_bytes)
 
 
 func _handle_vehicle_interact(hero: HeroCharacter) -> void:
@@ -845,6 +860,7 @@ func _process(delta: float) -> void:
 		var cam := get_viewport().get_camera_3d() if get_viewport() != null else null
 		if cam != null:
 			SoundSynthesizer.set_listener_position(cam.global_position)
+	StatusEffectContainer.refresh_sixth_sense_cache(heroes_by_id)
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key]
 		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id, heroes_by_id)
@@ -940,6 +956,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 					if dead_v.has_method("disable_shield_collision"):
 						dead_v.disable_shield_collision()
 					dead_v.queue_free()
+				_live_vehicles_dirty = true
 				_refresh_combat_context()
 				_sync_hud_vehicles()
 			var attacker_id: int = int(payload.get("attacker_id", -1))
@@ -1149,6 +1166,7 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 				found_turret = vis_turret
 			if found_turret != null:
 				vehicles_by_id[et_vid] = found_turret
+				_live_vehicles_dirty = true
 				_refresh_combat_context()
 				_sync_vehicle_authority_freeze()
 				_sync_hud_vehicles()
@@ -1180,12 +1198,19 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 
 
 func _get_live_vehicles_array() -> Array[VehicleBase]:
-	var arr: Array[VehicleBase] = []
-	for v_val in vehicles_by_id.values():
-		var vb := v_val as VehicleBase
-		if vb != null and is_instance_valid(vb) and not vb.is_queued_for_deletion():
-			arr.append(vb)
-	return arr
+	if not _live_vehicles_dirty:
+		for vb in _live_vehicles_cache:
+			if vb == null or not is_instance_valid(vb) or vb.is_queued_for_deletion():
+				_live_vehicles_dirty = true
+				break
+	if _live_vehicles_dirty:
+		_live_vehicles_cache.clear()
+		for v_val in vehicles_by_id.values():
+			var vb := v_val as VehicleBase
+			if vb != null and is_instance_valid(vb) and not vb.is_queued_for_deletion():
+				_live_vehicles_cache.append(vb)
+		_live_vehicles_dirty = false
+	return _live_vehicles_cache
 
 
 func _sync_hud_vehicles() -> void:

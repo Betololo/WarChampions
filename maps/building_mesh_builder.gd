@@ -824,6 +824,7 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 	splash_mesh.material = droplet_mat
 
 	# 4 parabolic animated water stream jets from upper bowl rim arcing cleanly into lower pool
+	var is_web_build: bool = OS.has_feature("web")
 	for i in range(4):
 		var ang: float = float(i) * PI * 0.5 + PI * 0.25
 		var rim_pos := Vector3(cos(ang) * 1.95, 3.20, sin(ang) * 1.95)
@@ -831,9 +832,11 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 		var jet := GPUParticles3D.new()
 		jet.name = "FountainJet_%d" % i
 		jet.position = rim_pos
-		jet.amount = 36
+		jet.amount = 16
 		jet.lifetime = 0.85
 		jet.explosiveness = 0.0
+		jet.visibility_range_end = 110.0
+		jet.emitting = not is_web_build
 		jet.draw_pass_1 = droplet_mesh
 		var proc := ParticleProcessMaterial.new()
 		proc.direction = jet_dir
@@ -848,9 +851,11 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 	var plume := GPUParticles3D.new()
 	plume.name = "FountainPlume"
 	plume.position = Vector3(0.0, 4.48, 0.0)
-	plume.amount = 36
+	plume.amount = 16
 	plume.lifetime = 0.80
 	plume.explosiveness = 0.0
+	plume.visibility_range_end = 110.0
+	plume.emitting = not is_web_build
 	plume.draw_pass_1 = droplet_mesh
 	var plume_proc := ParticleProcessMaterial.new()
 	plume_proc.direction = Vector3(0.0, 1.0, 0.0)
@@ -868,9 +873,11 @@ static func build_central_fountain(parent: Node3D, origin: Vector3) -> Node3D:
 		var splash := GPUParticles3D.new()
 		splash.name = "FountainSplash_%d" % i
 		splash.position = splash_pos
-		splash.amount = 28
+		splash.amount = 12
 		splash.lifetime = 0.45
 		splash.explosiveness = 0.0
+		splash.visibility_range_end = 110.0
+		splash.emitting = not is_web_build
 		splash.draw_pass_1 = splash_mesh
 		var splash_proc := ParticleProcessMaterial.new()
 		splash_proc.direction = Vector3(0.0, 1.0, 0.0)
@@ -1268,7 +1275,7 @@ static func get_cached_tree_mesh(variant: int) -> ArrayMesh:
 	return result_mesh
 
 
-static func build_layered_tree(parent: Node3D, origin: Vector3, variant: int = 0, scale_f: float = 1.0) -> Node3D:
+static func build_layered_tree(parent: Node3D, origin: Vector3, variant: int = 0, scale_f: float = 1.0, with_visual_mesh: bool = true) -> Node3D:
 	var v_kind: int = posmod(variant, 3)
 	var tree := StaticBody3D.new()
 	tree.name = "LayeredTree_%d" % v_kind
@@ -1285,12 +1292,13 @@ static func build_layered_tree(parent: Node3D, origin: Vector3, variant: int = 0
 	else:
 		_add_cyl_col(tree, 0.42, 6.2, Vector3(0.35, 3.1, 0.0))
 
-	var mi := MeshInstance3D.new()
-	mi.name = "TreeMesh"
-	mi.mesh = get_cached_tree_mesh(v_kind)
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	mi.visibility_range_end = 520.0
-	tree.add_child(mi)
+	if with_visual_mesh:
+		var mi := MeshInstance3D.new()
+		mi.name = "TreeMesh"
+		mi.mesh = get_cached_tree_mesh(v_kind)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 520.0
+		tree.add_child(mi)
 
 	parent.add_child(tree, true)
 	return tree
