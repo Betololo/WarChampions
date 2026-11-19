@@ -59,12 +59,10 @@ func _on_owner_respawned() -> void:
 
 
 func _finish_or_abort_last_stand() -> void:
-	var was_active: bool = last_stand_timer > 0.0
 	last_stand_timer = 0.0
 	_last_stand_swing_accum = 0.0
 	_last_stand_swings_done = 0
-	if was_active:
-		_sync_hero_buffs()
+	_sync_hero_buffs()
 	if owner_hero != null and not owner_hero.is_defeated and owner_hero._last_stand_pending_death:
 		owner_hero._complete_defeat(owner_hero._last_stand_killer_id, owner_hero._last_stand_killer_explosive)
 
