@@ -474,6 +474,7 @@ func cancel_mortar_mode() -> void:
 
 
 func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
+	var was_aiming: bool = _mortar_pending_hero_aim
 	if owner_hero == null or owner_hero.is_defeated:
 		_mortar_pending_hero_aim = false
 		_mortar_stow_timer = 0.0
@@ -483,6 +484,10 @@ func fire_mortar_at(target_xz: Vector3, context: Dictionary) -> bool:
 		_mortar_pending_hero_aim = false
 		_mortar_stow_timer = 0.0
 		_sync_hero_buffs()
+		if was_aiming:
+			NetworkManager.broadcast_game_event("mortar_cancel", {
+				"hero_id": owner_hero.entity_id,
+			})
 		return false
 	_mortar_pending_hero_aim = false
 	_mortar_stow_timer = MORTAR_STOW_WINDOW

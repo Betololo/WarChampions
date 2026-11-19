@@ -1396,6 +1396,7 @@ static func _spawn_mortar_trail_puff(parent: Node, pos: Vector3) -> void:
 	puff.position = pos
 	puff.scale = Vector3(0.32, 0.32, 0.32)
 	puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	puff.add_to_group("mortar_rings")
 	parent.add_child(puff)
 	var tw: Tween = puff.create_tween() if puff.is_inside_tree() else null
 	if tw != null:

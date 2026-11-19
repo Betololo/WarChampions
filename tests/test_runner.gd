@@ -9705,18 +9705,60 @@ func _test_phase12b_task2_mortar_anim_and_aoe() -> void:
 	eng._animate_character(0.05)
 	var defeat_cleared_ok: bool = not eng.is_engineer_mortar_deployed() and not sm.blocks_weapon_fire()
 
+	# 6. AIMED_HOLD grace exit (>0.35s without buff), post-STOW stale-buff latch, & cooldown cancel broadcast
+	cli_eng.active_buffs = 0
+	cli_eng.trigger_mortar_visual("deploy")
+	cli_eng._animate_character(0.40) # enters AIMED_HOLD with buff_active=false
+	var in_hold_no_buff: bool = cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.AIMED_HOLD
+	cli_eng._animate_character(0.40) # exceeds 0.35s grace -> transitions to STOW
+	var grace_entered_stow: bool = cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.STOW
+	cli_eng._animate_character(0.50) # finishes STOW -> NONE
+	var grace_exit_ok: bool = in_hold_no_buff and grace_entered_stow and cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.NONE and cli_eng._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+
+	# Stale BUFF_ENGINEER_MORTAR after FIRE->STOW->NONE must not snap back to -97 or AIMED_HOLD
+	cli_eng.active_buffs = NetSerializer.BUFF_ENGINEER_MORTAR
+	cli_eng.trigger_mortar_visual("fire")
+	cli_eng._animate_character(0.35) # FIRE -> STOW
+	cli_eng._animate_character(0.50) # STOW -> NONE while stale BUFF_ENGINEER_MORTAR still set
+	cli_eng._animate_character(0.10) # additional tick with stale buff
+	var stow_latch_ok: bool = (
+		cli_eng._mortar_stow_completed
+		and cli_eng._mortar_anim_phase == HeroCharacter.MortarAnimPhase.NONE
+		and not cli_eng.is_engineer_mortar_deployed()
+		and cli_eng._shown_weapon_kind == WeaponBase.WeaponKind.DUAL_REVOLVERS
+	)
+	cli_eng.active_buffs = 0
+	cli_eng._animate_character(0.05) # clears latch once buff drops
+	stow_latch_ok = stow_latch_ok and not cli_eng._mortar_stow_completed
+
+	# Cooldown early-out in fire_mortar_at while aiming broadcasts mortar_cancel
+	eng.respawn_at(Vector3.ZERO, 0.0)
+	sk_cmd.buttons = 0
+	sm.step_server(0.05, sk_cmd, ctx)
+	sm.skill_cooldowns[3] = 0.0
+	sk_cmd.buttons = InputCmd.BTN_SKILL_4
+	sm.step_server(0.05, sk_cmd, ctx)
+	sk_cmd.buttons = 0
+	sm.step_server(0.05, sk_cmd, ctx)
+	var pre_cancel_cnt: int = cancel_events.size()
+	sm.skill_cooldowns[3] = 5.0
+	var cd_rejected: bool = not sm.fire_mortar_at(Vector3(20.0, 0.0, 0.0), ctx)
+	var cd_cancel_ok: bool = cd_rejected and cancel_events.size() == pre_cancel_cnt + 1 and (eng.active_buffs & NetSerializer.BUFF_ENGINEER_MORTAR) == 0
+
 	NetworkManager.game_event_received.disconnect(ev_cb)
 
 	_assert(
 		mortar_buff_ok and prop_equipped_ok and hold_phase_ok and move_jump_locked_ok and srv_fire_locked_ok
 		and fire_phase_ok and strike_ev_ok and stow_phase_ok and weapon_restored_ok and aoe_dmg_ok
 		and cli_deploy_ok and cli_hold_ok and cli_stow_ok and cli_restored_ok
-		and shell_mid_ok and shell_freed_ok and cancel_ev_ok and cancel_restored_ok and defeat_cleared_ok,
-		"Phase 12B.2: Mortar 3D Prop, Deploy/Fire/Stow Anim, Shell Arc & 13m AoE (mb=%s pr=%s hd=%s mv=%s sf=%s fp=%s se=%s st=%s wr=%s aoe=%s cd=%s ch=%s cs=%s cr=%s sm=%s sf2=%s ce=%s cr2=%s df=%s)" % [
+		and shell_mid_ok and shell_freed_ok and cancel_ev_ok and cancel_restored_ok and defeat_cleared_ok
+		and grace_exit_ok and stow_latch_ok and cd_cancel_ok,
+		"Phase 12B.2: Mortar 3D Prop, Deploy/Fire/Stow Anim, Shell Arc & 13m AoE (mb=%s pr=%s hd=%s mv=%s sf=%s fp=%s se=%s st=%s wr=%s aoe=%s cd=%s ch=%s cs=%s cr=%s sm=%s sf2=%s ce=%s cr2=%s df=%s ge=%s sl=%s cc=%s)" % [
 			str(mortar_buff_ok), str(prop_equipped_ok), str(hold_phase_ok), str(move_jump_locked_ok), str(srv_fire_locked_ok),
 			str(fire_phase_ok), str(strike_ev_ok), str(stow_phase_ok), str(weapon_restored_ok), str(aoe_dmg_ok),
 			str(cli_deploy_ok), str(cli_hold_ok), str(cli_stow_ok), str(cli_restored_ok),
-			str(shell_mid_ok), str(shell_freed_ok), str(cancel_ev_ok), str(cancel_restored_ok), str(defeat_cleared_ok)
+			str(shell_mid_ok), str(shell_freed_ok), str(cancel_ev_ok), str(cancel_restored_ok), str(defeat_cleared_ok),
+			str(grace_exit_ok), str(stow_latch_ok), str(cd_cancel_ok)
 		]
 	)
 
