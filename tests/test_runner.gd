@@ -61,6 +61,7 @@ func _ready() -> void:
 	await _test_phase12b_task3_perf_optimizations()
 	await _test_phase13_task1_lod_demolisher_gunner()
 	await _test_phase13_task2_mounted_overheat()
+	await _test_phase13_task3_marksman_core()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -10572,6 +10573,338 @@ func _test_phase13_task2_mounted_overheat() -> void:
 	)
 
 	NetworkManager.game_event_received.disconnect(shot_cb)
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+
+
+func _test_phase13_task3_marksman_core() -> void:
+	print("--- Phase 13 Task 3: Marksman Class, AR1/AR2, Shotgun/Pistol & 5 Skills ---")
+	var arena := Node3D.new()
+	add_child(arena)
+
+	# 1. NetworkManager CLASS_MARKSMAN = 5 & NetSerializer buff bits + sprint_energy roundtrip
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_MARKSMAN, 0, 2)
+	var mk_slot0_clamped: int = NetworkManager.get_slot_archetype(NetworkManager.CLASS_MARKSMAN, 0)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_MARKSMAN, 1, 2)
+	NetworkManager.set_slot_archetype(NetworkManager.CLASS_MARKSMAN, 2, 1)
+	var mk_slot1_arch: int = NetworkManager.get_slot_archetype(NetworkManager.CLASS_MARKSMAN, 1)
+	var mk_slot2_arch: int = NetworkManager.get_slot_archetype(NetworkManager.CLASS_MARKSMAN, 2)
+	var auth_bytes: PackedByteArray = NetSerializer.pack_authoritative_state(
+		321,
+		Vector3(1.0, 2.0, 3.0),
+		Vector3(4.0, 0.0, -2.0),
+		NetSerializer.SNAP_GROUNDED,
+		100,
+		0,
+		-1,
+		-1,
+		0,
+		NetSerializer.BUFF_MARKSMAN_SPRINT | NetSerializer.BUFF_MARKSMAN_UAV | NetSerializer.BUFF_MARKSMAN_LAST_STAND,
+		0,
+		0,
+		42
+	)
+	var auth_dec: Dictionary = NetSerializer.unpack_authoritative_state(auth_bytes)
+	var legacy_44: PackedByteArray = auth_bytes.slice(0, 44)
+	var legacy_dec: Dictionary = NetSerializer.unpack_authoritative_state(legacy_44)
+	_assert(
+		NetworkManager.CLASS_MARKSMAN == 5
+		and NetSerializer.INPUT_CMD_BYTES == 15
+		and mk_slot0_clamped == 1
+		and mk_slot1_arch == 2
+		and mk_slot2_arch == 1
+		and int(auth_dec.get("sprint_energy", -1)) == 42
+		and int(legacy_dec.get("sprint_energy", -1)) == 100
+		and (int(auth_dec.get("buffs", 0)) & NetSerializer.BUFF_MARKSMAN_LAST_STAND) != 0,
+		"Phase 13.3a: CLASS_MARKSMAN=5, slot rules, INPUT_CMD_BYTES==15 & sprint_energy AuthState roundtrip"
+	)
+
+	# 2. ClassMarksman stats, AR1 (30/5s/25/8-shot bloom), AR2 (30/8s/14/8-shot low bloom), Shotgun/Pistol
+	var mk1 := HeroCharacter.new()
+	mk1.setup_identity(13301, "Marksman1", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN, 0, true, false, {0: 0, 1: 1, 2: 2})
+	arena.add_child(mk1)
+
+	var mk2 := HeroCharacter.new()
+	mk2.setup_identity(13302, "Marksman2", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_MARKSMAN, 1, false, false, {0: 1})
+	arena.add_child(mk2)
+
+	await get_tree().physics_frame
+
+	var ar1: HitscanWeapon = mk1.weapons[0] as HitscanWeapon
+	var sg_mk: HitscanWeapon = mk1.weapons[1] as HitscanWeapon
+	var p_mk: HitscanWeapon = mk1.weapons[2] as HitscanWeapon
+	var ar2: HitscanWeapon = mk2.weapons[0] as HitscanWeapon
+
+	var stats_ok: bool = (
+		mk1.max_hp == 100
+		and mk1.hp == 100
+		and is_equal_approx(mk1.base_move_speed, 6.3)
+		and is_equal_approx(mk1.capsule_radius, 0.42)
+		and mk1.weapons.size() == 3
+		and ar1.weapon_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE
+		and ar1.mag_size == 30 and is_equal_approx(ar1.fire_interval, 0.20)
+		and is_equal_approx(ar1.damage_max, 25.0) and is_equal_approx(ar1.damage_min, 20.0)
+		and sg_mk.weapon_kind == WeaponBase.WeaponKind.SHOTGUN and sg_mk.archetype == 1
+		and p_mk.weapon_kind == WeaponBase.WeaponKind.PISTOL and p_mk.archetype == 2
+		and ar2.weapon_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE and ar2.archetype == 1
+		and ar2.mag_size == 30 and is_equal_approx(ar2.fire_interval, 0.125)
+		and is_equal_approx(ar2.damage_max, 14.0) and is_equal_approx(ar2.damage_min, 12.0)
+		and ar2.spread_rad < ar1.spread_rad
+		and SkillCatalog.get_class_skills(NetworkManager.CLASS_MARKSMAN).size() == 5
+	)
+
+	# 8-shot continuous bloom test for BOTH AR1 & AR2 + shot_vfx archetype payload
+	var ar2_shot_events: Array[Dictionary] = []
+	var shot_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "shot_vfx" and int(payload.get("shooter_id", -1)) == mk2.entity_id:
+			ar2_shot_events.append(payload)
+	NetworkManager.game_event_received.connect(shot_cb)
+
+	var fire_cmd := InputCmd.new()
+	fire_cmd.buttons = InputCmd.BTN_FIRE
+	var idle_cmd := InputCmd.new()
+
+	var ar1_shot1_ok: bool = ar1.try_consume_fire(fire_cmd) and ar1.is_first_shot() and is_equal_approx(ar1.get_current_spread_mult(), 0.0)
+	var ar1_mid_lt1: bool = true
+	for s in range(2, 8):
+		ar1.step_timers(ar1.fire_interval, fire_cmd)
+		ar1.try_consume_fire(fire_cmd)
+		if s < 8 and ar1._burst_bloom >= 0.999:
+			ar1_mid_lt1 = false
+	ar1.step_timers(ar1.fire_interval, fire_cmd)
+	ar1.try_consume_fire(fire_cmd)
+	var ar1_shot8_max: bool = (not ar1.is_first_shot()) and ar1._burst_bloom >= 0.999 and is_equal_approx(ar1.get_current_spread_mult(), 1.0)
+	ar1.step_timers(0.90, idle_cmd)
+	var ar1_reset_ok: bool = ar1.is_first_shot() and is_equal_approx(ar1._burst_bloom, 0.0)
+
+	var ar2_shot1_ok: bool = ar2.try_consume_fire(fire_cmd) and ar2.is_first_shot() and is_equal_approx(ar2.get_current_spread_mult(), 0.0)
+	for _s in range(2, 9):
+		ar2.step_timers(ar2.fire_interval, fire_cmd)
+		ar2.try_consume_fire(fire_cmd)
+	var ar2_shot8_max: bool = (not ar2.is_first_shot()) and ar2._burst_bloom >= 0.999 and is_equal_approx(ar2.get_current_spread_mult(), 1.0)
+	ar2.fire_server(fire_cmd, {"heroes_by_id": {13301: mk1, 13302: mk2}})
+	var ar2_shot_vfx_arch: int = int(ar2_shot_events[0].get("archetype", -1)) if not ar2_shot_events.is_empty() else -1
+
+	_assert(
+		stats_ok and ar1_shot1_ok and ar1_mid_lt1 and ar1_shot8_max and ar1_reset_ok and ar2_shot1_ok and ar2_shot8_max and ar2_shot_vfx_arch == 1,
+		"Phase 13.3b: Marksman 100HP/6.3m/s, AR1(30/5s/25/8-shot bloom), AR2(30/8s/14/arch=1), Shotgun+Pistol"
+	)
+
+	# 3. Skill 0: Sprint hold +60% speed & drain, release stops immediately & recharges, 0->10 re-engage gate
+	var mk_sm: MarksmanSkills = mk1.skill_manager as MarksmanSkills
+	var sprint_cmd := InputCmd.new()
+	sprint_cmd.buttons = InputCmd.BTN_SKILL_1
+	mk_sm.step_server(0.5, sprint_cmd, {"heroes_by_id": {13301: mk1}})
+	var sp_hold_ok: bool = (
+		mk_sm.is_sprinting
+		and is_equal_approx(mk1.speed_multiplier, 1.6)
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0
+		and absf(mk_sm.sprint_energy - 87.5) < 0.1
+	)
+	mk_sm.step_server(0.5, idle_cmd, {"heroes_by_id": {13301: mk1}})
+	var sp_rel_ok: bool = (
+		not mk_sm.is_sprinting
+		and is_equal_approx(mk1.speed_multiplier, 1.0)
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) == 0
+		and absf(mk_sm.sprint_energy - 97.5) < 0.1
+	)
+	# Immediate re-press before hitting 0 works with zero CD lockout
+	mk_sm.step_server(0.2, sprint_cmd, {"heroes_by_id": {13301: mk1}})
+	var sp_repress_ok: bool = mk_sm.is_sprinting and is_equal_approx(mk1.speed_multiplier, 1.6)
+	# Drain completely to 0 -> stops & refuses until >= 10.0
+	for _d in range(8):
+		mk_sm.step_server(0.5, sprint_cmd, {"heroes_by_id": {13301: mk1}})
+	var sp_empty_stop: bool = not mk_sm.is_sprinting and mk_sm.sprint_energy < 10.0
+	mk_sm.step_server(0.25, idle_cmd, {"heroes_by_id": {13301: mk1}}) # +5.0 energy (< 10)
+	mk_sm.step_server(0.05, sprint_cmd, {"heroes_by_id": {13301: mk1}})
+	var sp_gate_hold: bool = not mk_sm.is_sprinting
+	for _r in range(3):
+		mk_sm.step_server(0.25, idle_cmd, {"heroes_by_id": {13301: mk1}}) # now >= 10
+	mk_sm.step_server(0.05, sprint_cmd, {"heroes_by_id": {13301: mk1}})
+	var sp_gate_clear: bool = mk_sm.is_sprinting
+	mk_sm.step_server(0.1, idle_cmd, {"heroes_by_id": {13301: mk1}})
+	_assert(
+		sp_hold_ok and sp_rel_ok and sp_repress_ok and sp_empty_stop and sp_gate_hold and sp_gate_clear,
+		"Phase 13.3c: Sprint hold (+60%% speed, 25/s drain), instant release recharge (20/s), 0->10 re-engage gate"
+	)
+
+	# 4. Skill 1: Flashbang oblique launch + look-angle/distance falloff
+	var e_close_front := HeroCharacter.new()
+	e_close_front.setup_identity(13310, "EnemyCloseFront", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	e_close_front.position = Vector3(0.0, 0.0, -3.0)
+	e_close_front.aim_yaw = PI # looking toward +Z (toward flash at origin)
+	arena.add_child(e_close_front)
+
+	var e_far_side := HeroCharacter.new()
+	e_far_side.setup_identity(13311, "EnemyFarSide", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	e_far_side.position = Vector3(0.0, 0.0, -13.0)
+	e_far_side.aim_yaw = PI * 0.65 # side-glancing
+	arena.add_child(e_far_side)
+
+	var e_away := HeroCharacter.new()
+	e_away.setup_identity(13312, "EnemyAway", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, false)
+	e_away.position = Vector3(0.0, 0.0, -3.5)
+	e_away.aim_yaw = 0.0 # looking away (-Z)
+	arena.add_child(e_away)
+
+	await get_tree().physics_frame
+
+	var blind_events: Array[Dictionary] = []
+	var uav_events: Array[Dictionary] = []
+	var swing_events: Array[Dictionary] = []
+	var mk_ev_cb := func(ev_type: String, payload: Dictionary) -> void:
+		if ev_type == "flashbang_blind":
+			blind_events.append(payload)
+		elif ev_type == "uav_pulse":
+			uav_events.append(payload)
+		elif ev_type == "pickaxe_swing":
+			swing_events.append(payload)
+	NetworkManager.game_event_received.connect(mk_ev_cb)
+
+	var ctx: Dictionary = {
+		"heroes_by_id": {
+			13301: mk1,
+			13310: e_close_front,
+			13311: e_far_side,
+			13312: e_away,
+		},
+		"projectiles_root": arena,
+	}
+	var throw_cmd := InputCmd.new()
+	throw_cmd.aim_yaw = 0.0
+	throw_cmd.aim_pitch = 0.0
+	var fb_spawned: bool = mk_sm.try_activate_skill(1, throw_cmd, ctx)
+	var fb_proj: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.FLASHBANG:
+			fb_proj = ch as ProjectileEntity
+			break
+	var fb_oblique_ok: bool = fb_spawned and fb_proj != null and fb_proj.velocity.y > 0.5 and fb_proj.velocity.z < -5.0
+	if fb_proj != null:
+		fb_proj.global_position = Vector3(0.0, 0.5, 0.0)
+		fb_proj._detonate()
+	var dur_close: float = (e_close_front.status_effects as StatusEffectContainer).blind_timer
+	var dur_far: float = (e_far_side.status_effects as StatusEffectContainer).blind_timer
+	var dur_away: float = (e_away.status_effects as StatusEffectContainer).blind_timer
+	_assert(
+		fb_oblique_ok and dur_close > 2.0 and dur_far > 0.2 and dur_far < dur_close and is_equal_approx(dur_away, 0.0) and blind_events.size() >= 2,
+		"Phase 13.3d: Flashbang oblique throw & distance/angle blind falloff (close=%.2fs, far=%.2fs, away=%.2fs)" % [dur_close, dur_far, dur_away]
+	)
+
+	# 5. Skill 2: UAV 1.0s minimap-only reveal (NO SNAP_SIXTH_SENSE / is_marked)
+	var uav_ok: bool = mk_sm.try_activate_skill(2, idle_cmd, ctx)
+	var uav_active_now: bool = StatusEffectContainer.is_team_uav_active(mk1.team, ctx["heroes_by_id"] as Dictionary)
+	var no_3d_xray: bool = (
+		(mk1.active_flags & NetSerializer.SNAP_SIXTH_SENSE) == 0
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_UAV) != 0
+		and not (e_close_front.status_effects as StatusEffectContainer).is_marked()
+		and (e_close_front.active_flags & NetSerializer.SNAP_MARKED_TARGET) == 0
+		and not StatusEffectContainer.is_enemy_sensed_by_team(e_close_front, mk1.team, ctx["heroes_by_id"] as Dictionary, mk1)
+	)
+	mk_sm.step_server(0.5, idle_cmd, ctx)
+	var uav_mid_active: bool = StatusEffectContainer.is_team_uav_active(mk1.team, ctx["heroes_by_id"] as Dictionary)
+	mk_sm.step_server(0.55, idle_cmd, ctx)
+	var uav_expired: bool = not StatusEffectContainer.is_team_uav_active(mk1.team, ctx["heroes_by_id"] as Dictionary) and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_UAV) == 0
+	_assert(
+		uav_ok and uav_events.size() == 1 and uav_active_now and no_3d_xray and uav_mid_active and uav_expired,
+		"Phase 13.3e: UAV activates 1.0s minimap-only reveal without 3D X-ray/SNAP_SIXTH_SENSE/is_marked"
+	)
+
+	# 6. Skill 3: Granada de Cabo oblique throw + 110 AoE + Gunner 'I Eat Grenades' absorb
+	var sg_spawned: bool = mk_sm.try_activate_skill(3, throw_cmd, ctx)
+	var sg_proj: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.THROWN_STICK_GRENADE:
+			sg_proj = ch as ProjectileEntity
+			break
+	var sg_oblique_ok: bool = sg_spawned and sg_proj != null and sg_proj.velocity.y > 0.5 and sg_proj.velocity.z < -5.0
+	if sg_proj != null:
+		e_close_front.hp = 110
+		sg_proj.global_position = e_close_front.global_position + Vector3(0.0, 0.4, 0.0)
+		sg_proj._detonate()
+	var sg_dmg_ok: bool = e_close_front.is_defeated and e_close_front.hp == 0
+
+	var enemy_gunner := HeroCharacter.new()
+	enemy_gunner.setup_identity(13320, "GunnerAbsorb", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	enemy_gunner.position = Vector3(10.0, 0.0, 0.0)
+	arena.add_child(enemy_gunner)
+	await get_tree().physics_frame
+	enemy_gunner.hp = 50
+	(enemy_gunner.status_effects as StatusEffectContainer).activate_eat_grenades(8.0)
+	ctx["heroes_by_id"][13320] = enemy_gunner
+	mk_sm.skill_cooldowns[3] = 0.0
+	mk_sm.try_activate_skill(3, throw_cmd, ctx)
+	var sg_proj2: ProjectileEntity = null
+	for ch in arena.get_children():
+		if ch is ProjectileEntity and (ch as ProjectileEntity).kind == ProjectileEntity.ProjectileKind.THROWN_STICK_GRENADE:
+			sg_proj2 = ch as ProjectileEntity
+			break
+	if sg_proj2 != null:
+		sg_proj2.global_position = enemy_gunner.global_position + Vector3(0.0, 0.5, 0.0)
+		sg_proj2._detonate()
+	var sg_absorb_ok: bool = enemy_gunner.hp == 50 + int(roundf(110.0 * 0.55))
+	_assert(
+		sg_oblique_ok and sg_dmg_ok and sg_absorb_ok,
+		"Phase 13.3f: Granada de Cabo oblique throw, 110 AoE kill & Gunner 'I Eat Grenades' +61 heal"
+	)
+
+	# 7. Skill 4: Last Stand (3.0s W-locked forward + aim steer + 0.5s x 40 dmg swings + deferred death at 3.0s)
+	var ls_target := HeroCharacter.new()
+	ls_target.setup_identity(13330, "LSTarget", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_GUNNER, 0, false, false)
+	ls_target.position = Vector3(0.0, 0.0, -2.0)
+	arena.add_child(ls_target)
+	await get_tree().physics_frame
+	ctx["heroes_by_id"][13330] = ls_target
+
+	mk1.global_position = Vector3.ZERO
+	mk1.velocity = Vector3.ZERO
+	mk1._knockback_stun_timer = 0.0
+	mk1.aim_yaw = 0.0
+	mk1.hp = 100
+	var ls_activated: bool = mk_sm.try_activate_skill(4, idle_cmd, ctx)
+	mk1._rebuild_held_weapon_mesh()
+	var ls_init_ok: bool = (
+		ls_activated
+		and mk_sm.is_last_stand_active()
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_LAST_STAND) != 0
+		and mk_sm.blocks_weapon_fire()
+		and mk1._shown_weapon_kind == -96
+		and ls_target.hp == 110 # 150 - 40 from swing #1 at 0.0s
+	)
+	# Lethal damage during Last Stand -> hp=0, NOT defeated, keeps running forward when move_dir == ZERO
+	var dealt_lethal: int = mk1.apply_damage_server(200, enemy_gunner.entity_id, false)
+	var pre_z: float = mk1.global_position.z
+	var move_zero_cmd := InputCmd.new()
+	move_zero_cmd.aim_yaw = 0.0
+	move_zero_cmd.move_dir = Vector2.ZERO
+	for _f in range(15):
+		mk1.simulate_movement(move_zero_cmd, 1.0 / 60.0)
+	var forced_fwd_ok: bool = mk1.global_position.z < pre_z - 0.5
+	var survived_at_zero: bool = (dealt_lethal == 100 and mk1.hp == 0 and not mk1.is_defeated)
+
+	# Step 0.5s -> swing #2 deals another 40 dmg (110 -> 70)
+	mk_sm.step_server(0.5, move_zero_cmd, ctx)
+	var swing2_ok: bool = ls_target.hp == 70
+	# Step remaining 2.5s (5 steps of 0.5s) -> swings 3..6 happen, then at exact 3.0s Marksman dies!
+	for _step in range(5):
+		mk_sm.step_server(0.5, move_zero_cmd, ctx)
+	var deferred_death_ok: bool = (
+		not mk_sm.is_last_stand_active()
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_LAST_STAND) == 0
+		and mk1.is_defeated
+		and mk1.hp == 0
+		and mk1.last_killer_id == enemy_gunner.entity_id
+		and swing_events.size() == 6
+	)
+	_assert(
+		ls_init_ok and survived_at_zero and forced_fwd_ok and swing2_ok and deferred_death_ok,
+		"Phase 13.3g: Last Stand (Pickaxe -96, 6x40 swings, W forced forward, survives hp=0 for 3.0s, dies at 3.0s)"
+	)
+
+	NetworkManager.game_event_received.disconnect(shot_cb)
+	NetworkManager.game_event_received.disconnect(mk_ev_cb)
+	StatusEffectContainer.clear_team_uav()
 	arena.queue_free()
 	await _flush_deferred()
 	await get_tree().process_frame

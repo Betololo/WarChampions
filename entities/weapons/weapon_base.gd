@@ -19,6 +19,8 @@ enum WeaponKind {
 	DUAL_REVOLVERS,
 	DUAL_PISTOLS,
 	WELDING_TORCH,
+	ASSAULT_RIFLE,
+	PICKAXE,
 }
 
 signal fired(weapon_kind: int, muzzle_pos: Vector3, hit_pos: Vector3)
@@ -71,6 +73,9 @@ var is_reloading: bool = false
 var _prev_fire_held: bool = false
 var _burst_bloom: float = 0.0
 var _was_first_shot: bool = true
+var bloom_step_override: float = -1.0
+var _bloom_decay_hold: float = 0.0
+var _ar_shot_count: int = 0
 
 
 func configure(p_owner: HeroCharacter, p_kind: int, p_archetype: int) -> void:
@@ -82,6 +87,8 @@ func configure(p_owner: HeroCharacter, p_kind: int, p_archetype: int) -> void:
 	ammo_in_mag = mag_size
 	_burst_bloom = 0.0
 	_was_first_shot = true
+	_bloom_decay_hold = 0.0
+	_ar_shot_count = 0
 
 
 func reset_caber_for_life() -> void:
@@ -94,6 +101,7 @@ func _load_weapon_stats() -> void:
 	is_sniper = false
 	is_explosive_weapon = false
 	pellet_count = 1
+	bloom_step_override = -1.0
 	match weapon_kind:
 		WeaponKind.SMG:
 			weapon_name = "Submachine Gun"
@@ -351,6 +359,52 @@ func _load_weapon_stats() -> void:
 			is_automatic = true
 			bullet_speed_mps = 100.0
 			bullet_gravity_scale = 0.0
+		WeaponKind.ASSAULT_RIFLE:
+			var ar_arch: int = clampi(archetype, 0, 1)
+			base_mag_size = 30
+			is_automatic = true
+			bullet_gravity_scale = 0.0
+			bloom_step_override = 1.0 / 7.0
+			if ar_arch == 1:
+				weapon_name = "Rifle Silenciado"
+				base_damage_max = 14.0
+				base_damage_min = 12.0
+				falloff_start_m = 22.0
+				falloff_end_m = 60.0
+				max_range_m = 175.0
+				base_fire_interval = 0.125
+				reload_duration = 1.60
+				base_spread_rad = 0.020
+				recoil_rad = 0.008
+				bullet_speed_mps = 150.0
+			else:
+				weapon_name = "Rifle de Assalto"
+				base_damage_max = 25.0
+				base_damage_min = 20.0
+				falloff_start_m = 25.0
+				falloff_end_m = 68.0
+				max_range_m = 185.0
+				base_fire_interval = 0.20
+				reload_duration = 1.75
+				base_spread_rad = 0.044
+				recoil_rad = 0.016
+				bullet_speed_mps = 160.0
+		WeaponKind.PICKAXE:
+			weapon_name = "Picareta"
+			base_damage_max = 40.0
+			base_damage_min = 40.0
+			falloff_start_m = 3.1
+			falloff_end_m = 3.1
+			max_range_m = 3.1
+			base_fire_interval = 0.50
+			base_mag_size = 1
+			reload_duration = 0.0
+			base_spread_rad = 0.0
+			recoil_rad = 0.0
+			is_automatic = false
+			is_melee = true
+			bullet_speed_mps = 100.0
+			bullet_gravity_scale = 0.0
 
 
 static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
@@ -384,6 +438,10 @@ static func get_variant_display_name(w_kind: int, p_archetype: int) -> String:
 			return "2 Pistolas"
 		WeaponKind.WELDING_TORCH:
 			return "Maçarico de Solda"
+		WeaponKind.ASSAULT_RIFLE:
+			return ["Rifle de Assalto", "Rifle Silenciado"][clampi(p_archetype, 0, 1)]
+		WeaponKind.PICKAXE:
+			return "Picareta"
 	return "Arma"
 
 
@@ -403,6 +461,8 @@ func _apply_archetype_modifiers() -> void:
 		or weapon_kind == WeaponKind.DUAL_REVOLVERS
 		or weapon_kind == WeaponKind.DUAL_PISTOLS
 		or weapon_kind == WeaponKind.WELDING_TORCH
+		or weapon_kind == WeaponKind.ASSAULT_RIFLE
+		or weapon_kind == WeaponKind.PICKAXE
 	):
 		return
 
@@ -460,7 +520,7 @@ func _get_haste_reload_mult() -> float:
 func _is_fire_blocked_by_tnt_rope() -> bool:
 	if owner_hero == null:
 		return false
-	if (owner_hero.active_buffs & (NetSerializer.BUFF_TNT_ROPE | NetSerializer.BUFF_ENGINEER_BUILD | NetSerializer.BUFF_ENGINEER_MORTAR)) != 0:
+	if (owner_hero.active_buffs & (NetSerializer.BUFF_TNT_ROPE | NetSerializer.BUFF_ENGINEER_BUILD | NetSerializer.BUFF_ENGINEER_MORTAR | NetSerializer.BUFF_MARKSMAN_LAST_STAND)) != 0:
 		return true
 	if owner_hero.status_effects != null and owner_hero.status_effects.has_method("is_tnt_rope_active") and bool(owner_hero.status_effects.is_tnt_rope_active()):
 		return true
@@ -479,11 +539,24 @@ func step_timers(delta: float, cmd: InputCmd) -> void:
 	if cooldown_timer > 0.0:
 		cooldown_timer = maxf(0.0, cooldown_timer - delta * fire_mult)
 
-	# Decay over 0.85s so automatic SMG/MG fire builds continuous bloom (~0.10-0.11 decay vs +0.24/shot)
-	# while slow-cadence Pistol (>=0.24s) and Sniper (1.1s) naturally reset cleanly between shots.
-	_burst_bloom = maxf(0.0, _burst_bloom - delta / 0.85)
-	if _burst_bloom <= 0.05:
-		_was_first_shot = true
+	if weapon_kind == WeaponKind.ASSAULT_RIFLE:
+		var decay_dt: float = delta * fire_mult
+		if _bloom_decay_hold > 0.0:
+			var hold_used: float = minf(_bloom_decay_hold, decay_dt)
+			_bloom_decay_hold -= hold_used
+			decay_dt -= hold_used
+		if decay_dt > 0.0:
+			_burst_bloom = maxf(0.0, _burst_bloom - decay_dt / 0.45)
+			if _burst_bloom <= 0.001:
+				_burst_bloom = 0.0
+				_was_first_shot = true
+				_ar_shot_count = 0
+	else:
+		# Decay over 0.85s so automatic SMG/MG fire builds continuous bloom (~0.10-0.11 decay vs +0.24/shot)
+		# while slow-cadence Pistol (>=0.24s) and Sniper (1.1s) naturally reset cleanly between shots.
+		_burst_bloom = maxf(0.0, _burst_bloom - delta / 0.85)
+		if _burst_bloom <= 0.05:
+			_was_first_shot = true
 
 	if is_reloading:
 		reload_timer -= delta * reload_mult
@@ -502,6 +575,8 @@ func start_reload() -> void:
 	reload_timer = reload_duration
 	_burst_bloom = 0.0
 	_was_first_shot = true
+	_bloom_decay_hold = 0.0
+	_ar_shot_count = 0
 	ammo_changed.emit(ammo_in_mag, mag_size, true)
 
 
@@ -520,9 +595,21 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 		start_reload()
 		return false
 
-	_was_first_shot = (_burst_bloom <= 0.05)
-	var bloom_step: float = 0.24 if is_automatic else 0.25
-	_burst_bloom = minf(1.0, _burst_bloom + bloom_step)
+	if weapon_kind == WeaponKind.ASSAULT_RIFLE:
+		_bloom_decay_hold = maxf(fire_interval * 1.45, 0.26)
+		if _ar_shot_count <= 0:
+			_was_first_shot = true
+			_ar_shot_count = 1
+			_burst_bloom = 0.0
+		else:
+			_was_first_shot = false
+			_ar_shot_count += 1
+			var ar_step: float = bloom_step_override if bloom_step_override > 0.0 else (1.0 / 7.0)
+			_burst_bloom = minf(1.0, _burst_bloom + ar_step)
+	else:
+		_was_first_shot = (_burst_bloom <= 0.05)
+		var bloom_step: float = bloom_step_override if bloom_step_override > 0.0 else (0.24 if is_automatic else 0.25)
+		_burst_bloom = minf(1.0, _burst_bloom + bloom_step)
 
 	cooldown_timer = fire_interval
 	if not is_melee:
@@ -534,6 +621,8 @@ func try_consume_fire(cmd: InputCmd) -> bool:
 
 
 func is_first_shot() -> bool:
+	if weapon_kind == WeaponKind.ASSAULT_RIFLE:
+		return _was_first_shot or _ar_shot_count <= 1
 	return _was_first_shot or _burst_bloom <= 0.05
 
 
@@ -546,6 +635,8 @@ func get_current_spread_mult(is_aiming: bool = false, has_frenzy_fire: bool = fa
 	# First shot (and fully settled tap-fire) is always 100% pinpoint across all non-pellet weapons
 	if is_first_shot():
 		return 0.0
+	if weapon_kind == WeaponKind.ASSAULT_RIFLE:
+		return lerpf(0.15, 1.0, _burst_bloom) * crouch_mult
 	# Automatic weapons (SMG / MG) ramp up genuine bullet spread during sustained fire
 	if is_automatic:
 		var auto_mult: float = lerpf(0.70, 1.85, _burst_bloom)
@@ -563,6 +654,8 @@ func reset_weapon() -> void:
 	cooldown_timer = 0.0
 	_burst_bloom = 0.0
 	_was_first_shot = true
+	_bloom_decay_hold = 0.0
+	_ar_shot_count = 0
 	_prev_fire_held = false
 	caber_spent = false
 	ammo_changed.emit(ammo_in_mag, mag_size, false)

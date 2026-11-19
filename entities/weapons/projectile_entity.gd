@@ -14,6 +14,8 @@ enum ProjectileKind {
 	CANNON_BALL,
 	TRAPPER_STICKY,
 	TNT_ROPE_CLUSTER,
+	FLASHBANG,
+	THROWN_STICK_GRENADE,
 }
 
 var kind: int = ProjectileKind.BAZOOKA_ROCKET
@@ -203,6 +205,22 @@ func setup(p_kind: int, p_owner_id: int, p_team: int, p_pos: Vector3, p_vel: Vec
 			knockback_force = 23.0
 			lifetime = 1.8
 			explode_on_impact = true
+		ProjectileKind.FLASHBANG:
+			gravity_scale = 0.55
+			splash_radius = 18.0
+			base_damage = 0.0
+			knockback_force = 0.0
+			lifetime = 1.25
+			bounce_restitution = 0.42
+			explode_on_impact = false
+		ProjectileKind.THROWN_STICK_GRENADE:
+			gravity_scale = 0.85
+			splash_radius = 6.5
+			base_damage = 110.0
+			knockback_force = 20.0
+			lifetime = 1.8
+			bounce_restitution = 0.25
+			explode_on_impact = true
 
 
 func _ready() -> void:
@@ -348,6 +366,31 @@ func _build_visual() -> void:
 			var strap := BoxMesh.new()
 			strap.size = Vector3(0.44, 0.07, 0.38)
 			_add_visual_part(strap, Vector3.ZERO, Vector3.ZERO, Color(0.18, 0.18, 0.20))
+		ProjectileKind.FLASHBANG:
+			var fb_body := CylinderMesh.new()
+			fb_body.top_radius = 0.09
+			fb_body.bottom_radius = 0.09
+			fb_body.height = 0.26
+			_add_visual_part(fb_body, Vector3.ZERO, Vector3.ZERO, Color(0.28, 0.34, 0.26))
+			var fb_band := CylinderMesh.new()
+			fb_band.top_radius = 0.095
+			fb_band.bottom_radius = 0.095
+			fb_band.height = 0.055
+			_add_visual_part(fb_band, Vector3(0.0, 0.03, 0.0), Vector3.ZERO, Color(0.92, 0.94, 0.98))
+			var fb_spoon := BoxMesh.new()
+			fb_spoon.size = Vector3(0.04, 0.18, 0.05)
+			_add_visual_part(fb_spoon, Vector3(0.0, 0.06, -0.09), Vector3.ZERO, Color(0.68, 0.70, 0.74))
+		ProjectileKind.THROWN_STICK_GRENADE:
+			var sg_handle := CylinderMesh.new()
+			sg_handle.top_radius = 0.045
+			sg_handle.bottom_radius = 0.04
+			sg_handle.height = 0.30
+			_add_visual_part(sg_handle, Vector3(0.0, -0.08, 0.0), Vector3.ZERO, Color(0.46, 0.30, 0.16))
+			var sg_head := CylinderMesh.new()
+			sg_head.top_radius = 0.105
+			sg_head.bottom_radius = 0.105
+			sg_head.height = 0.20
+			_add_visual_part(sg_head, Vector3(0.0, 0.14, 0.0), Vector3.ZERO, Color(0.24, 0.26, 0.24))
 
 
 func _align_mesh_to_velocity() -> void:
@@ -601,11 +644,11 @@ func _physics_process(delta: float) -> void:
 						_detonate()
 					return
 				else:
-					# Bounce / roll (Grenades, Keg)
-					if kind == ProjectileKind.BOUNCE_GRENADE:
+					# Bounce / roll (Grenades, Keg, Flashbang)
+					if kind == ProjectileKind.BOUNCE_GRENADE or kind == ProjectileKind.FLASHBANG:
 						if not _bounce_fuse_started and not (collider is HeroCharacter):
 							_bounce_fuse_started = true
-							lifetime = minf(lifetime, 1.0)
+							lifetime = minf(lifetime, 1.0 if kind == ProjectileKind.BOUNCE_GRENADE else 0.55)
 						global_position = hit_pos + hit_normal * 0.06
 						velocity = velocity.bounce(hit_normal) * bounce_restitution
 						if hit_normal.y >= 0.45:
@@ -619,8 +662,8 @@ func _physics_process(delta: float) -> void:
 					return
 
 	global_position = next_pos
-	if kind == ProjectileKind.EXPLOSIVE_KEG and _mesh != null:
-		_mesh.rotation.x += 8.0 * delta
+	if (kind == ProjectileKind.EXPLOSIVE_KEG or kind == ProjectileKind.THROWN_STICK_GRENADE or kind == ProjectileKind.FLASHBANG) and _mesh != null:
+		_mesh.rotation.x += (10.0 if kind == ProjectileKind.THROWN_STICK_GRENADE else 8.0) * delta
 	else:
 		_align_mesh_to_velocity()
 
@@ -661,6 +704,11 @@ func _detonate() -> void:
 		NetworkManager.broadcast_game_event("proj_destroy", {"uid": proj_uid})
 
 	var heroes_by_id: Dictionary = _context.get("heroes_by_id", {})
+
+	if kind == ProjectileKind.FLASHBANG:
+		_detonate_flashbang(heroes_by_id)
+		return
+
 	var eaten_by_gunner: bool = false
 	var is_demolisher_grenade: bool = (
 		kind == ProjectileKind.BOUNCE_GRENADE
@@ -704,7 +752,7 @@ func _detonate() -> void:
 			if h.team == owner_team and h.entity_id != owner_id:
 				continue
 			var dist: float = h.global_position.distance_to(global_position)
-			if is_demolisher_grenade or kind == ProjectileKind.FIREBALL:
+			if is_demolisher_grenade or kind == ProjectileKind.FIREBALL or kind == ProjectileKind.THROWN_STICK_GRENADE:
 				var chest_dist: float = (h.global_position + Vector3(0.0, 1.05, 0.0)).distance_to(global_position)
 				dist = minf(dist, chest_dist)
 			var eff_dist: float = maxf(0.0, dist - h.capsule_radius)
@@ -817,6 +865,63 @@ func _detonate() -> void:
 	NetworkManager.broadcast_game_event("explosion_vfx", {
 		"pos": global_position,
 		"radius": splash_radius,
+		"kind": kind,
+	})
+	queue_free()
+
+
+func _detonate_flashbang(heroes_by_id: Dictionary) -> void:
+	var flash_pos: Vector3 = global_position if is_inside_tree() else position
+	var flash_eye_pt: Vector3 = flash_pos + Vector3(0.0, 0.25, 0.0)
+	var space: PhysicsDirectSpaceState3D = get_world_3d().direct_space_state if (is_inside_tree() and get_world_3d() != null) else null
+
+	for id_key in heroes_by_id.keys():
+		var h_var: Variant = heroes_by_id[id_key]
+		if not is_instance_valid(h_var) or not (h_var is HeroCharacter):
+			continue
+		var h: HeroCharacter = h_var as HeroCharacter
+		if h.is_defeated:
+			continue
+		if h.current_vehicle_id >= 0 and h.current_seat_enclosed:
+			continue
+		var h_pos: Vector3 = h.global_position if h.is_inside_tree() else h.position
+		var eye_pt: Vector3 = h_pos + Vector3(0.0, 1.45, 0.0)
+		var to_flash: Vector3 = flash_eye_pt - eye_pt
+		var dist: float = to_flash.length()
+		if dist > splash_radius:
+			continue
+
+		if space != null and dist > 0.35:
+			var los_q := PhysicsRayQueryParameters3D.create(flash_pos + Vector3(0.0, 0.35, 0.0), eye_pt, 1)
+			los_q.exclude = [h.get_rid()]
+			if not space.intersect_ray(los_q).is_empty():
+				continue
+
+		var look_fwd: Vector3 = (-Basis.from_euler(Vector3(h.aim_pitch, h.aim_yaw, 0.0)).z).normalized()
+		var to_flash_dir: Vector3 = to_flash.normalized() if dist > 0.001 else look_fwd
+		var look_dot: float = look_fwd.dot(to_flash_dir)
+		if look_dot <= 0.05:
+			continue
+
+		var dist_factor: float = clampf(1.0 - (dist / splash_radius) * 0.72, 0.20, 1.0)
+		var angle_factor: float = clampf((look_dot - 0.05) / 0.95, 0.22, 1.0)
+		var intensity: float = clampf(dist_factor * (0.45 + 0.55 * angle_factor), 0.15, 1.0)
+		if h.entity_id == owner_id:
+			intensity *= 0.45
+		var blind_dur: float = clampf(3.2 * intensity, 0.35, 3.2)
+
+		if h.status_effects != null and h.status_effects.has_method("apply_blind"):
+			h.status_effects.apply_blind(blind_dur, intensity)
+		NetworkManager.broadcast_game_event("flashbang_blind", {
+			"hero_id": h.entity_id,
+			"duration": blind_dur,
+			"intensity": intensity,
+			"attacker_id": owner_id,
+		})
+
+	NetworkManager.broadcast_game_event("explosion_vfx", {
+		"pos": flash_pos,
+		"radius": 3.5,
 		"kind": kind,
 	})
 	queue_free()

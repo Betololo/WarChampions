@@ -17,6 +17,7 @@ const CLASS_GUNNER: int = 1
 const CLASS_COMMANDO: int = 2
 const CLASS_DEMOLISHER: int = 3
 const CLASS_ENGINEER: int = 4
+const CLASS_MARKSMAN: int = 5
 
 const ARCHETYPE_BALANCED: int = 0
 const ARCHETYPE_FAST_SHORT: int = 1
@@ -271,42 +272,47 @@ func get_view_interp_tick_delta() -> int:
 	return clampi(interp_ticks, 0, 65535)
 
 
+static func _clamp_class_slot_archetype(cid: int, slot_idx: int, arch: int) -> int:
+	if (cid == CLASS_DEMOLISHER or cid == CLASS_ENGINEER) and slot_idx == 2:
+		return 0
+	if cid == CLASS_MARKSMAN and slot_idx == 0:
+		return clampi(arch, 0, 1)
+	return clampi(arch, 0, 2)
+
+
 func set_slot_archetype(p_class_id: int, slot_idx: int, arch: int) -> void:
-	var cid: int = clampi(p_class_id, 0, 4)
-	var single_slot2: bool = (cid == CLASS_DEMOLISHER or cid == CLASS_ENGINEER) and slot_idx == 2
-	var clean_arch: int = 0 if single_slot2 else clampi(arch, 0, 2)
+	var cid: int = clampi(p_class_id, 0, 5)
+	var clean_arch: int = _clamp_class_slot_archetype(cid, slot_idx, arch)
 	local_slot_archetypes["%d_%d" % [cid, maxi(0, slot_idx)]] = clean_arch
 
 
 func get_slot_archetype(p_class_id: int, slot_idx: int, fallback: int = ARCHETYPE_BALANCED) -> int:
-	var cid: int = clampi(p_class_id, 0, 4)
-	if (cid == CLASS_DEMOLISHER or cid == CLASS_ENGINEER) and slot_idx == 2:
-		return 0
-	return int(local_slot_archetypes.get("%d_%d" % [cid, maxi(0, slot_idx)], fallback))
+	var cid: int = clampi(p_class_id, 0, 5)
+	var raw_val: int = int(local_slot_archetypes.get("%d_%d" % [cid, maxi(0, slot_idx)], fallback))
+	return _clamp_class_slot_archetype(cid, slot_idx, raw_val)
 
 
 func build_class_slot_archetypes(p_class_id: int, fallback: int = ARCHETYPE_BALANCED) -> Dictionary:
 	var out: Dictionary = {}
-	var cid: int = clampi(p_class_id, 0, 4)
+	var cid: int = clampi(p_class_id, 0, 5)
 	for slot in range(4):
 		if (cid == CLASS_DEMOLISHER or cid == CLASS_ENGINEER) and slot == 2:
 			out[slot] = 0
 			continue
 		var key: String = "%d_%d" % [cid, slot]
 		if local_slot_archetypes.has(key):
-			out[slot] = int(local_slot_archetypes[key])
+			out[slot] = _clamp_class_slot_archetype(cid, slot, int(local_slot_archetypes[key]))
 		elif fallback != ARCHETYPE_BALANCED:
-			out[slot] = fallback
+			out[slot] = _clamp_class_slot_archetype(cid, slot, fallback)
 	return out
 
 
 func set_local_loadout(player_name: String, team: int, class_id: int, archetype: int, slot_archetypes: Dictionary = {}) -> void:
-	var cid: int = clampi(class_id, 0, 4)
+	var cid: int = clampi(class_id, 0, 5)
 	var merged_slots: Dictionary = build_class_slot_archetypes(cid, archetype)
 	for k in slot_archetypes.keys():
 		var s_idx: int = int(k)
-		var single_slot2: bool = (cid == CLASS_DEMOLISHER or cid == CLASS_ENGINEER) and s_idx == 2
-		merged_slots[s_idx] = 0 if single_slot2 else clampi(int(slot_archetypes[k]), 0, 2)
+		merged_slots[s_idx] = _clamp_class_slot_archetype(cid, s_idx, int(slot_archetypes[k]))
 	local_profile = {
 		"name": player_name,
 		"team": clampi(team, 0, 1),
@@ -563,15 +569,17 @@ func _rpc_server_game_event(event_type: String, payload: Dictionary) -> void:
 
 
 func _register_player_internal(peer_id: int, profile: Dictionary) -> void:
+	var cid: int = clampi(int(profile.get("class_id", CLASS_SOLDIER)), 0, 5)
 	var raw_slots: Variant = profile.get("slot_archetypes", {})
 	var clean_slots: Dictionary = {}
 	if raw_slots is Dictionary:
 		for k in (raw_slots as Dictionary).keys():
-			clean_slots[int(k)] = clampi(int((raw_slots as Dictionary)[k]), 0, 2)
+			var s_idx: int = int(k)
+			clean_slots[s_idx] = _clamp_class_slot_archetype(cid, s_idx, int((raw_slots as Dictionary)[k]))
 	var info: Dictionary = {
 		"name": str(profile.get("name", "Player_%d" % peer_id)),
 		"team": clampi(int(profile.get("team", TEAM_ROYAL)), 0, 1),
-		"class_id": clampi(int(profile.get("class_id", CLASS_SOLDIER)), 0, 4),
+		"class_id": cid,
 		"archetype": clampi(int(profile.get("archetype", ARCHETYPE_BALANCED)), 0, 2),
 		"slot_archetypes": clean_slots,
 		"is_bot": false,

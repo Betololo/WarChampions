@@ -119,6 +119,7 @@ func _check_cli_autostart() -> void:
 func _exit_tree() -> void:
 	SoundSynthesizer.stop_whistle_theme()
 	StatusEffectContainer.clear_sixth_sense_cache()
+	StatusEffectContainer.clear_team_uav()
 	StatusEffectsVFX.clear_pools(projectiles_root)
 
 
@@ -446,6 +447,7 @@ func _clear_match_entities() -> void:
 	_prev_interact_state.clear()
 	_last_flame_sfx_msec.clear()
 	StatusEffectContainer.clear_sixth_sense_cache()
+	StatusEffectContainer.clear_team_uav()
 	StatusEffectsVFX.clear_pools(projectiles_root)
 	StatusEffectsVFX.clear_all_build_previews()
 	StatusEffectsVFX.clear_all_flame_streams()
@@ -625,7 +627,8 @@ func _physics_process(delta: float) -> void:
 					hero.knockback_seq,
 					hero.active_buffs,
 					hero.selected_weapon_slot,
-					hero.forced_weapon_seq
+					hero.forced_weapon_seq,
+					hero.get_sprint_energy_byte()
 				)
 				NetworkManager.send_authoritative_state(hero.entity_id, packed)
 
@@ -657,6 +660,8 @@ func _physics_process(delta: float) -> void:
 					flag_snaps
 				)
 				NetworkManager.broadcast_world_snapshot(snap_bytes)
+	else:
+		StatusEffectContainer.step_team_uav(delta)
 
 
 func _handle_vehicle_interact(hero: HeroCharacter) -> void:
@@ -1217,6 +1222,27 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			StatusEffectsVFX.stop_build_preview(ebs_hero_id)
 			if ebs_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("stop_build_progress"):
 				hud.stop_build_progress()
+		"uav_pulse":
+			var uav_team: int = int(payload.get("team", -1))
+			var uav_dur: float = float(payload.get("duration", 1.0))
+			if uav_team >= 0:
+				StatusEffectContainer.trigger_team_uav(uav_team, uav_dur)
+			var uav_hero_id: int = int(payload.get("hero_id", -1))
+			var uav_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			SoundSynthesizer.play_sfx("radar", 0.0, uav_hero_id == NetworkManager.local_peer_id, uav_pos)
+		"flashbang_blind":
+			var fb_hero_id: int = int(payload.get("hero_id", -1))
+			var fb_dur: float = float(payload.get("duration", 0.0))
+			var fb_int: float = float(payload.get("intensity", 0.0))
+			if fb_hero_id == NetworkManager.local_peer_id and hud != null and hud.has_method("trigger_flashbang_blind"):
+				hud.trigger_flashbang_blind(fb_dur, fb_int)
+		"pickaxe_swing":
+			var pk_hero_id: int = int(payload.get("hero_id", -1))
+			var pk_hero: HeroCharacter = heroes_by_id.get(pk_hero_id, null)
+			if pk_hero != null and is_instance_valid(pk_hero):
+				pk_hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.PICKAXE, false)
+			var pk_pos: Vector3 = payload.get("pos", Vector3.ZERO)
+			SoundSynthesizer.play_sfx("knife", 0.0, pk_hero_id == NetworkManager.local_peer_id, pk_pos)
 
 
 func _get_live_vehicles_array() -> Array[VehicleBase]:

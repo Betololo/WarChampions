@@ -42,6 +42,9 @@ const BUFF_TNT_ROPE: int = 1 << 15
 const BUFF_ENGINEER_INVULN: int = 1 << 16
 const BUFF_ENGINEER_BUILD: int = 1 << 17
 const BUFF_ENGINEER_MORTAR: int = 1 << 18
+const BUFF_MARKSMAN_SPRINT: int = 1 << 19
+const BUFF_MARKSMAN_UAV: int = 1 << 20
+const BUFF_MARKSMAN_LAST_STAND: int = 1 << 21
 
 
 static func _pack_angle_u16(radians: float) -> int:
@@ -116,7 +119,8 @@ static func pack_authoritative_state(
 	knockback_seq: int,
 	buffs: int = 0,
 	weapon_slot: int = -1,
-	forced_weapon_seq: int = 0
+	forced_weapon_seq: int = 0,
+	sprint_energy: int = 100
 ) -> PackedByteArray:
 	var buf := StreamPeerBuffer.new()
 	buf.put_u32(ack_tick)
@@ -135,6 +139,7 @@ static func pack_authoritative_state(
 	buf.put_u32(buffs & 0xFFFFFFFF)
 	buf.put_8(clampi(weapon_slot, -1, 127))
 	buf.put_u8(forced_weapon_seq & 0xFF)
+	buf.put_u8(clampi(sprint_energy, 0, 100))
 	return buf.data_array
 
 
@@ -154,10 +159,13 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 	var buffs: int = 0
 	var weapon_slot: int = -1
 	var forced_weapon_seq: int = 0
+	var sprint_energy: int = 100
 	if bytes.size() >= 44:
 		buffs = buf.get_u32()
 		weapon_slot = buf.get_8()
 		forced_weapon_seq = buf.get_u8()
+		if bytes.size() >= 45:
+			sprint_energy = clampi(buf.get_u8(), 0, 100)
 	elif bytes.size() >= 40:
 		buffs = buf.get_u16()
 		if bytes.size() >= 41:
@@ -177,6 +185,7 @@ static func unpack_authoritative_state(bytes: PackedByteArray) -> Dictionary:
 		"buffs": buffs,
 		"weapon_slot": weapon_slot,
 		"forced_weapon_seq": forced_weapon_seq,
+		"sprint_energy": sprint_energy,
 	}
 
 

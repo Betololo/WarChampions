@@ -296,6 +296,7 @@ func fire_server(cmd: InputCmd, context: Dictionary) -> void:
 	NetworkManager.broadcast_game_event("shot_vfx", {
 		"shooter_id": owner_hero.entity_id,
 		"weapon_kind": weapon_kind,
+		"archetype": archetype,
 		"hand": used_hand,
 		"origin": origin,
 		"dir": base_dir,

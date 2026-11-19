@@ -12,6 +12,7 @@ signal respawned()
 signal emote_triggered(emote_idx: int)
 
 const ClassEngineerScript := preload("res://entities/characters/classes/class_engineer.gd")
+const ClassMarksmanScript := preload("res://entities/characters/classes/class_marksman.gd")
 
 const GRAVITY: float = 22.0
 const JUMP_VELOCITY: float = 8.8
@@ -77,6 +78,9 @@ var active_flags: int = 0
 var active_buffs: int = 0
 var last_killer_id: int = -1
 var defeat_explosive: bool = false
+var _last_stand_pending_death: bool = false
+var _last_stand_killer_id: int = -1
+var _last_stand_killer_explosive: bool = false
 var _max_air_fall_speed: float = 0.0
 var _was_airborne: bool = false
 var _airborne_start_y: float = 0.0
@@ -263,6 +267,8 @@ func configure_class_loadout() -> void:
 			ClassDemolisher.configure_hero(self)
 		NetworkManager.CLASS_ENGINEER:
 			ClassEngineerScript.configure_hero(self)
+		NetworkManager.CLASS_MARKSMAN:
+			ClassMarksmanScript.configure_hero(self)
 
 	for w in weapons:
 		if w is WeaponBase:
@@ -297,6 +303,10 @@ func _apply_class_defaults() -> void:
 			max_hp = 125
 			base_move_speed = 6.3
 			capsule_radius = 0.43
+		NetworkManager.CLASS_MARKSMAN:
+			max_hp = 100
+			base_move_speed = 6.3
+			capsule_radius = 0.42
 	hp = max_hp
 	if _capsule_shape != null:
 		_capsule_shape.radius = capsule_radius
@@ -796,6 +806,30 @@ func _is_tnt_rope_held() -> bool:
 	return false
 
 
+func is_last_stand_active() -> bool:
+	if is_defeated or current_vehicle_id >= 0:
+		return false
+	if (active_buffs & NetSerializer.BUFF_MARKSMAN_LAST_STAND) != 0:
+		return true
+	if skill_manager != null and skill_manager.has_method("is_last_stand_active"):
+		return bool(skill_manager.is_last_stand_active())
+	return false
+
+
+func _is_pickaxe_held() -> bool:
+	return is_last_stand_active()
+
+
+func get_sprint_energy() -> float:
+	if skill_manager != null and "sprint_energy" in skill_manager:
+		return float(skill_manager.get("sprint_energy"))
+	return 100.0
+
+
+func get_sprint_energy_byte() -> int:
+	return clampi(int(roundf(get_sprint_energy())), 0, 100)
+
+
 func _rebuild_held_weapon_mesh() -> void:
 	if _held_weapon_root == null:
 		return
@@ -868,6 +902,25 @@ func _rebuild_held_weapon_mesh() -> void:
 		return
 
 	_tnt_rope_bundle = null
+	if _is_pickaxe_held():
+		if _shown_weapon_kind == -96:
+			return
+		_shown_weapon_kind = -96
+		_shown_weapon_arch = 0
+		_cycle_anim_timer = 0.0
+		_cycle_anim_duration = 0.0
+		_weapon_cycle_progress = 0.0
+		_weapon_reload_progress = 0.0
+		_weapon_parts_by_name.clear()
+		var pk_info: Dictionary = HeroMeshBuilder.populate_weapon_root(_held_weapon_root, WeaponBase.WeaponKind.PICKAXE, 0)
+		_weapon_grip_local = pk_info.get("grip", Vector3(0.0, -0.04, 0.0))
+		_weapon_foregrip_local = pk_info.get("foregrip", Vector3.ZERO)
+		_weapon_muzzle_local = pk_info.get("muzzle", Vector3(0.0, 0.25, -0.25))
+		_weapon_two_handed = false
+		if _held_weapon_root_l != null:
+			_held_weapon_root_l.visible = false
+		return
+
 	if weapons.is_empty():
 		return
 	var slot: int = clampi(selected_weapon_slot, 0, weapons.size() - 1)
@@ -988,7 +1041,7 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false, ha
 	else:
 		_last_fired_hand = 0
 		_weapon_recoil_anim = 1.0
-	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG) else 0.55
+	_fire_pose_timer = 0.45 if (w_kind == WeaponBase.WeaponKind.SMG or w_kind == WeaponBase.WeaponKind.MG or w_kind == WeaponBase.WeaponKind.ASSAULT_RIFLE) else 0.55
 	var active_interval: float = 0.0
 	match w_kind:
 		WeaponBase.WeaponKind.SHOTGUN:
@@ -1001,6 +1054,8 @@ func trigger_weapon_fire_visual(w_kind: int, apply_camera_kick: bool = false, ha
 			active_interval = 0.50
 		WeaponBase.WeaponKind.STICK_GRENADE:
 			active_interval = 0.48
+		WeaponBase.WeaponKind.PICKAXE:
+			active_interval = 0.46
 	_cycle_anim_duration = active_interval
 	_cycle_anim_timer = active_interval
 	if apply_camera_kick and hero_camera != null:
@@ -1712,6 +1767,13 @@ func trigger_skill_visual(p_class_id: int, slot_idx: int) -> void:
 					2: style = "weapon_charge"; dur = 0.55
 					3: style = "mark_point"; dur = 0.65
 					4: style = "flex_shield"; dur = 0.55
+			NetworkManager.CLASS_MARKSMAN:
+				match slot_idx:
+					0: style = "sprint_boost"; dur = 0.50
+					1: style = "throw_overhead"; dur = 0.50
+					2: style = "radar_temple"; dur = 0.65
+					3: style = "throw_overhead"; dur = 0.55
+					4: style = "flex_shield"; dur = 0.55
 	_skill_anim_style = style
 	last_skill_anim_name = style
 	_skill_anim_duration = dur
@@ -1875,7 +1937,7 @@ func _pose_held_weapon_and_arms(stride: float, fire_blend: float, kick: float, r
 			WeaponBase.WeaponKind.WELDING_TORCH:
 				_held_weapon_root.position = Vector3(0.22, 0.38, -0.26 + kick * 0.02)
 				_held_weapon_root.rotation = Vector3(aim_pitch * 0.72 + 0.06, lerpf(0.18, 0.05, fire_blend), 0.0)
-			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE:
+			WeaponBase.WeaponKind.KNIFE, WeaponBase.WeaponKind.STICK_GRENADE, WeaponBase.WeaponKind.PICKAXE, -96:
 				var swing_phase: float = sin(clampf(1.0 - kick, 0.0, 1.0) * PI) if kick > 0.01 else 0.0
 				if _shown_weapon_kind == WeaponBase.WeaponKind.STICK_GRENADE and _cycle_anim_timer > 0.0 and _cycle_anim_duration > 0.001:
 					swing_phase = maxf(swing_phase, sin(clampf(cycle_p, 0.0, 1.0) * PI))
@@ -2204,6 +2266,9 @@ func _sample_local_input() -> InputCmd:
 		cmd.move_dir = Vector2.ZERO
 		cmd.set_button(InputCmd.BTN_JUMP, false)
 		cmd.set_button(InputCmd.BTN_FIRE, false)
+	elif is_last_stand_active() and current_vehicle_id < 0:
+		cmd.move_dir = Vector2(0.0, -1.0)
+		cmd.set_button(InputCmd.BTN_FIRE, false)
 	return cmd
 
 
@@ -2292,11 +2357,15 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 		floor_snap_length = 0.3
 
 	var eng_locked: bool = (is_engineer_building() or is_engineer_mortar_deployed()) and current_vehicle_id < 0
+	var last_stand_locked: bool = is_last_stand_active() and current_vehicle_id < 0
+	if is_local_player and not is_bot and not NetworkManager.is_active_host_authority():
+		if class_id == NetworkManager.CLASS_MARKSMAN and skill_manager != null and skill_manager.has_method("predict_sprint_client"):
+			skill_manager.predict_sprint_client(cmd, delta)
 	var jump_held: bool = cmd.has_button(InputCmd.BTN_JUMP)
 	var jump_just_pressed: bool = jump_held and not prev_jump_held and not eng_locked
 	prev_jump_held = jump_held
 
-	is_crouching = cmd.has_button(InputCmd.BTN_CROUCH) and not is_parachuting
+	is_crouching = cmd.has_button(InputCmd.BTN_CROUCH) and not is_parachuting and not last_stand_locked
 	_update_capsule_height(is_crouching)
 
 	is_in_water = global_position.y < WATER_LEVEL - 0.55
@@ -2361,7 +2430,7 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 			velocity.y = lerpf(velocity.y, PARACHUTE_MAX_FALL, minf(1.0, 14.0 * delta))
 
 	# Horizontal movement aligned to aim_yaw
-	var move_input: Vector2 = Vector2.ZERO if eng_locked else cmd.move_dir
+	var move_input: Vector2 = Vector2.ZERO if eng_locked else (Vector2(0.0, -1.0) if last_stand_locked else cmd.move_dir)
 	var basis_yaw := Basis(Vector3.UP, aim_yaw)
 	var wish_dir: Vector3 = (basis_yaw * Vector3(move_input.x, 0.0, move_input.y))
 	wish_dir.y = 0.0
@@ -2682,6 +2751,8 @@ func reconcile_with_server(state: Dictionary) -> void:
 		forced_weapon_applied = true
 	hp = int(state.get("hp", hp))
 	shield = int(state.get("shield", shield))
+	if state.has("sprint_energy") and skill_manager != null and skill_manager.has_method("sync_sprint_energy_from_server"):
+		skill_manager.sync_sprint_energy_from_server(int(state["sprint_energy"]))
 	var prev_vid: int = current_vehicle_id
 	current_vehicle_id = int(state.get("vehicle_id", -1))
 	current_seat_index = int(state.get("seat_idx", -1))
@@ -2796,7 +2867,8 @@ func push_remote_snapshot(server_tick: int, server_time_ms: float, snap_dict: Di
 	if _body_collision != null:
 		_body_collision.disabled = (current_vehicle_id >= 0)
 	var was_def: bool = is_defeated
-	var def: bool = (flags & NetSerializer.SNAP_DEFEATED) != 0 or hp <= 0
+	var in_last_stand: bool = (active_buffs & NetSerializer.BUFF_MARKSMAN_LAST_STAND) != 0
+	var def: bool = (flags & NetSerializer.SNAP_DEFEATED) != 0 or (hp <= 0 and not in_last_stand)
 	is_defeated = def
 	if was_def and not def:
 		_reset_stand_rig_pose()
@@ -2859,25 +2931,45 @@ func apply_damage_server(amount: int, attacker_id: int, is_explosive: bool = fal
 	hp -= hp_dealt
 	if hp <= 0:
 		hp = 0
-		is_defeated = true
-		if status_effects != null and status_effects.has_method("deactivate_carried_shield") and status_effects.get("carried_shield_active") == true:
-			status_effects.deactivate_carried_shield(true)
-		active_buffs = 0
-		collision_layer = 0
-		defeat_timer = 5.0
-		_defeat_elapsed = 0.0
-		_airborne_fall_time = 0.0
-		_knockback_stun_timer = 0.0
-		last_killer_id = attacker_id
-		defeat_explosive = is_explosive
-		if is_explosive:
-			velocity += Vector3(randf_range(-4.0, 4.0), 10.5, randf_range(-4.0, 4.0))
-		elif is_on_floor():
-			velocity.x = 0.0
-			velocity.z = 0.0
-		defeated.emit(attacker_id, is_explosive)
+		if is_last_stand_active():
+			if not _last_stand_pending_death:
+				_last_stand_pending_death = true
+				_last_stand_killer_id = attacker_id
+				_last_stand_killer_explosive = is_explosive
+			elif attacker_id >= 0:
+				_last_stand_killer_id = attacker_id
+				_last_stand_killer_explosive = is_explosive
+		else:
+			_complete_defeat(attacker_id, is_explosive)
 	stats_changed.emit()
 	return hp_dealt
+
+
+func _complete_defeat(attacker_id: int, is_explosive: bool = false) -> void:
+	if is_defeated:
+		return
+	hp = 0
+	is_defeated = true
+	_last_stand_pending_death = false
+	_last_stand_killer_id = -1
+	_last_stand_killer_explosive = false
+	if status_effects != null and status_effects.has_method("deactivate_carried_shield") and status_effects.get("carried_shield_active") == true:
+		status_effects.deactivate_carried_shield(true)
+	active_buffs = 0
+	collision_layer = 0
+	defeat_timer = 5.0
+	_defeat_elapsed = 0.0
+	_airborne_fall_time = 0.0
+	_knockback_stun_timer = 0.0
+	last_killer_id = attacker_id
+	defeat_explosive = is_explosive
+	if is_explosive:
+		velocity += Vector3(randf_range(-4.0, 4.0), 10.5, randf_range(-4.0, 4.0))
+	elif is_on_floor():
+		velocity.x = 0.0
+		velocity.z = 0.0
+	defeated.emit(attacker_id, is_explosive)
+	stats_changed.emit()
 
 
 func heal_server(amount: int) -> int:
@@ -2900,6 +2992,8 @@ func reset_weapons_full() -> void:
 			w.cooldown_timer = 0.0
 			w._burst_bloom = 0.0
 			w._was_first_shot = true
+			w._bloom_decay_hold = 0.0
+			w._ar_shot_count = 0
 			w._prev_fire_held = false
 			w.reset_caber_for_life()
 			w.ammo_changed.emit(w.ammo_in_mag, w.mag_size, false)
@@ -2940,6 +3034,9 @@ func respawn_at(spawn_pos: Vector3, spawn_yaw: float) -> void:
 	shield = 0
 	active_buffs = 0
 	is_defeated = false
+	_last_stand_pending_death = false
+	_last_stand_killer_id = -1
+	_last_stand_killer_explosive = false
 	if status_effects != null and status_effects.has_method("clear_all"):
 		status_effects.clear_all()
 	collision_layer = 2

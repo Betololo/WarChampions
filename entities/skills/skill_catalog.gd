@@ -305,6 +305,64 @@ const ENGINEER_SKILLS: Array[Dictionary] = [
 	},
 ]
 
+const MARKSMAN_SKILLS: Array[Dictionary] = [
+	{
+		"icon": "icon_skill_5_0",
+		"name": "Sprint",
+		"category": "Mobilidade / Energia",
+		"cooldown": "Sem CD (Energia 0–100)",
+		"duration": "Enquanto segurar",
+		"area": "Individual",
+		"effect_stats": "+60% Velocidade (1.6x)",
+		"description": "Segure para correr +60% mais rápido consumindo energia; solte para recarregar.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_5_1",
+		"name": "Flashbang",
+		"category": "Tática / Cegueira",
+		"cooldown": "15s",
+		"duration": "Até 3.2s",
+		"area": "Raio 18m (Visão)",
+		"effect_stats": "Cega quem olhar para a luz",
+		"description": "Lança granada atordoante que cega inimigos olhando na direção dela conforme distância e ângulo.",
+		"aoe_radius": 18.0,
+	},
+	{
+		"icon": "icon_skill_5_2",
+		"name": "UAV",
+		"category": "Reconhecimento / Minimapa",
+		"cooldown": "18s",
+		"duration": "1.0s",
+		"area": "Mapa Inteiro (Minimapa)",
+		"effect_stats": "Pulso no Minimapa (1.0s)",
+		"description": "Emite varredura aérea revelando todos os inimigos exclusivamente no minimapa da equipe por 1.0s.",
+		"aoe_radius": 0.0,
+	},
+	{
+		"icon": "icon_skill_5_3",
+		"name": "Granada de Cabo",
+		"category": "Explosivo Arremessado",
+		"cooldown": "14s",
+		"duration": "Pavio 1.8s / Impacto",
+		"area": "Raio 6.5m",
+		"effect_stats": "110 dano explosivo",
+		"description": "Arremessa uma granada de cabo giratória em arco oblíquo que explode no impacto ou após 1.8s.",
+		"aoe_radius": 6.5,
+	},
+	{
+		"icon": "icon_skill_5_4",
+		"name": "Last Stand",
+		"category": "Fúria / Sobrevivência",
+		"cooldown": "22s",
+		"duration": "3.0s",
+		"area": "Cones 3.1m (0.5s)",
+		"effect_stats": "Picareta 40 dano + Imortal 3s",
+		"description": "Avança automaticamente com a Picareta golpeando a cada 0.5s (40 dano) e adia a morte até acabar os 3.0s.",
+		"aoe_radius": 3.1,
+	},
+]
+
 const WIDGETS: Array[Dictionary] = [
 	{
 		"icon": "icon_widget_0",
@@ -366,6 +424,8 @@ static func get_class_skills(class_id: int) -> Array[Dictionary]:
 			src = DEMOLISHER_SKILLS
 		NetworkManager.CLASS_ENGINEER:
 			src = ENGINEER_SKILLS
+		NetworkManager.CLASS_MARKSMAN:
+			src = MARKSMAN_SKILLS
 		_:
 			return []
 	var out: Array[Dictionary] = []
@@ -382,7 +442,7 @@ static func get_widgets() -> Array[Dictionary]:
 
 
 static func get_entry_by_key(icon_key: String) -> Dictionary:
-	for arr in [SOLDIER_SKILLS, GUNNER_SKILLS, COMMANDO_SKILLS, DEMOLISHER_SKILLS, ENGINEER_SKILLS, WIDGETS]:
+	for arr in [SOLDIER_SKILLS, GUNNER_SKILLS, COMMANDO_SKILLS, DEMOLISHER_SKILLS, ENGINEER_SKILLS, MARKSMAN_SKILLS, WIDGETS]:
 		for item in arr:
 			if str(item.get("icon", "")) == icon_key:
 				return item.duplicate()

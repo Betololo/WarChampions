@@ -28,6 +28,9 @@ const BUFF_ICON_TABLE: Array[Array] = [
 	[NetSerializer.BUFF_VEHICLE_BUSTER, "icon_skill_3_4"],
 	[NetSerializer.BUFF_TNT_ROPE, "icon_skill_3_2"],
 	[NetSerializer.BUFF_ENGINEER_INVULN, "icon_skill_4_4"],
+	[NetSerializer.BUFF_MARKSMAN_SPRINT, "icon_skill_5_0"],
+	[NetSerializer.BUFF_MARKSMAN_UAV, "icon_skill_5_2"],
+	[NetSerializer.BUFF_MARKSMAN_LAST_STAND, "icon_skill_5_4"],
 ]
 
 static var _xray_mat: ShaderMaterial = null
@@ -685,7 +688,11 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 
 	# Rate-limited foot dust/wind puffs when speed-boosted (Leg It / Elixir) and sprinting
 	if vis and not hero.is_defeated and hero.current_vehicle_id < 0:
-		var is_boosted: bool = ((hero.active_flags & NetSerializer.SNAP_SPEED_BOOST) != 0) or (hero.speed_multiplier > 1.15)
+		var is_boosted: bool = (
+			((hero.active_flags & NetSerializer.SNAP_SPEED_BOOST) != 0)
+			or ((hero.active_buffs & (NetSerializer.BUFF_MARKSMAN_SPRINT | NetSerializer.BUFF_MARKSMAN_LAST_STAND)) != 0)
+			or (hero.speed_multiplier > 1.15)
+		)
 		if is_boosted:
 			var horiz_sq: float = hero.velocity.x * hero.velocity.x + hero.velocity.z * hero.velocity.z
 			if horiz_sq > 6.25:
@@ -790,7 +797,10 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	elif (hero.active_buffs & NetSerializer.BUFF_TNT_ROPE) != 0:
 		rim_col = Color(1.0, 0.38, 0.14)
 		rim_str = 1.40
-	elif speed_flag == 1:
+	elif (hero.active_buffs & NetSerializer.BUFF_MARKSMAN_LAST_STAND) != 0:
+		rim_col = Color(1.0, 0.25, 0.12)
+		rim_str = 1.95
+	elif (hero.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0 or speed_flag == 1:
 		rim_col = Color(0.72, 1.0, 0.32)
 		rim_str = 1.35
 
@@ -888,6 +898,7 @@ static func _has_continuous_particle_buff(hero: HeroCharacter) -> bool:
 		| NetSerializer.BUFF_VEHICLE_BUSTER
 		| NetSerializer.BUFF_TNT_ROPE
 		| NetSerializer.BUFF_ENGINEER_INVULN
+		| NetSerializer.BUFF_MARKSMAN_LAST_STAND
 	)
 	if (hero.active_buffs & PARTICLE_BUFF_MASK) != 0:
 		return true
@@ -990,6 +1001,8 @@ static func _spawn_active_buff_tick_vfx(parent: Node, hero: HeroCharacter) -> vo
 	if (b & NetSerializer.BUFF_ENGINEER_INVULN) != 0:
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.42, 0.42), 1.05, randf_range(-0.42, 0.42)), Color(1.0, 0.86, 0.28, 0.94), 0.12, 0.55, false)
 		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.36, 0.36), 1.25, randf_range(-0.36, 0.36)), Color(0.32, 0.94, 1.0, 0.92), 0.10, 0.50, false)
+	if (b & NetSerializer.BUFF_MARKSMAN_LAST_STAND) != 0:
+		_spawn_rising_mote(parent, base + Vector3(randf_range(-0.38, 0.38), 1.05, randf_range(-0.38, 0.38)), Color(1.0, 0.28, 0.14, 0.94), 0.12, 0.65, false)
 
 
 static func _spawn_sixth_sense_radar_pulse(parent: Node, origin: Vector3, radius: float) -> void:
@@ -1517,6 +1530,34 @@ static func spawn_skill_vfx(parent: Node, class_id: int, slot_idx: int, world_po
 						var dome := _vfx_part(root, sph, mat_inv, Vector3(0.0, 1.05, 0.0), Vector3(1.4, 2.0, 1.4), Vector3.ZERO, fade_meshes)
 						if tw != null:
 							tw.tween_property(dome, "scale", Vector3(2.4, 2.6, 2.4), dur)
+			NetworkManager.CLASS_MARKSMAN:
+				match slot_idx:
+					0: # Sprint: lime wind streaks
+						dur = 0.48
+						var mat_spr := _get_shared_mat(Color(0.68, 1.0, 0.28, 0.90), true)
+						for i in range(4):
+							var sx: float = (float(i) - 1.5) * 0.32
+							var stk := _vfx_part(root, box, mat_spr, Vector3(sx, 0.24 + (i % 2) * 0.16, 0.22), Vector3(0.06, 0.06, 0.75), Vector3.ZERO, fade_meshes)
+							if tw != null:
+								tw.tween_property(stk, "position:z", 1.65, dur)
+					1, 3: # Flashbang / Thrown Stick Grenade: amber throw arc spark
+						dur = 0.42
+						var mat_th := _get_shared_mat(Color(0.96, 0.94, 0.72, 0.90), true)
+						var sp := _vfx_part(root, sph, mat_th, Vector3(0.22, 1.42, -0.35), Vector3(0.24, 0.24, 0.24), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(sp, "position", Vector3(0.18, 1.72, -1.05), dur)
+					2: # UAV: expanding tactical radar ring overhead
+						dur = 0.75
+						var mat_uav := _get_shared_mat(Color(0.28, 0.92, 1.0, 0.88), true)
+						var uring := _vfx_part(root, torus, mat_uav, Vector3(0.0, 2.2, 0.0), Vector3(0.8, 0.6, 0.8), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(uring, "scale", Vector3(4.2, 0.6, 4.2), dur)
+					_: # Last Stand: crimson-orange battlecry ring
+						dur = 0.60
+						var mat_ls := _get_shared_mat(Color(1.0, 0.28, 0.14, 0.92), true)
+						var lring := _vfx_part(root, torus, mat_ls, Vector3(0.0, 0.15, 0.0), Vector3(1.1, 0.8, 1.1), Vector3.ZERO, fade_meshes)
+						if tw != null:
+							tw.tween_property(lring, "scale", Vector3(3.4, 0.8, 3.4), dur)
 
 	if tw != null:
 		for mi in fade_meshes:

@@ -81,6 +81,13 @@ var vehicle_triple_dmg_timer: float = 0.0
 var tnt_rope_active: bool = false
 var invuln_timer: float = 0.0
 
+var sprint_active: bool = false
+var blind_timer: float = 0.0
+var blind_intensity: float = 0.0
+
+static var _team_uav_timers: Dictionary = {}
+static var _team_uav_last_phys_frame: int = -1
+
 var marked_timer: float = 0.0
 var mark_sweep_timer: float = 0.0
 var mark_sweep_range: float = 120.0
@@ -178,7 +185,13 @@ func _physics_process(delta: float) -> void:
 			slow_timer = 0.0
 			slow_mult = 1.0
 
-	owner_hero.speed_multiplier = speed_boost_mult * slow_mult
+	var sprint_mult: float = 1.6 if sprint_active else 1.0
+	owner_hero.speed_multiplier = maxf(speed_boost_mult, sprint_mult) * slow_mult
+
+	if blind_timer > 0.0:
+		blind_timer = maxf(0.0, blind_timer - delta)
+		if blind_timer <= 0.0:
+			blind_intensity = 0.0
 
 	# Combat buffs
 	burning_bullets_timer = maxf(0.0, burning_bullets_timer - delta)
@@ -845,6 +858,73 @@ func is_invulnerable() -> bool:
 	return owner_hero != null and (owner_hero.active_buffs & NetSerializer.BUFF_ENGINEER_INVULN) != 0
 
 
+func set_sprint_active(active: bool) -> void:
+	sprint_active = active
+	if owner_hero != null:
+		var sprint_mult: float = 1.6 if sprint_active else 1.0
+		owner_hero.speed_multiplier = maxf(speed_boost_mult, sprint_mult) * slow_mult
+		_sync_flags()
+
+
+func is_sprint_active() -> bool:
+	return sprint_active
+
+
+func apply_blind(duration: float, intensity: float) -> void:
+	if duration <= 0.0 or intensity <= 0.0:
+		return
+	var clamped_int: float = clampf(intensity, 0.0, 1.0)
+	if duration >= blind_timer:
+		blind_timer = duration
+		blind_intensity = clamped_int
+	else:
+		blind_intensity = maxf(blind_intensity, clamped_int)
+
+
+func is_blinded() -> bool:
+	return blind_timer > 0.0 and blind_intensity > 0.01
+
+
+func get_blind_intensity() -> float:
+	return blind_intensity if blind_timer > 0.0 else 0.0
+
+
+static func trigger_team_uav(p_team: int, duration: float = 1.0) -> void:
+	_team_uav_timers[p_team] = maxf(float(_team_uav_timers.get(p_team, 0.0)), duration)
+
+
+static func sync_team_uav_timer(p_team: int, remaining: float) -> void:
+	_team_uav_timers[p_team] = maxf(0.0, remaining)
+
+
+static func step_team_uav(delta: float) -> void:
+	var pf: int = Engine.get_physics_frames()
+	if _team_uav_last_phys_frame == pf:
+		return
+	_team_uav_last_phys_frame = pf
+	for t_key in _team_uav_timers.keys():
+		_team_uav_timers[t_key] = maxf(0.0, float(_team_uav_timers[t_key]) - delta)
+
+
+static func clear_team_uav() -> void:
+	_team_uav_timers.clear()
+	_team_uav_last_phys_frame = -1
+
+
+static func is_team_uav_active(viewer_team: int, heroes_by_id: Dictionary = {}) -> bool:
+	if float(_team_uav_timers.get(viewer_team, 0.0)) > 0.0:
+		return true
+	for id_key in heroes_by_id.keys():
+		var ally: HeroCharacter = heroes_by_id[id_key] as HeroCharacter
+		if ally == null or not is_instance_valid(ally) or ally.is_defeated or ally.team != viewer_team:
+			continue
+		if (ally.active_buffs & NetSerializer.BUFF_MARKSMAN_UAV) != 0:
+			return true
+		if ally.skill_manager != null and ally.skill_manager.has_method("is_uav_active") and bool(ally.skill_manager.is_uav_active()):
+			return true
+	return false
+
+
 func clear_all() -> void:
 	burn_timer = 0.0
 	burn_dps = 0.0
@@ -882,6 +962,9 @@ func clear_all() -> void:
 	vehicle_triple_dmg_timer = 0.0
 	tnt_rope_active = false
 	invuln_timer = 0.0
+	sprint_active = false
+	blind_timer = 0.0
+	blind_intensity = 0.0
 	marked_timer = 0.0
 	mark_sweep_timer = 0.0
 	if owner_hero != null:
