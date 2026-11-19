@@ -665,6 +665,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _handle_vehicle_interact(hero: HeroCharacter) -> void:
+	if hero == null or hero.is_defeated:
+		return
 	var held: bool = hero.latest_server_input.has_button(InputCmd.BTN_INTERACT)
 	var was_held: bool = bool(_prev_interact_state.get(hero.entity_id, false))
 	_prev_interact_state[hero.entity_id] = held
@@ -675,6 +677,9 @@ func _handle_vehicle_interact(hero: HeroCharacter) -> void:
 		var cur_v: VehicleBase = vehicles_by_id.get(hero.current_vehicle_id, null)
 		if cur_v != null:
 			cur_v.exit_hero(hero)
+		return
+
+	if hero.hp <= 0 or hero.is_last_stand_active():
 		return
 
 	var best_v: VehicleBase = null

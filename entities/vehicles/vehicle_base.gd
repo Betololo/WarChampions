@@ -309,7 +309,7 @@ func _clear_hero_seat_state(hero: HeroCharacter, eject_pos: Variant = null, ejec
 
 
 func try_enter_hero(hero: HeroCharacter) -> int:
-	if is_destroyed or hero == null or hero.is_defeated or hero.current_vehicle_id >= 0:
+	if is_destroyed or hero == null or hero.is_defeated or hero.hp <= 0 or hero.is_last_stand_active() or hero.current_vehicle_id >= 0:
 		return -1
 	# Prefer driver seat first if empty, then passenger/wing-rider/gunner
 	for s in seats:

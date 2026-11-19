@@ -58,14 +58,25 @@ func _on_owner_respawned() -> void:
 	_sprint_exhausted = false
 
 
-func _reset_active_states() -> void:
-	is_sprinting = false
-	uav_timer = 0.0
+func _finish_or_abort_last_stand() -> void:
+	var was_active: bool = last_stand_timer > 0.0
 	last_stand_timer = 0.0
 	_last_stand_swing_accum = 0.0
 	_last_stand_swings_done = 0
+	if was_active:
+		_sync_hero_buffs()
+	if owner_hero != null and not owner_hero.is_defeated and owner_hero._last_stand_pending_death:
+		owner_hero._complete_defeat(owner_hero._last_stand_killer_id, owner_hero._last_stand_killer_explosive)
+
+
+func _reset_active_states() -> void:
+	is_sprinting = false
+	uav_timer = 0.0
+	if owner_hero != null:
+		StatusEffectContainer.sync_team_uav_timer(owner_hero.team, 0.0)
 	if owner_hero != null and owner_hero.status_effects != null and owner_hero.status_effects.has_method("set_sprint_active"):
 		owner_hero.status_effects.set_sprint_active(false)
+	_finish_or_abort_last_stand()
 	_sync_hero_buffs()
 
 
@@ -104,8 +115,12 @@ func _sync_hero_buffs() -> void:
 
 func sync_sprint_energy_from_server(energy_val: int) -> void:
 	sprint_energy = clampf(float(energy_val), 0.0, 100.0)
-	if owner_hero != null:
-		is_sprinting = (owner_hero.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0
+	var server_sprinting: bool = owner_hero != null and (owner_hero.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) != 0
+	is_sprinting = server_sprinting
+	if sprint_energy <= 0.0 and not server_sprinting:
+		_sprint_exhausted = true
+	elif sprint_energy >= SPRINT_REENGAGE_MIN:
+		_sprint_exhausted = false
 
 
 func predict_sprint_client(cmd: InputCmd, delta: float) -> void:
@@ -134,29 +149,41 @@ func try_activate_skill(slot_idx: int, cmd: InputCmd, context: Dictionary) -> bo
 	return super.try_activate_skill(slot_idx, cmd, context)
 
 
+func _step_uav(delta: float, context: Dictionary) -> void:
+	if uav_timer <= 0.0:
+		return
+	uav_timer = maxf(0.0, uav_timer - delta)
+	if owner_hero != null:
+		var max_team_uav: float = uav_timer
+		var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
+		for hid_key in heroes_by_id.keys():
+			var ally: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
+			if ally != null and ally != owner_hero and not ally.is_defeated and ally.team == owner_hero.team:
+				if ally.skill_manager is MarksmanSkills:
+					max_team_uav = maxf(max_team_uav, (ally.skill_manager as MarksmanSkills).uav_timer)
+		StatusEffectContainer.sync_team_uav_timer(owner_hero.team, max_team_uav)
+	if uav_timer <= 0.0:
+		_sync_hero_buffs()
+
+
+func step_cooldowns_and_widgets_only(delta: float, hero: HeroCharacter = null) -> void:
+	if owner_hero == null and hero != null:
+		owner_hero = hero
+	_step_uav(delta, _last_context)
+	_step_sprint(delta, null, false)
+	if last_stand_timer > 0.0:
+		_finish_or_abort_last_stand()
+	super.step_server(delta, null, _last_context, false)
+
+
 func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_skills: bool = true) -> void:
 	_last_context = context
 
-	if uav_timer > 0.0:
-		uav_timer = maxf(0.0, uav_timer - delta)
-		if owner_hero != null:
-			var max_team_uav: float = uav_timer
-			var heroes_by_id: Dictionary = context.get("heroes_by_id", {})
-			for hid_key in heroes_by_id.keys():
-				var ally: HeroCharacter = heroes_by_id[hid_key] as HeroCharacter
-				if ally != null and ally != owner_hero and not ally.is_defeated and ally.team == owner_hero.team:
-					if ally.skill_manager is MarksmanSkills:
-						max_team_uav = maxf(max_team_uav, (ally.skill_manager as MarksmanSkills).uav_timer)
-			StatusEffectContainer.sync_team_uav_timer(owner_hero.team, max_team_uav)
-		if uav_timer <= 0.0:
-			_sync_hero_buffs()
+	_step_uav(delta, context)
 
 	if last_stand_timer > 0.0:
 		if owner_hero == null or owner_hero.is_defeated or owner_hero.current_vehicle_id >= 0:
-			last_stand_timer = 0.0
-			_last_stand_swing_accum = 0.0
-			_last_stand_swings_done = 0
-			_sync_hero_buffs()
+			_finish_or_abort_last_stand()
 		else:
 			last_stand_timer = maxf(0.0, last_stand_timer - delta)
 			_last_stand_swing_accum += delta
@@ -165,12 +192,7 @@ func step_server(delta: float, cmd: InputCmd, context: Dictionary, allow_class_s
 				_last_stand_swings_done += 1
 				_perform_pickaxe_swing(context)
 			if last_stand_timer <= 0.0:
-				last_stand_timer = 0.0
-				_last_stand_swing_accum = 0.0
-				_last_stand_swings_done = 0
-				_sync_hero_buffs()
-				if owner_hero._last_stand_pending_death:
-					owner_hero._complete_defeat(owner_hero._last_stand_killer_id, owner_hero._last_stand_killer_explosive)
+				_finish_or_abort_last_stand()
 
 	_step_sprint(delta, cmd, allow_class_skills)
 
@@ -338,8 +360,6 @@ func _perform_pickaxe_swing(context: Dictionary) -> void:
 	else:
 		fwd = fwd.normalized()
 
-	if owner_hero.has_method("trigger_weapon_fire_visual"):
-		owner_hero.trigger_weapon_fire_visual(WeaponBase.WeaponKind.PICKAXE, false)
 	NetworkManager.broadcast_game_event("pickaxe_swing", {
 		"hero_id": owner_hero.entity_id,
 		"pos": owner_pos,

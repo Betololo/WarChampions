@@ -10902,6 +10902,68 @@ func _test_phase13_task3_marksman_core() -> void:
 		"Phase 13.3g: Last Stand (Pickaxe -96, 6x40 swings, W forced forward, survives hp=0 for 3.0s, dies at 3.0s)"
 	)
 
+	# 8. Review Fixes: Vehicle boarding blocked during Last Stand (incl. hp==0), seated UAV/Sprint decay, & client Sprint hysteresis
+	var jeep := VehicleJeep.new()
+	jeep.id = 1339
+	jeep.team = NetworkManager.TEAM_ROYAL
+	jeep.position = Vector3(1.0, 0.0, 0.0)
+	arena.add_child(jeep)
+	await get_tree().physics_frame
+
+	# 8a. Block vehicle boarding during Last Stand (both >0 HP and 0 HP)
+	mk1.respawn_at(Vector3.ZERO, 0.0)
+	mk_sm.skill_cooldowns[4] = 0.0
+	mk_sm.try_activate_skill(4, idle_cmd, ctx)
+	var block_veh_alive: bool = (jeep.try_enter_hero(mk1) == -1 and mk1.current_vehicle_id == -1)
+	mk1.apply_damage_server(200, enemy_gunner.entity_id, false)
+	var block_veh_zero_hp: bool = (mk1.hp == 0 and jeep.try_enter_hero(mk1) == -1 and mk1.current_vehicle_id == -1)
+	# Abort Last Stand on vehicle state clears pending death cleanly
+	mk1.current_vehicle_id = jeep.id
+	mk_sm.step_server(0.05, idle_cmd, ctx)
+	var abort_completes_defeat: bool = mk1.is_defeated and mk1.hp == 0
+	mk1.current_vehicle_id = -1
+
+	# 8b. Seated UAV decays to off (1.1s) & Sprint deactivates + recharges energy while seated
+	mk1.respawn_at(Vector3.ZERO, 0.0)
+	mk_sm.skill_cooldowns[2] = 0.0
+	mk_sm.step_server(0.8, sprint_cmd, ctx) # Sprint drains energy to 80.0
+	var pre_seat_energy: float = mk_sm.sprint_energy
+	var uav_started_ok: bool = mk_sm.try_activate_skill(2, idle_cmd, ctx)
+	var seat_idx: int = jeep.try_enter_hero(mk1)
+	mk1.latest_server_input = sprint_cmd # Even if holding BTN_SKILL_1 while seated
+	for _s in range(11):
+		mk_sm.step_cooldowns_and_widgets_only(0.1, mk1)
+	var seated_uav_off: bool = (
+		uav_started_ok
+		and seat_idx >= 0
+		and mk_sm.uav_timer <= 0.0
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_UAV) == 0
+		and not StatusEffectContainer.is_team_uav_active(mk1.team, ctx["heroes_by_id"] as Dictionary)
+	)
+	var seated_sprint_recharged: bool = (
+		not mk_sm.is_sprinting
+		and (mk1.active_buffs & NetSerializer.BUFF_MARKSMAN_SPRINT) == 0
+		and mk_sm.sprint_energy > pre_seat_energy + 15.0
+	)
+	jeep.exit_hero(mk1)
+
+	# 8c. Client Sprint hysteresis via sync_sprint_energy_from_server(0)
+	mk1.active_buffs &= ~NetSerializer.BUFF_MARKSMAN_SPRINT
+	mk_sm.sync_sprint_energy_from_server(0)
+	mk_sm.predict_sprint_client(sprint_cmd, 0.1)
+	var client_held_blocked_at_0: bool = (not mk_sm.is_sprinting and mk_sm._sprint_exhausted)
+	mk_sm.sync_sprint_energy_from_server(5)
+	mk_sm.predict_sprint_client(sprint_cmd, 0.1)
+	var client_held_blocked_below_10: bool = (not mk_sm.is_sprinting and mk_sm._sprint_exhausted)
+	mk_sm.sync_sprint_energy_from_server(12)
+	mk_sm.predict_sprint_client(sprint_cmd, 0.05)
+	var client_reengaged_above_10: bool = (mk_sm.is_sprinting and not mk_sm._sprint_exhausted)
+
+	_assert(
+		block_veh_alive and block_veh_zero_hp and abort_completes_defeat and seated_uav_off and seated_sprint_recharged and client_held_blocked_at_0 and client_held_blocked_below_10 and client_reengaged_above_10,
+		"Phase 13.3h: Last Stand blocks vehicle boarding (hp>0/0), seated UAV+Sprint decay/recharge, & client Sprint hysteresis"
+	)
+
 	NetworkManager.game_event_received.disconnect(shot_cb)
 	NetworkManager.game_event_received.disconnect(mk_ev_cb)
 	StatusEffectContainer.clear_team_uav()
