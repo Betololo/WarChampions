@@ -92,7 +92,7 @@ body {
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
-<style>html,body,#canvas{margin:0;padding:0;width:100%;height:100%;overflow:hidden;touch-action:none;background:#0f1724;}</style><script>(function(){const orig=Element.prototype.requestPointerLock;if(orig){Element.prototype.requestPointerLock=function(opts){try{const p=orig.call(this,Object.assign({unadjustedMovement:true},opts||{}));if(p&&typeof p.catch==='function'){p.catch(()=>orig.call(this));}return p;}catch(e){return orig.call(this);}};}})();</script>
+<script src="coi-serviceworker.js"></script><style>html,body,#canvas{margin:0;padding:0;width:100%;height:100%;overflow:hidden;touch-action:none;background:#0f1724;}</style><script>(function(){const orig=Element.prototype.requestPointerLock;if(orig){Element.prototype.requestPointerLock=function(opts){try{const p=orig.call(this,Object.assign({unadjustedMovement:true},opts||{}));if(p&&typeof p.catch==='function'){p.catch(()=>orig.call(this));}return p;}catch(e){return orig.call(this);}};}})();</script>
 	</head>
 	<body>
 		<canvas id="canvas">
@@ -111,8 +111,8 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":989400,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
-const GODOT_THREADS_ENABLED = false;
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":991480,"index.wasm":38820072},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_THREADS_ENABLED = true;
 const engine = new Engine(GODOT_CONFIG);
 
 (function () {
