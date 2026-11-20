@@ -11609,7 +11609,20 @@ func _test_phase14_web_perf_and_multiplayer_relay() -> void:
 		and menu._online_bots_cb != null and menu._online_bots_cb.button_pressed
 	)
 
+	var bot_slides_ok: bool = (rbot.max_slides == 2 and h1.max_slides == 4)
+	var preset_txt: String = FileAccess.get_file_as_string("res://export_presets.cfg")
+	var coi_exists: bool = FileAccess.file_exists("res://web_static/coi-serviceworker.js")
+	var headers_exists: bool = FileAccess.file_exists("res://web_static/_headers")
+	var mt_web_ok: bool = (
+		bot_slides_ok
+		and coi_exists
+		and headers_exists
+		and preset_txt.contains("variant/thread_support=true")
+		and preset_txt.contains("coi-serviceworker.js")
+	)
+
 	arena.queue_free()
 	await _flush_deferred()
 	await get_tree().process_frame
 	_assert(mqtt_frame_ok and e2e_ok and ip_routing_ok and nm_relay_flag_ok and ui_ok, "Phase 14.3: WebRoomRelay MQTT framing, LOCALTEST E2E flow, IP/Room routing, & Menu UI")
+	_assert(mt_web_ok, "Phase 14.4: Web Multi-Threading (thread_support=true, coi-serviceworker.js, _headers) & 28-hero CPU LOD")

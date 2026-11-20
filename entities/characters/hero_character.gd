@@ -131,6 +131,7 @@ var _cached_vehicle_id: int = -1
 var _cached_class_menu: CanvasLayer = null
 var _cached_hud_ctrl: Node = null
 var _lod_simplify_arm_ik: bool = false
+var _anim_lod_accum: float = 0.0
 var _is_defeat_pose_done: bool = false
 var _overhead_buff_row: Node3D = null
 var _overhead_buff_slots: Array[Sprite3D] = []
@@ -233,6 +234,7 @@ func setup_identity(p_entity_id: int, p_name: String, p_team: int, p_class_id: i
 	weapon_slot_archetypes = p_slot_archetypes.duplicate()
 	is_local_player = p_local
 	is_bot = p_bot
+	max_slides = 2 if is_bot else 4
 	aim_yaw = -PI * 0.5 if team == NetworkManager.TEAM_ROYAL else PI * 0.5
 	if hero_camera != null:
 		hero_camera.yaw = aim_yaw
@@ -1306,19 +1308,41 @@ func _animate_character(delta: float) -> void:
 	_skill_anim_timer = maxf(0.0, _skill_anim_timer - delta)
 
 	_lod_simplify_arm_ik = false
+	var lod_cam: Camera3D = null
+	var cam_dist_sq: float = 0.0
+	var to_hero_dot_fwd: float = 1.0
+	var is_headless_runtime: bool = DisplayServer.get_name().contains("headless")
 	if not is_local_player and is_inside_tree() and get_viewport() != null:
-		var lod_cam: Camera3D = get_viewport().get_camera_3d()
+		lod_cam = get_viewport().get_camera_3d()
 		if lod_cam != null:
 			var hero_wpos: Vector3 = visual_root.global_position if visual_root != null else global_position
-			var cam_dist_sq: float = lod_cam.global_position.distance_squared_to(hero_wpos)
-			_lod_simplify_arm_ik = (cam_dist_sq > 6400.0)
+			var to_hero: Vector3 = hero_wpos - lod_cam.global_position
+			cam_dist_sq = to_hero.length_squared()
+			_lod_simplify_arm_ik = (cam_dist_sq > 1225.0)
+			if cam_dist_sq > 64.0:
+				var cam_fwd: Vector3 = -lod_cam.global_transform.basis.z
+				to_hero_dot_fwd = cam_fwd.dot(to_hero)
 
 	if not is_defeated:
-		_defeat_elapsed = 0.0
-		_is_defeat_pose_done = false
+		if _defeat_elapsed > 0.0 or _is_defeat_pose_done:
+			_defeat_elapsed = 0.0
+			_is_defeat_pose_done = false
+			_reset_stand_rig_pose()
+			_anim_lod_accum = 1.0
 	else:
 		if _held_riot_shield != null and is_instance_valid(_held_riot_shield):
 			_held_riot_shield.visible = false
+		if _is_defeat_pose_done and not is_headless_runtime:
+			_anim_lod_accum += delta
+			if _anim_lod_accum < 0.066:
+				return
+			_anim_lod_accum = 0.0
+			var wave_done: float = sin(Time.get_ticks_msec() * 0.008) * 0.35
+			_arm_r_pivot.rotation = Vector3(1.35, wave_done, -0.25)
+			if _defeat_prop != null:
+				_defeat_prop.visible = true
+				_defeat_prop.rotation = Vector3(0.0, wave_done * 0.3, -0.25)
+			return
 		_defeat_elapsed += delta
 		var slump_t: float = clampf((_defeat_elapsed - 0.45) / 0.40, 0.0, 1.0)
 		var kneel_t: float = clampf(_defeat_elapsed / 0.45, 0.0, 1.0)
@@ -1352,6 +1376,17 @@ func _animate_character(delta: float) -> void:
 			_defeat_prop.position = _hips_pivot.position + Vector3(0.35, 0.22, -0.12)
 			_defeat_prop.rotation = Vector3(0.0, wave * 0.3, -0.25)
 		return
+
+	if not is_local_player and lod_cam != null and not is_headless_runtime and current_vehicle_id < 0:
+		if cam_dist_sq > 64.0 and to_hero_dot_fwd < -2.5:
+			return
+		if cam_dist_sq > 625.0:
+			_anim_lod_accum += delta
+			var lod_interval: float = 0.066 if cam_dist_sq > 3025.0 else 0.032
+			if _anim_lod_accum < lod_interval:
+				return
+			anim_dt = minf(_anim_lod_accum, 0.05)
+			_anim_lod_accum = 0.0
 
 	var slot: int = clampi(selected_weapon_slot, 0, maxi(0, weapons.size() - 1))
 	var cur_w: WeaponBase = weapons[slot] as WeaponBase if slot < weapons.size() else null
@@ -2598,11 +2633,20 @@ func simulate_movement(cmd: InputCmd, delta: float) -> void:
 func _move_and_slide_with_steps(delta: float, wish_dir: Vector3, grounded: bool) -> void:
 	var pre_pos: Vector3 = global_position
 	var pre_vel: Vector3 = velocity
+	if is_bot and grounded and _knockback_stun_timer <= 0.0 and velocity.y <= 0.1 and not is_in_water and not is_parachuting:
+		if ((entity_id + NetworkManager.server_tick) & 1) == 1 and not DisplayServer.get_name().contains("headless"):
+			var vp := get_viewport() if is_inside_tree() else null
+			var cam := vp.get_camera_3d() if vp != null else null
+			if cam != null and global_position.distance_squared_to(cam.global_position) > 2025.0:
+				global_position += Vector3(velocity.x, 0.0, velocity.z) * delta
+				return
 	move_and_slide()
 
 	if _knockback_stun_timer > 0.0 or velocity.y > 1.0:
 		return
 	if wish_dir.length_squared() <= 0.001 or not (grounded or is_on_floor()):
+		return
+	if is_bot and ((entity_id + NetworkManager.server_tick) & 3) != 0 and not DisplayServer.get_name().contains("headless"):
 		return
 
 	var actual_disp: Vector3 = Vector3(global_position.x - pre_pos.x, 0.0, global_position.z - pre_pos.z)

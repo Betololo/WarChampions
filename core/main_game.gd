@@ -52,6 +52,7 @@ var _skip_loading_screen: bool = false
 var _cached_combat_ctx: Dictionary = {}
 var _live_vehicles_cache: Array[VehicleBase] = []
 var _live_vehicles_dirty: bool = true
+var _vfx_frame_counter: int = 0
 
 var _loading_layer: CanvasLayer
 var _loading_stage_lbl: Label
@@ -59,12 +60,13 @@ var _loading_bar: ProgressBar
 
 
 func _ready() -> void:
+	if get_viewport() != null:
+		get_viewport().scaling_3d_scale = 1.0
+		get_viewport().msaa_3d = Viewport.MSAA_2X
+	RenderingServer.directional_shadow_atlas_set_size(2048, true)
+	RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_VERY_LOW)
 	if OS.has_feature("web"):
-		if get_viewport() != null:
-			get_viewport().msaa_3d = Viewport.MSAA_DISABLED
-			get_viewport().scaling_3d_scale = 0.85
-		RenderingServer.directional_shadow_atlas_set_size(1024, true)
-		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_HARD)
+		Engine.max_physics_steps_per_frame = 2
 	heroes_root = Node3D.new()
 	heroes_root.name = "Heroes"
 	add_child(heroes_root)
@@ -595,14 +597,20 @@ func _physics_process(delta: float) -> void:
 		var combat_ctx: Dictionary = _cached_combat_ctx
 		StatusEffectContainer.refresh_sixth_sense_cache(heroes_by_id)
 
-		# 1. Step AI Bots
+		# 1. Step AI Bots (staggered 3-way at 20 Hz when > 6 bots to cut CPU/raycast load by 67%)
 		var cps: Array[CapturePoint] = map_instance.capture_points if map_instance != null else []
 		var veh_arr: Array[VehicleBase] = _get_live_vehicles_array()
+		var stagger_bots: bool = bot_brains.size() > 6
+		var ai_slice: int = NetworkManager.server_tick % 3
 		for bid in bot_brains.keys():
 			var brain: BotController = bot_brains[bid]
 			var bhero: HeroCharacter = heroes_by_id.get(bid, null)
 			if bhero != null:
-				bhero.latest_server_input = brain.step_ai(delta, cps, heroes_by_id, veh_arr)
+				if not stagger_bots or bhero.latest_server_input == null or bhero.latest_server_input.tick <= 0 or (int(bid) % 3) == ai_slice:
+					var ai_dt: float = delta * 3.0 if (stagger_bots and bhero.latest_server_input != null and bhero.latest_server_input.tick > 0) else delta
+					bhero.latest_server_input = brain.step_ai(ai_dt, cps, heroes_by_id, veh_arr)
+				else:
+					bhero.latest_server_input.tick = NetworkManager.server_tick
 
 		var latch_restores: Array = []
 		for pid_key in _client_button_latch.keys():
@@ -1016,8 +1024,15 @@ func _process(delta: float) -> void:
 		if cam != null:
 			SoundSynthesizer.set_listener_position(cam.global_position)
 	StatusEffectContainer.refresh_sixth_sense_cache(heroes_by_id)
+	_vfx_frame_counter += 1
+	var local_pos: Vector3 = local_hero.global_position if (local_hero != null and is_instance_valid(local_hero)) else Vector3.ZERO
+	var has_local: bool = (local_hero != null and is_instance_valid(local_hero))
 	for id_key in heroes_by_id.keys():
 		var h: HeroCharacter = heroes_by_id[id_key]
+		if h != local_hero and has_local and h._last_vfx_hash != -1:
+			if not h.is_stealthed and (h.active_flags & (NetSerializer.SNAP_STEALTHED | NetSerializer.SNAP_SPEED_BOOST | NetSerializer.SNAP_SIXTH_SENSE)) == 0 and h.active_buffs == 0:
+				if h.global_position.distance_squared_to(local_pos) > 900.0 and ((h.entity_id + _vfx_frame_counter) % 3) != 0:
+					continue
 		StatusEffectsVFX.update_hero_client_visuals(h, local_hero, delta, vehicles_by_id, heroes_by_id)
 	for v_key in vehicles_by_id.keys():
 		StatusEffectsVFX.update_vehicle_client_visuals(vehicles_by_id[v_key] as VehicleBase, local_hero, heroes_by_id)
