@@ -70,6 +70,7 @@ var _lag_btn: Button
 var _deploy_btn: Button
 var _mp_card: PanelContainer
 var _mp_drawer: VBoxContainer
+var _online_bots_cb: CheckBox
 var _hub_settings_btn: Button
 var _hub_skills_btn: Button
 var _armory_settings_btn: Button
@@ -470,7 +471,7 @@ func _build_hub_screen(parent: Control) -> void:
 	mp_m.add_child(_mp_drawer)
 
 	var mp_hdr := Label.new()
-	mp_hdr.text = "CONEXÃO MULTIPLAYER ONLINE (14v14 Servidor Dedicado)"
+	mp_hdr.text = "CONEXÃO MULTIPLAYER ONLINE — Código da Sala (Web & PC) ou IP LAN"
 	mp_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mp_hdr.add_theme_font_size_override("font_size", 14)
 	mp_hdr.add_theme_color_override("font_color", Color(0.50, 0.90, 1.0))
@@ -482,11 +483,12 @@ func _build_hub_screen(parent: Control) -> void:
 	_mp_drawer.add_child(ip_row)
 
 	var ip_lbl := Label.new()
-	ip_lbl.text = "IP / Domínio:"
+	ip_lbl.text = "Código da Sala / IP:"
 	ip_row.add_child(ip_lbl)
 
 	_ip_input = LineEdit.new()
-	_ip_input.text = "127.0.0.1"
+	_ip_input.text = "SALA-1"
+	_ip_input.placeholder_text = "SALA-1 ou 127.0.0.1"
 	_ip_input.custom_minimum_size = Vector2(170, 32)
 	ip_row.add_child(_ip_input)
 
@@ -499,21 +501,29 @@ func _build_hub_screen(parent: Control) -> void:
 	_port_input.custom_minimum_size = Vector2(75, 32)
 	ip_row.add_child(_port_input)
 
+	var preset_room := Button.new()
+	preset_room.text = "Gerar Sala"
+	preset_room.pressed.connect(func() -> void:
+		_ip_input.text = "BFH-%03d" % randi_range(100, 999)
+	)
+	ip_row.add_child(preset_room)
+
 	var preset_local := Button.new()
-	preset_local.text = "Localhost 127.0.0.1"
+	preset_local.text = "LAN 127.0.0.1"
 	preset_local.pressed.connect(func() -> void:
 		_ip_input.text = "127.0.0.1"
 		_port_input.text = "7777"
 	)
 	ip_row.add_child(preset_local)
 
-	var preset_vps := Button.new()
-	preset_vps.text = "Servidor VPS"
-	preset_vps.pressed.connect(func() -> void:
-		_ip_input.text = "game.warchampions.io"
-		_port_input.text = "7777"
-	)
-	ip_row.add_child(preset_vps)
+	var opt_row := HBoxContainer.new()
+	opt_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_mp_drawer.add_child(opt_row)
+
+	_online_bots_cb = CheckBox.new()
+	_online_bots_cb.text = "Preencher Sala Online com Bots (14v14)"
+	_online_bots_cb.button_pressed = true
+	opt_row.add_child(_online_bots_cb)
 
 	var mp_act_row := HBoxContainer.new()
 	mp_act_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1566,14 +1576,18 @@ func _on_deploy_clicked() -> void:
 	match _pending_mode:
 		"host":
 			var port: int = maxi(1024, int(_port_input.text)) if _port_input != null else NetworkManager.DEFAULT_PORT
+			NetworkManager.active_room_code = _ip_input.text.strip_edges() if _ip_input != null else "SALA-1"
+			NetworkManager.online_fill_bots = (_online_bots_cb != null and _online_bots_cb.button_pressed)
 			host_online_pressed.emit(selected_team, selected_class, port)
 			host_online_requested.emit(selected_team, selected_class, port)
 		"join":
-			var ip: String = _ip_input.text.strip_edges() if _ip_input != null else "127.0.0.1"
+			var ip: String = _ip_input.text.strip_edges() if _ip_input != null else "SALA-1"
 			var port: int = maxi(1024, int(_port_input.text)) if _port_input != null else NetworkManager.DEFAULT_PORT
 			join_online_pressed.emit(selected_team, selected_class, ip, port)
 			join_online_requested.emit(selected_team, selected_class, ip, port)
 		_:
+			NetworkManager.active_room_code = ""
+			NetworkManager.online_fill_bots = false
 			play_offline_bots_pressed.emit(selected_team, selected_class)
 			play_offline_bots_requested.emit(selected_team, selected_class)
 

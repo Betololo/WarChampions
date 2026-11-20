@@ -64,6 +64,7 @@ func _ready() -> void:
 	await _test_phase13_task2_mounted_overheat()
 	await _test_phase13_task3_marksman_core()
 	await _test_phase13_task4_marksman_full_integration()
+	await _test_phase14_web_perf_and_multiplayer_relay()
 	_test_scene_compile_and_load()
 	print("Results: %d passed, %d failed" % [_passed, _failed])
 	get_tree().quit(0 if _failed == 0 else 1)
@@ -11356,3 +11357,259 @@ func _test_phase13_task4_marksman_full_integration() -> void:
 		puff_aux_hidden_ok and flash_basis_ok and snap_sprint_ok and pred_sprint_ok and pred_stop_ok,
 		"Phase 13.4f: Pooled mote aux cross hidden, vertical muzzle flash basis reset, & client Marksman sprint HUD/status sync"
 	)
+
+
+func _test_phase14_web_perf_and_multiplayer_relay() -> void:
+	# 1. Special prop cache + vehicle loft cache + shadowless boots/forearms
+	HeroMeshBuilder.clear_caches()
+	VehicleMeshBuilder.clear_caches()
+	var arena := Node3D.new()
+	add_child(arena)
+	var tmp1 := Node3D.new()
+	var tmp2 := Node3D.new()
+	arena.add_child(tmp1)
+	arena.add_child(tmp2)
+	var tnt1_res: Dictionary = HeroMeshBuilder.populate_tnt_rope_root(tmp1)
+	var tnt2_res: Dictionary = HeroMeshBuilder.populate_tnt_rope_root(tmp2)
+	var tnt1_mesh := (tnt1_res["bundle"] as Node3D).get_child(0) as MeshInstance3D
+	var tnt2_mesh := (tnt2_res["bundle"] as Node3D).get_child(0) as MeshInstance3D
+	var wrench1 := Node3D.new()
+	var wrench2 := Node3D.new()
+	var mortar1 := Node3D.new()
+	var mortar2 := Node3D.new()
+	arena.add_child(wrench1)
+	arena.add_child(wrench2)
+	arena.add_child(mortar1)
+	arena.add_child(mortar2)
+	HeroMeshBuilder.populate_build_wrench_root(wrench1)
+	HeroMeshBuilder.populate_build_wrench_root(wrench2)
+	HeroMeshBuilder.populate_mortar_tube_root(mortar1)
+	HeroMeshBuilder.populate_mortar_tube_root(mortar2)
+	var prop_cache_ok: bool = (
+		HeroMeshBuilder._weapon_cache.has("special_tnt_rope")
+		and HeroMeshBuilder._weapon_cache.has("special_build_wrench")
+		and HeroMeshBuilder._weapon_cache.has("special_mortar_tube")
+		and tnt1_mesh != null and tnt2_mesh != null and tnt1_mesh.mesh == tnt2_mesh.mesh
+	)
+
+	var vtmp1 := Node3D.new()
+	var vtmp2 := Node3D.new()
+	var vtmp3 := Node3D.new()
+	VehicleMeshBuilder.build_tank_visuals(vtmp1, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_plane_visuals(vtmp1, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_tank_visuals(vtmp2, NetworkManager.TEAM_NATIONAL)
+	VehicleMeshBuilder.build_plane_visuals(vtmp2, NetworkManager.TEAM_NATIONAL)
+	var loft_count_after_first: int = VehicleMeshBuilder._veh_loft_cache.size()
+	VehicleMeshBuilder.build_tank_visuals(vtmp3, NetworkManager.TEAM_NATIONAL)
+	VehicleMeshBuilder.build_plane_visuals(vtmp3, NetworkManager.TEAM_NATIONAL)
+	var loft_cache_ok: bool = (loft_count_after_first >= 4 and VehicleMeshBuilder._veh_loft_cache.size() == loft_count_after_first)
+	vtmp1.free()
+	vtmp2.free()
+	vtmp3.free()
+
+	var h1 := HeroCharacter.new()
+	arena.add_child(h1)
+	h1.setup_identity(14001, "DedupRoyal", NetworkManager.TEAM_ROYAL, NetworkManager.CLASS_SOLDIER, 0, true, false)
+
+	var h2 := HeroCharacter.new()
+	arena.add_child(h2)
+	h2.setup_identity(14002, "DedupNat", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_COMMANDO, 0, false, false)
+
+	var shadowless_cnt: int = 0
+	for p in h1._mesh_parts:
+		if is_instance_valid(p) and p.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+			shadowless_cnt += 1
+	var dedup_ok: bool = (
+		h1._hero_shader_materials.size() > 0
+		and h1._hero_shader_materials.size() < h1._mesh_parts.size()
+		and h2._hero_shader_materials.size() > 0
+		and h1._hero_shader_materials[0] != h2._hero_shader_materials[0]
+		and shadowless_cnt >= 4
+	)
+
+	# 2. Prewarm fallback Camera3D when viewport has no active camera
+	var prev_warm: bool = GameCache._gpu_warmed
+	GameCache._gpu_warmed = false
+	var sub_vp := SubViewport.new()
+	sub_vp.size = Vector2i(64, 64)
+	arena.add_child(sub_vp)
+	var prewarm_host := Node3D.new()
+	sub_vp.add_child(prewarm_host)
+	var prewarm_node: Node3D = GameCache.prewarm_gpu_pipelines(prewarm_host)
+	var found_prewarm_cam: bool = false
+	if prewarm_node != null:
+		for ch in prewarm_node.get_children():
+			if ch is Camera3D and (ch as Camera3D).current:
+				found_prewarm_cam = true
+				break
+		GameCache.cleanup_prewarm(prewarm_node)
+	GameCache._gpu_warmed = prev_warm
+	if not (prop_cache_ok and loft_cache_ok and dedup_ok and found_prewarm_cam):
+		print("[DEBUG Phase 14.1] prop=%s loft=%s dedup=%s cam=%s" % [str(prop_cache_ok), str(loft_cache_ok), str(dedup_ok), str(found_prewarm_cam)])
+	_assert(prop_cache_ok and loft_cache_ok and dedup_ok and found_prewarm_cam, "Phase 14.1: Special prop & loft cache, per-hero shader dedup, shadowless limbs, & prewarm camera")
+
+	# 3. Client bot interpolation + dead-to-respawn auth reconcile + transient button latch + vehicle seat sync
+	NetworkManager.shutdown_network(true)
+	NetworkManager.is_relay_mode = true
+	NetworkManager.is_relay_host = false
+	NetworkManager.server_clock_offset_ms = 0.0
+
+	var rbot := HeroCharacter.new()
+	arena.add_child(rbot)
+	rbot.setup_identity(1025, "RemoteBot", NetworkManager.TEAM_NATIONAL, NetworkManager.CLASS_SOLDIER, 0, false, true)
+	rbot.global_position = Vector3.ZERO
+	rbot._prev_phys_pos = Vector3.ZERO
+	rbot._curr_phys_pos = Vector3.ZERO
+	var now_srv_ms: float = NetworkManager.get_server_clock_ms()
+	rbot.push_remote_snapshot(200, now_srv_ms - 220.0, {"pos": Vector3(0.0, 2.0, 0.0), "vel": Vector3(20.0, 0.0, 0.0), "yaw": 0.0, "pitch": 0.0, "flags": 0, "hp": 110})
+	rbot.push_remote_snapshot(212, now_srv_ms - 20.0, {"pos": Vector3(20.0, 2.0, 0.0), "vel": Vector3(20.0, 0.0, 0.0), "yaw": 0.0, "pitch": 0.0, "flags": 0, "hp": 110})
+	rbot._process(0.016)
+	var bot_interp_ok: bool = (rbot.global_position.x > 0.5 and rbot.global_position.x < 19.5 and rbot.visual_root.global_position.distance_to(rbot.global_position) < 0.05)
+
+	# Respawn reconcile even when ack_tick <= _last_processed_srv_tick
+	h1.is_defeated = true
+	h1.collision_layer = 0
+	h1.global_position = Vector3(50.0, 2.0, 50.0)
+	h1._last_processed_srv_tick = 200
+	h1.reconcile_with_server({
+		"ack_tick": 150,
+		"pos": Vector3(-110.0, 4.0, 12.0),
+		"vel": Vector3.ZERO,
+		"flags": 0,
+		"hp": 110,
+		"shield": 0,
+		"vehicle_id": -1,
+		"seat_idx": -1,
+	})
+	var respawn_reconcile_ok: bool = (
+		not h1.is_defeated
+		and h1.collision_layer == 2
+		and h1.global_position.distance_to(Vector3(-110.0, 4.0, 12.0)) < 0.05
+	)
+
+	# Transient button latch (client + server)
+	var kev_e := InputEventKey.new()
+	kev_e.keycode = KEY_E
+	kev_e.pressed = true
+	kev_e.echo = false
+	h1._input(kev_e)
+	var cmd_latched: InputCmd = h1._sample_local_input()
+	var cmd_cleared: InputCmd = h1._sample_local_input()
+	var cli_latch_ok: bool = cmd_latched.has_button(InputCmd.BTN_INTERACT) and not cmd_cleared.has_button(InputCmd.BTN_INTERACT)
+
+	var mg := MainGame.new()
+	var test_apc := VehicleAPC.new()
+	test_apc.id = 8801
+	arena.add_child(test_apc)
+	mg.vehicles_by_id[8801] = test_apc
+	mg.heroes_by_id[h1.entity_id] = h1
+	h1.current_vehicle_id = 8801
+	h1.current_seat_index = 1
+	mg._sync_client_vehicle_seats()
+	var s1: VehicleBase.SeatSlot = test_apc.get_seat(1)
+	var seat_sync_ok: bool = (
+		s1 != null
+		and s1.occupant_id == h1.entity_id
+		and h1.current_seat_enclosed == s1.is_enclosed
+		and h1.current_seat_can_shoot == s1.can_shoot
+	)
+
+	var srv_cmd_tap := InputCmd.new()
+	srv_cmd_tap.tick = 10
+	srv_cmd_tap.buttons = InputCmd.BTN_INTERACT
+	var srv_cmd_rel := InputCmd.new()
+	srv_cmd_rel.tick = 11
+	srv_cmd_rel.buttons = 0
+	mg._on_client_input(h1.entity_id, srv_cmd_tap)
+	mg._on_client_input(h1.entity_id, srv_cmd_rel)
+	var srv_latch_ok: bool = (int(mg._client_button_latch.get(h1.entity_id, 0)) & InputCmd.BTN_INTERACT) != 0
+	mg.free()
+	NetworkManager.shutdown_network(true)
+	if not (bot_interp_ok and respawn_reconcile_ok and cli_latch_ok and seat_sync_ok and srv_latch_ok):
+		print("[DEBUG Phase 14.2] bot_interp=%s respawn=%s cli_latch=%s seat=%s srv_latch=%s pos=%s" % [str(bot_interp_ok), str(respawn_reconcile_ok), str(cli_latch_ok), str(seat_sync_ok), str(srv_latch_ok), str(rbot.global_position)])
+	_assert(bot_interp_ok and respawn_reconcile_ok and cli_latch_ok and seat_sync_ok and srv_latch_ok, "Phase 14.2: Client bot interp, respawn ack reconcile, transient button latch, & client vehicle seat sync")
+
+	# 4. WebRoomRelay MQTT framing + LOCALTEST_* Host<->Client end-to-end flow + UI check
+	var rl_bytes: PackedByteArray = WebRoomRelay._encode_remaining_length(321)
+	var rl_dec: Vector2i = WebRoomRelay._decode_remaining_length(rl_bytes, 0)
+	var pkt_con: PackedByteArray = WebRoomRelay.build_connect_packet("wcb_test_1")
+	var pkt_sub: PackedByteArray = WebRoomRelay.build_subscribe_packet(7, PackedStringArray(["a/b", "c/d"]))
+	var pkt_pub: PackedByteArray = WebRoomRelay.build_publish_packet("a/b", PackedByteArray([1, 2, 3]))
+	var mqtt_frame_ok: bool = (
+		rl_dec == Vector2i(321, 2)
+		and pkt_con.size() > 10 and pkt_con[0] == 0x10
+		and pkt_sub.size() > 8 and pkt_sub[0] == 0x82
+		and pkt_pub.size() > 6 and pkt_pub[0] == 0x30
+	)
+
+	var host_r := WebRoomRelay.new()
+	var client_r := WebRoomRelay.new()
+	var got_join: Array = []
+	var got_roster: Array = []
+	var got_cmd: Array = []
+	var got_auth: Array = []
+	var got_snap: Array = []
+	var got_ev: Array = []
+	host_r.join_req_received.connect(func(pid: int, prof: Dictionary) -> void:
+		got_join.append([pid, prof])
+	)
+	host_r.input_cmd_received.connect(func(pid: int, packed: PackedByteArray) -> void:
+		got_cmd.append([pid, packed])
+	)
+	client_r.roster_sync_received.connect(func(roster: Dictionary) -> void:
+		got_roster.append(roster)
+	)
+	client_r.auth_state_packet_received.connect(func(a: PackedByteArray) -> void:
+		got_auth.append(a)
+	)
+	client_r.world_snapshot_packet_received.connect(func(s: PackedByteArray) -> void:
+		got_snap.append(s)
+	)
+	client_r.game_event_packet_received.connect(func(sid: int, ev: String, pl: Dictionary) -> void:
+		got_ev.append([sid, ev, pl])
+	)
+
+	host_r.connect_room("LOCALTEST_PHASE14", true, 1)
+	client_r.connect_room("LOCALTEST_PHASE14", false, 2042)
+	client_r.send_join_req(2042, {"name": "AmigoWeb", "team": NetworkManager.TEAM_NATIONAL, "class_id": NetworkManager.CLASS_COMMANDO})
+	host_r.send_roster_sync({1: {"name": "Host"}, 2042: {"name": "AmigoWeb"}})
+
+	var relay_cmd := InputCmd.new()
+	relay_cmd.tick = 77
+	relay_cmd.set_button(InputCmd.BTN_SKILL_1, true)
+	client_r.send_input_cmd(2042, NetSerializer.pack_input_cmd(relay_cmd))
+
+	var auth_pkt: PackedByteArray = NetSerializer.pack_authoritative_state(77, Vector3(1, 2, 3), Vector3.ZERO, 0, 100, 0, -1, -1, 0, 0, 0, 0, 255)
+	var snap_pkt: PackedByteArray = NetSerializer.pack_world_snapshot(77, 1280.0, 50, 49, [], [], [])
+	host_r.send_world_bundle({2042: auth_pkt}, snap_pkt)
+	host_r.send_game_event(1, "kill_event", {"killer": "HostHero"}, false)
+
+	var e2e_ok: bool = (
+		got_join.size() == 1 and int(got_join[0][0]) == 2042
+		and got_roster.size() == 1 and (got_roster[0] as Dictionary).has(2042)
+		and got_cmd.size() == 1 and NetSerializer.unpack_input_cmd(got_cmd[0][1] as PackedByteArray).tick == 77
+		and got_auth.size() == 1 and got_snap.size() == 1
+		and got_ev.size() == 1 and str(got_ev[0][1]) == "kill_event"
+	)
+	client_r.close_room()
+	host_r.close_room()
+
+	var ip_routing_ok: bool = (
+		NetworkManager.is_direct_ip_address("127.0.0.1")
+		and not NetworkManager.is_direct_ip_address("SALA-1")
+	)
+	NetworkManager.join_server("LOCALTEST_NM_CHECK", 7777)
+	var nm_relay_flag_ok: bool = NetworkManager.is_relay_mode and not NetworkManager.is_server_authority() and NetworkManager.local_peer_id >= 2000
+	NetworkManager.shutdown_network(true)
+
+	var menu := ClassSelectMenu.new()
+	arena.add_child(menu)
+	var ui_ok: bool = (
+		menu._ip_input != null and menu._ip_input.text == "SALA-1"
+		and menu._online_bots_cb != null and menu._online_bots_cb.button_pressed
+	)
+
+	arena.queue_free()
+	await _flush_deferred()
+	await get_tree().process_frame
+	_assert(mqtt_frame_ok and e2e_ok and ip_routing_ok and nm_relay_flag_ok and ui_ok, "Phase 14.3: WebRoomRelay MQTT framing, LOCALTEST E2E flow, IP/Room routing, & Menu UI")

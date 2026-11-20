@@ -119,7 +119,7 @@ func _ready() -> void:
 	_build_vehicle_mesh()
 	get_cached_visual_meshes()
 
-	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+	if not NetworkManager.is_server_authority():
 		freeze = true
 
 
@@ -627,7 +627,7 @@ func _respawn_vehicle() -> void:
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	visible = true
-	freeze = (vehicle_type == VehicleType.AA_GUN or vehicle_type == VehicleType.MOUNTED_MG) or (multiplayer.multiplayer_peer != null and not multiplayer.is_server())
+	freeze = (vehicle_type == VehicleType.AA_GUN or vehicle_type == VehicleType.MOUNTED_MG) or not NetworkManager.is_server_authority()
 	collision_layer = 8
 	respawned.emit(id)
 
@@ -893,7 +893,7 @@ func _process_roadkill(driver: HeroCharacter, context: Dictionary, half_extents:
 
 
 func _enforce_remote_freeze() -> bool:
-	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+	if not NetworkManager.is_server_authority():
 		if not freeze:
 			freeze = true
 			linear_velocity = Vector3.ZERO
@@ -913,7 +913,7 @@ func _process(delta: float) -> void:
 		if s.follow_turret:
 			has_turret_seat = true
 			break
-	if multiplayer.multiplayer_peer != null and not multiplayer.is_server():
+	if not NetworkManager.is_server_authority():
 		if has_mounted_overheat and weapon_overheated and overheat_cooldown_timer > 0.0:
 			overheat_cooldown_timer = maxf(0.0, overheat_cooldown_timer - delta)
 		var sample: SnapshotInterpolator.SnapshotSample = snapshot_interpolator.sample(NetworkManager.get_server_clock_ms())

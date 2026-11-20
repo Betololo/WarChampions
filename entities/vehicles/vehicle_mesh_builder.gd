@@ -9,12 +9,32 @@ extends RefCounted
 static var _mat_cache: Dictionary = {}
 static var _palette_cache: Dictionary = {}
 static var _prim_cache: Dictionary = {}
+static var _veh_loft_cache: Dictionary = {}
 
 
 static func clear_caches() -> void:
 	_mat_cache.clear()
 	_palette_cache.clear()
 	_prim_cache.clear()
+	_veh_loft_cache.clear()
+
+
+static func _cached_loft(key: String, rings: Array[Dictionary], radial_seg: int = 16) -> ArrayMesh:
+	if _veh_loft_cache.has(key):
+		return _veh_loft_cache[key] as ArrayMesh
+	var m: ArrayMesh = HeroMeshBuilder.make_loft(rings, radial_seg)
+	_veh_loft_cache[key] = m
+	return m
+
+
+static func _cached_torus(key: String, inner_r: float, outer_r: float) -> TorusMesh:
+	if _prim_cache.has(key):
+		return _prim_cache[key] as TorusMesh
+	var t := TorusMesh.new()
+	t.inner_radius = inner_r
+	t.outer_radius = outer_r
+	_prim_cache[key] = t
+	return t
 
 
 static func make_mat(
@@ -228,7 +248,8 @@ static func build_tank_visuals(root: Node3D, team: int) -> Dictionary:
 	# Lower armored tub & sloped glacis upper hull (loft extruded stern->nose along -Z)
 	_add_box(root, Vector3(2.26, 0.52, 4.90), Vector3(0.0, 0.62, 0.02), Vector3.ZERO, armor_mat, "LowerHull")
 	var hull_p: float = 2.6 if is_royal else 3.8
-	var hull_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var hull_key: String = "tank_hull_%s" % ("r" if is_royal else "n")
+	var hull_mesh: ArrayMesh = _cached_loft(hull_key, [
 		{"y": -2.65, "z": 0.00, "rx": 1.18, "rz": 0.34, "p": hull_p, "col": Color(0.84, 0.84, 0.86), "side_ao": 0.10},
 		{"y": -1.65, "z": 0.02, "rx": 1.24, "rz": 0.38, "p": hull_p, "col": Color(0.95, 0.95, 0.96), "side_ao": 0.10},
 		{"y": 1.05, "z": 0.04, "rx": 1.28, "rz": 0.42, "p": hull_p, "col": Color.WHITE, "side_ao": 0.10},
@@ -272,7 +293,8 @@ static func build_tank_visuals(root: Node3D, team: int) -> Dictionary:
 	root.add_child(turret)
 
 	var tur_p: float = 2.05 if is_royal else 3.6
-	var tur_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var tur_key: String = "tank_turret_%s" % ("r" if is_royal else "n")
+	var tur_mesh: ArrayMesh = _cached_loft(tur_key, [
 		{"y": 0.00, "rx": 1.02, "rz": 1.22, "p": tur_p, "col": Color(0.86, 0.86, 0.88), "side_ao": 0.10},
 		{"y": 0.26, "rx": 1.08, "rz": 1.28, "p": tur_p, "col": Color.WHITE, "side_ao": 0.10},
 		{"y": 0.60, "rx": 0.92, "rz": 1.08, "p": tur_p, "col": Color.WHITE, "side_ao": 0.08},
@@ -290,7 +312,7 @@ static func build_tank_visuals(root: Node3D, team: int) -> Dictionary:
 	barrel_piv.position = Vector3(0.0, 0.38, -1.04)
 	turret.add_child(barrel_piv)
 	_add_cyl(barrel_piv, 0.26, 0.26, 0.86, Vector3(0.0, 0.0, -0.06), Vector3(0.0, 0.0, PI * 0.5), armor_hi, 14, "Mantlet")
-	var barrel_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var barrel_mesh: ArrayMesh = _cached_loft("tank_barrel", [
 		{"y": 0.00, "rx": 0.145, "rz": 0.145, "p": 2.0, "col": Color(0.92, 0.92, 0.94)},
 		{"y": 0.55, "rx": 0.115, "rz": 0.115, "p": 2.0, "col": Color.WHITE},
 		{"y": 2.55, "rx": 0.092, "rz": 0.092, "p": 2.0, "col": Color.WHITE},
@@ -318,7 +340,7 @@ static func build_jeep_visuals(root: Node3D, team: int) -> Dictionary:
 	_add_box(root, Vector3(2.10, 0.18, 0.18), Vector3(0.0, 0.54, 2.14), Vector3.ZERO, steel_mat, "RearBumper")
 
 	# Sculpted Willys/Kubelwagen tapered hood (back->front along -Z) + radiator grille slats + headlights
-	var hood_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var hood_mesh: ArrayMesh = _cached_loft("jeep_hood", [
 		{"y": 0.00, "rx": 0.92, "rz": 0.35, "p": 2.6, "col": Color.WHITE, "side_ao": 0.08},
 		{"y": 0.68, "rx": 0.82, "rz": 0.33, "p": 2.6, "col": Color.WHITE, "side_ao": 0.08},
 		{"y": 1.38, "rx": 0.66, "rz": 0.29, "p": 2.6, "col": Color(0.88, 0.88, 0.90)},
@@ -352,9 +374,7 @@ static func build_jeep_visuals(root: Node3D, team: int) -> Dictionary:
 
 	_add_box(root, Vector3(1.84, 0.28, 0.24), Vector3(0.0, 1.00, -0.66), Vector3.ZERO, dark_mat, "Dashboard")
 	_add_cyl(root, 0.035, 0.035, 0.44, Vector3(-0.46, 1.00, -0.58), Vector3(0.85, 0.0, 0.0), dark_mat, 8, "SteeringCol")
-	var wheel_ring := TorusMesh.new()
-	wheel_ring.inner_radius = 0.17
-	wheel_ring.outer_radius = 0.22
+	var wheel_ring: TorusMesh = _cached_torus("torus|0.17,0.22", 0.17, 0.22)
 	add_part(root, wheel_ring, Vector3(-0.46, 1.15, -0.42), Vector3(0.85, 0.0, 0.0), dark_mat, "SteeringWheel")
 	_add_seat_cushion(root, Vector3(-0.46, 0.60, -0.05), 0.56, leather_mat)
 	_add_seat_cushion(root, Vector3(0.46, 0.60, -0.05), 0.56, leather_mat)
@@ -386,7 +406,7 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	var dark_mat: Material = pal["dark_metal"]
 
 	# Sculpted teardrop fuselage split around open cockpit bay (z in [-0.55, 0.35])
-	var fore_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var fore_mesh: ArrayMesh = _cached_loft("plane_fore", [
 		{"y": 0.55, "z": -0.06, "rx": 0.58, "rz": 0.48, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
 		{"y": 1.40, "z": -0.04, "rx": 0.56, "rz": 0.49, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
 		{"y": 2.30, "z": 0.00, "rx": 0.52, "rz": 0.50, "p": 2.1, "col": Color(0.96, 0.96, 0.98)},
@@ -394,7 +414,7 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	], 20)
 	add_part(root, fore_mesh, Vector3(0.0, 1.02, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), body_mat, "Fuselage")
 
-	var aft_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var aft_mesh: ArrayMesh = _cached_loft("plane_aft", [
 		{"y": -3.05, "z": 0.12, "rx": 0.13, "rz": 0.24, "p": 2.0, "col": Color(0.86, 0.86, 0.90)},
 		{"y": -1.85, "z": 0.04, "rx": 0.34, "rz": 0.42, "p": 2.1, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.08},
 		{"y": -0.75, "z": -0.04, "rx": 0.52, "rz": 0.46, "p": 2.2, "col": Color.WHITE, "side_ao": 0.08},
@@ -421,7 +441,7 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	_add_cyl(root, 0.028, 0.028, 0.08, Vector3(0.0, 1.12, -0.29), Vector3(0.18, 0.0, 0.0), dark_mat, 8, "StickGrip")
 
 	# Quilted padded leather coaming collar around cockpit rim
-	var coaming_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var coaming_mesh: ArrayMesh = _cached_loft("plane_coaming", [
 		{"y": -0.44, "rx": 0.44, "rz": 0.055, "p": 2.2, "col": Color(0.32, 0.20, 0.12)},
 		{"y": 0.00, "rx": 0.46, "rz": 0.060, "p": 2.2, "col": Color(0.36, 0.24, 0.14)},
 		{"y": 0.44, "rx": 0.44, "rz": 0.055, "p": 2.2, "col": Color(0.32, 0.20, 0.12)},
@@ -432,7 +452,7 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	_add_cyl(root, 0.048, 0.048, 0.70, Vector3(0.0, 1.36, 0.33), Vector3(0.0, 0.0, PI * 0.5), leather_mat, 10, "CoamingAft")
 
 	# Compact angled fighter windscreen ahead of pilot (leaving top, sides & rear 100% open)
-	var screen_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var screen_mesh: ArrayMesh = _cached_loft("plane_screen", [
 		{"y": -0.16, "rx": 0.34, "rz": 0.024, "p": 2.0},
 		{"y": 0.00, "rx": 0.32, "rz": 0.024, "p": 2.0},
 		{"y": 0.16, "rx": 0.28, "rz": 0.024, "p": 2.0},
@@ -445,7 +465,7 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 	prop.name = "Propeller"
 	prop.position = Vector3(0.0, 1.02, -2.92)
 	root.add_child(prop)
-	var spinner_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var spinner_mesh: ArrayMesh = _cached_loft("plane_spinner", [
 		{"y": 0.00, "rx": 0.37, "rz": 0.37, "p": 2.0, "col": Color(0.90, 0.90, 0.92)},
 		{"y": 0.32, "rx": 0.26, "rz": 0.26, "p": 2.0, "col": Color.WHITE},
 		{"y": 0.58, "rx": 0.05, "rz": 0.05, "p": 2.0, "col": Color.WHITE},
@@ -465,7 +485,7 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 		{"y": 3.00, "z": 0.16, "rx": 0.10, "rz": 0.86 if is_royal else 0.72, "p": 2.0, "col": Color.WHITE},
 		{"y": 4.25, "z": 0.24, "rx": 0.06, "rz": 0.42 if is_royal else 0.48, "p": 1.9 if is_royal else 3.2, "col": Color(0.96, 0.96, 0.98)},
 	]
-	var wing_mesh: ArrayMesh = HeroMeshBuilder.make_loft(wing_rings, 16)
+	var wing_mesh: ArrayMesh = _cached_loft("plane_wing_%s" % ("r" if is_royal else "n"), wing_rings, 16)
 	var white_mat := make_mat(Color(0.95, 0.96, 0.98), "", 0.42, 0.12)
 	var royal_blue_mat := make_mat(Color(0.14, 0.34, 0.78), "", 0.40, 0.15)
 	var wheels: Array[Node3D] = []
@@ -488,13 +508,13 @@ static func build_plane_visuals(root: Node3D, team: int) -> Dictionary:
 		wheels.append(add_wheel(root, 0.24, 0.17, Vector3(sx * 1.12, 0.34, -0.94), pal["tire_mat"], trim_mat))
 
 	# Empennage: sculpted vertical tail fin + horizontal stabilizers + tailwheel
-	var tail_fin: ArrayMesh = HeroMeshBuilder.make_loft([
+	var tail_fin: ArrayMesh = _cached_loft("plane_tail_fin", [
 		{"y": 0.00, "z": 0.00, "rx": 0.09, "rz": 0.68, "p": 2.2, "col": Color(0.92, 0.92, 0.95)},
 		{"y": 0.68, "z": 0.14, "rx": 0.06, "rz": 0.48, "p": 2.1, "col": Color.WHITE},
 		{"y": 1.16, "z": 0.26, "rx": 0.035, "rz": 0.26, "p": 2.0, "col": Color.WHITE},
 	], 12)
 	add_part(root, tail_fin, Vector3(0.0, 1.16, 2.48), Vector3.ZERO, trim_mat, "TailFin")
-	var stab_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var stab_mesh: ArrayMesh = _cached_loft("plane_stab", [
 		{"y": 0.00, "rx": 0.065, "rz": 0.50, "p": 2.1},
 		{"y": 1.42, "rx": 0.035, "rz": 0.28, "p": 2.0},
 	], 10)
@@ -515,7 +535,7 @@ static func build_boat_visuals(root: Node3D, team: int) -> Dictionary:
 	var wood_mat: Material = pal["wood_mat"]
 
 	# Flared V-hull keeping sheer cleanly beneath WoodDeck (deck top Y=0.76) with contoured closed bow stem
-	var hull_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var hull_mesh: ArrayMesh = _cached_loft("boat_hull", [
 		{"y": -3.05, "z": 0.00, "rx": 1.28, "rz": 0.35, "p": 2.8, "col": Color(0.84, 0.84, 0.88), "side_ao": 0.10},
 		{"y": -1.40, "z": 0.00, "rx": 1.44, "rz": 0.36, "p": 2.8, "col": Color(0.95, 0.95, 0.98), "side_ao": 0.10},
 		{"y": 0.40, "z": 0.00, "rx": 1.46, "rz": 0.36, "p": 2.8, "col": Color.WHITE, "side_ao": 0.10},
@@ -527,7 +547,7 @@ static func build_boat_visuals(root: Node3D, team: int) -> Dictionary:
 	add_part(root, hull_mesh, Vector3(0.0, 0.34, 0.0), Vector3(-PI * 0.5, 0.0, 0.0), hull_mat, "VHull")
 
 	# Golden-brown planked wooden deck & contoured bow/stern gunwale coaming rails
-	var deck_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var deck_mesh: ArrayMesh = _cached_loft("boat_deck", [
 		{"y": -2.98, "rx": 1.24, "rz": 0.04, "p": 3.2, "col": Color(0.95, 0.95, 0.95)},
 		{"y": 0.40, "rx": 1.38, "rz": 0.04, "p": 3.2, "col": Color.WHITE},
 		{"y": 1.55, "rx": 1.31, "rz": 0.04, "p": 3.0, "col": Color.WHITE},
@@ -558,15 +578,11 @@ static func build_boat_visuals(root: Node3D, team: int) -> Dictionary:
 	_add_cyl(root, 0.02, 0.03, 1.15, Vector3(0.0, 2.95, 0.45), Vector3.ZERO, steel_mat, 8, "Mast")
 	_add_headlight_pod(root, Vector3(0.0, 2.52, -0.58), 0.12, steel_mat, pal["headlight_mat"])
 	_add_cyl(root, 0.035, 0.035, 0.36, Vector3(0.0, 1.16, -0.40), Vector3(0.85, 0.0, 0.0), pal["dark_metal"], 8, "HelmCol")
-	var helm_wheel := TorusMesh.new()
-	helm_wheel.inner_radius = 0.16
-	helm_wheel.outer_radius = 0.20
+	var helm_wheel: TorusMesh = _cached_torus("torus|0.16,0.20", 0.16, 0.20)
 	add_part(root, helm_wheel, Vector3(0.0, 1.28, -0.26), Vector3(0.85, 0.0, 0.0), pal["dark_metal"], "HelmWheel")
 
 	# Red & white lifebuoy rings mounted on cabin flanks + forward/stern crew benches
-	var buoy_mesh := TorusMesh.new()
-	buoy_mesh.inner_radius = 0.14
-	buoy_mesh.outer_radius = 0.27
+	var buoy_mesh: TorusMesh = _cached_torus("torus|0.14,0.27", 0.14, 0.27)
 	var buoy_red := make_mat(Color(0.92, 0.22, 0.16), "", 0.48, 0.05)
 	var buoy_white := make_mat(Color(0.96, 0.96, 0.98), "", 0.48, 0.05)
 	for sx in [-1.0, 1.0]:
@@ -607,7 +623,7 @@ static func build_aa_visuals(root: Node3D, team: int) -> Dictionary:
 	_add_cyl(root, 1.66, 1.78, 0.16, Vector3(0.0, 0.38, 0.0), Vector3.ZERO, concrete_mat, 12, "BunkerCurb")
 	_add_cyl(root, 0.84, 0.92, 0.18, Vector3(0.0, 0.42, 0.0), Vector3.ZERO, steel_mat, 16, "TurretRing")
 
-	var bag_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var bag_mesh: ArrayMesh = _cached_loft("aa_sandbag", [
 		{"y": -0.44, "rx": 0.22, "rz": 0.16, "p": 2.4, "col": Color(0.84, 0.82, 0.80)},
 		{"y": -0.20, "rx": 0.30, "rz": 0.22, "p": 2.5, "col": Color.WHITE, "side_ao": 0.08},
 		{"y": 0.20, "rx": 0.30, "rz": 0.22, "p": 2.5, "col": Color.WHITE, "side_ao": 0.08},
@@ -644,7 +660,7 @@ static func build_aa_visuals(root: Node3D, team: int) -> Dictionary:
 	turret.add_child(barrel_piv)
 	_add_box(barrel_piv, Vector3(0.56, 0.30, 0.72), Vector3(0.0, 0.0, 0.02), Vector3.ZERO, armor_hi, "BreechCradle")
 
-	var flak_mesh: ArrayMesh = HeroMeshBuilder.make_loft([
+	var flak_mesh: ArrayMesh = _cached_loft("aa_flak", [
 		{"y": 0.00, "rx": 0.085, "rz": 0.085, "p": 2.0, "col": Color(0.88, 0.88, 0.90)},
 		{"y": 0.52, "rx": 0.072, "rz": 0.072, "p": 2.0, "col": Color.WHITE},
 		{"y": 1.98, "rx": 0.048, "rz": 0.048, "p": 2.0, "col": Color.WHITE},

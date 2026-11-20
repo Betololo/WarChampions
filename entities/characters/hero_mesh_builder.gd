@@ -1479,8 +1479,12 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 		"two_handed": true,
 	}
 
-	var p_grip := BoxMesh.new()
-	p_grip.size = Vector3(0.034, 0.11, 0.044)
+	var grip_key := "box|0.0340,0.1100,0.0440"
+	var p_grip: BoxMesh = _prim_cache.get(grip_key) as BoxMesh
+	if p_grip == null:
+		p_grip = BoxMesh.new()
+		p_grip.size = Vector3(0.034, 0.11, 0.044)
+		_prim_cache[grip_key] = p_grip
 
 	match w_kind:
 		4: # Sniper Rifle (arch 0=Classic Walnut, 1=Compact Recon Semi, 2=Heavy Anti-Materiel)
@@ -2057,11 +2061,63 @@ static func populate_weapon_root(root: Node3D, w_kind: int, p_archetype: int = 0
 	return info
 
 
+static func _clone_cached_special_root(root: Node3D, cache_key: String, container_name: String, info_key: String) -> Dictionary:
+	if not _weapon_cache.has(cache_key):
+		return {}
+	var cached: Dictionary = _weapon_cache[cache_key]
+	var container := Node3D.new()
+	container.name = container_name
+	root.add_child(container)
+	var parts_tpl: Array = cached["parts"]
+	var barrel_node: MeshInstance3D = null
+	for p_dict in parts_tpl:
+		var mi := MeshInstance3D.new()
+		mi.mesh = p_dict["mesh"]
+		mi.position = p_dict["pos"]
+		mi.rotation = p_dict["rot"]
+		mi.material_override = p_dict["mat"]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.visibility_range_end = 220.0
+		var p_name: String = str(p_dict.get("name", ""))
+		if not p_name.is_empty():
+			mi.name = p_name
+			if p_name == "MortarBarrel":
+				barrel_node = mi
+		container.add_child(mi)
+	var out_info: Dictionary = (cached["info"] as Dictionary).duplicate()
+	out_info[info_key] = container
+	if barrel_node != null:
+		out_info["barrel"] = barrel_node
+	return out_info
+
+
+static func _store_cached_special_root(cache_key: String, container: Node3D, base_info: Dictionary) -> void:
+	var cached_parts: Array = []
+	for child in container.get_children():
+		if child is MeshInstance3D:
+			var mi := child as MeshInstance3D
+			cached_parts.append({
+				"mesh": mi.mesh,
+				"pos": mi.position,
+				"rot": mi.rotation,
+				"mat": mi.material_override,
+				"name": mi.name,
+			})
+	_weapon_cache[cache_key] = {
+		"info": base_info.duplicate(),
+		"parts": cached_parts,
+	}
+
+
 ## Builds the spinning bundled TNT Rope ("TntRope") held in hand when Demolisher Skill 2 is active.
 static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
 	for c in root.get_children():
 		root.remove_child(c)
 		c.queue_free()
+
+	var hit: Dictionary = _clone_cached_special_root(root, "special_tnt_rope", "TntRope", "bundle")
+	if not hit.is_empty():
+		return hit
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var bundle := Node3D.new()
@@ -2112,13 +2168,16 @@ static func populate_tnt_rope_root(root: Node3D) -> Dictionary:
 	spark.visibility_range_end = 220.0
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	return {
-		"bundle": bundle,
+	var base_info := {
 		"grip": Vector3.ZERO,
 		"foregrip": Vector3.ZERO,
 		"muzzle": Vector3(0.0, 0.0, -0.78),
 		"two_handed": false,
 	}
+	_store_cached_special_root("special_tnt_rope", bundle, base_info)
+	var out_info: Dictionary = base_info.duplicate()
+	out_info["bundle"] = bundle
+	return out_info
 
 
 ## Builds the Engineer's steel crescent wrench / hammer tool held during Skill 0..2 build channels.
@@ -2126,6 +2185,10 @@ static func populate_build_wrench_root(root: Node3D) -> Dictionary:
 	for c in root.get_children():
 		root.remove_child(c)
 		c.queue_free()
+
+	var hit: Dictionary = _clone_cached_special_root(root, "special_build_wrench", "BuildWrench", "tool")
+	if not hit.is_empty():
+		return hit
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var tool := Node3D.new()
@@ -2152,13 +2215,16 @@ static func populate_build_wrench_root(root: Node3D) -> Dictionary:
 		mi.visibility_range_end = 220.0
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	return {
-		"tool": tool,
+	var base_info := {
 		"grip": Vector3.ZERO,
 		"foregrip": Vector3.ZERO,
 		"muzzle": Vector3(0.0, 0.40, 0.0),
 		"two_handed": false,
 	}
+	_store_cached_special_root("special_build_wrench", tool, base_info)
+	var out_info: Dictionary = base_info.duplicate()
+	out_info["tool"] = tool
+	return out_info
 
 
 ## Builds the Engineer's 3D military Mortar (baseplate, angled ~0.85m launch tube, bipod legs & crossbar).
@@ -2166,6 +2232,10 @@ static func populate_mortar_tube_root(root: Node3D) -> Dictionary:
 	for c in root.get_children():
 		root.remove_child(c)
 		c.queue_free()
+
+	var hit: Dictionary = _clone_cached_special_root(root, "special_mortar_tube", "MortarTube", "mortar")
+	if not hit.is_empty():
+		return hit
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var mortar := Node3D.new()
@@ -2227,14 +2297,17 @@ static func populate_mortar_tube_root(root: Node3D) -> Dictionary:
 		mi.visibility_range_end = 220.0
 
 	default_shadow_mode = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	return {
-		"mortar": mortar,
-		"barrel": barrel_mi,
+	var base_info := {
 		"grip": Vector3(0.075, 0.55, -0.15),
 		"foregrip": Vector3(-0.075, 0.65, -0.20),
 		"muzzle": breech_origin + barrel_axis * 0.86,
 		"two_handed": true,
 	}
+	_store_cached_special_root("special_mortar_tube", mortar, base_info)
+	var out_info: Dictionary = base_info.duplicate()
+	out_info["mortar"] = mortar
+	out_info["barrel"] = barrel_mi
+	return out_info
 
 
 ## Builds Demolisher's carried 1.15m x 1.35m tactical ballistic riot shield with viewport, team trim & bolts.

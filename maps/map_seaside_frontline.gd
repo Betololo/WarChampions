@@ -170,8 +170,9 @@ func _build_sky_and_lighting() -> void:
 	sun.light_energy = 1.52
 	sun.light_color = Color(1.0, 0.96, 0.86)
 	sun.rotation_degrees = Vector3(-46.0, 36.0, 0.0)
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	sun.directional_shadow_max_distance = 120.0
+	var is_web: bool = OS.has_feature("web")
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if is_web else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 80.0 if is_web else 120.0
 	sun.directional_shadow_blend_splits = false
 	sun.shadow_enabled = not DisplayServer.get_name().contains("headless")
 	add_child(sun)

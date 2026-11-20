@@ -810,14 +810,27 @@ static func update_hero_client_visuals(hero: HeroCharacter, local_hero: HeroChar
 	var rim_col_changed: bool = (hero._last_vfx_rim_col != rim_col)
 	var rim_str_changed: bool = not is_equal_approx(hero._last_vfx_rim_str, rim_str)
 
+	var has_dedup_mats: bool = hero._hero_shader_materials.size() > 0
 	for part in hero._mesh_parts:
 		if not is_instance_valid(part):
 			continue
 		part.visible = true
 		if xray_changed:
 			part.material_overlay = xray_ov
-		if part.material_override is ShaderMaterial:
+		if not has_dedup_mats and part.material_override is ShaderMaterial:
 			var smat := part.material_override as ShaderMaterial
+			if smat.shader != target_shader:
+				smat.shader = target_shader
+			if shader_changed or cloak_changed:
+				smat.set_shader_parameter("cloak_amount", cloak_val)
+			if shader_changed or rim_col_changed:
+				smat.set_shader_parameter("rim_color", rim_col)
+			if shader_changed or rim_str_changed:
+				smat.set_shader_parameter("rim_strength", rim_str)
+	if has_dedup_mats:
+		for smat in hero._hero_shader_materials:
+			if not is_instance_valid(smat):
+				continue
 			if smat.shader != target_shader:
 				smat.shader = target_shader
 			if shader_changed or cloak_changed:

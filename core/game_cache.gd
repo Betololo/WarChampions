@@ -87,8 +87,16 @@ static func warm_meshes() -> void:
 	VehicleMeshBuilder._make_palette(NetworkManager.TEAM_ROYAL)
 	VehicleMeshBuilder._make_palette(NetworkManager.TEAM_NATIONAL)
 	var tmp_v := Node3D.new()
+	VehicleMeshBuilder.build_tank_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_tank_visuals(tmp_v, NetworkManager.TEAM_NATIONAL)
+	VehicleMeshBuilder.build_jeep_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_plane_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_plane_visuals(tmp_v, NetworkManager.TEAM_NATIONAL)
+	VehicleMeshBuilder.build_boat_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_aa_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
 	VehicleMeshBuilder.build_motorcycle_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
 	VehicleMeshBuilder.build_apc_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
+	VehicleMeshBuilder.build_mounted_mg_visuals(tmp_v, NetworkManager.TEAM_ROYAL)
 	tmp_v.free()
 
 	# Warm common Hero meshes across all 6 classes (Soldier 0 .. Marksman 5)
@@ -146,6 +154,8 @@ static func warm_meshes() -> void:
 		for arch in range(3):
 			HeroMeshBuilder.populate_weapon_root(tmp_w, wk, arch)
 	HeroMeshBuilder.populate_tnt_rope_root(tmp_w)
+	HeroMeshBuilder.populate_build_wrench_root(tmp_w)
+	HeroMeshBuilder.populate_mortar_tube_root(tmp_w)
 	tmp_w.free()
 	StatusEffectsVFX.warm_shared_meshes()
 	_meshes_warmed = true
@@ -164,6 +174,11 @@ static func prewarm_gpu_pipelines(host_node: Node3D) -> Node3D:
 	var anchor: Vector3 = Vector3(0.0, 4.0, 40.0)
 	if cam != null:
 		anchor = cam.global_position + (-cam.global_basis.z * 2.0)
+	else:
+		var prewarm_cam := Camera3D.new()
+		prewarm_cam.position = anchor + Vector3(0.0, 0.0, 2.5)
+		root.add_child(prewarm_cam)
+		prewarm_cam.current = true
 
 	var tiny_box := BoxMesh.new()
 	tiny_box.size = Vector3(0.01, 0.01, 0.01)

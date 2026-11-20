@@ -118,6 +118,7 @@ var _held_weapon_root_l: Node3D
 var _parachute_rig: Node3D
 var _defeat_prop: Node3D
 var _mesh_parts: Array[MeshInstance3D] = []
+var _hero_shader_materials: Array[ShaderMaterial] = []
 var _last_vfx_key: String = ""
 var _last_vfx_hash: int = -1
 var _last_vfx_shader: Shader = null
@@ -186,6 +187,7 @@ var last_skill_anim_name: String = ""
 var _shown_weapon_kind: int = -1
 var _shown_weapon_arch: int = -1
 var _prev_q_held: bool = false
+var _latched_transient_buttons: int = 0
 var _upper_arm_len: float = 0.30
 var _forearm_len: float = 0.28
 var _weapon_grip_local: Vector3 = Vector3(0.0, -0.04, 0.0)
@@ -460,7 +462,8 @@ func _create_leg_rig(
 	calf_pivot.position = Vector3(0.0, -0.34, 0.0)
 	leg_pivot.add_child(calf_pivot)
 	HeroMeshBuilder.add_part(calf_pivot, calf_mesh, Vector3.ZERO, Vector3.ZERO, pants_mat, _mesh_parts)
-	HeroMeshBuilder.add_part(calf_pivot, boot_mesh, Vector3(0.0, -0.22, 0.0), Vector3.ZERO, boot_mat, _mesh_parts)
+	var boot_mi := HeroMeshBuilder.add_part(calf_pivot, boot_mesh, Vector3(0.0, -0.22, 0.0), Vector3.ZERO, boot_mat, _mesh_parts)
+	boot_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return [leg_pivot, calf_pivot]
 
 
@@ -489,7 +492,8 @@ func _create_arm_rig(
 	var forearm_pivot := Node3D.new()
 	forearm_pivot.position = Vector3(0.0, -_upper_arm_len, 0.0)
 	arm_pivot.add_child(forearm_pivot)
-	HeroMeshBuilder.add_part(forearm_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, forearm_mat, _mesh_parts)
+	var forearm_mi := HeroMeshBuilder.add_part(forearm_pivot, forearm_mesh, Vector3.ZERO, Vector3.ZERO, forearm_mat, _mesh_parts)
+	forearm_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if cuff_mesh != null:
 		var cuff_mi := HeroMeshBuilder.add_part(forearm_pivot, cuff_mesh, Vector3(0.0, -_forearm_len * 0.88, 0.0), Vector3.ZERO, cuff_mat, _mesh_parts)
 		cuff_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -605,6 +609,7 @@ func _rebuild_cartoon_visuals() -> void:
 		visual_root.remove_child(child)
 		child.queue_free()
 	_mesh_parts.clear()
+	_hero_shader_materials.clear()
 	_last_vfx_key = ""
 	_last_vfx_hash = -1
 	_last_vfx_shader = null
@@ -1015,15 +1020,23 @@ func apply_character_shader(shader: Shader) -> void:
 	_last_vfx_rim_col = Color(-1.0, -1.0, -1.0, -1.0)
 	_last_vfx_rim_str = -1.0
 	_last_vfx_cloak = -1.0
+	var had_cached_mats: bool = _hero_shader_materials.size() > 0
+	var dedup_mats: Dictionary = {}
 	for mi in _mesh_parts:
 		if mi.material_override is ShaderMaterial:
 			var existing := mi.material_override as ShaderMaterial
 			existing.shader = shader
+			if not had_cached_mats and not _hero_shader_materials.has(existing):
+				_hero_shader_materials.append(existing)
 			continue
 		var old_mat := mi.material_override as StandardMaterial3D
 		var base_col: Color = old_mat.albedo_color if old_mat != null else Color.WHITE
 		var tex_key: String = str(old_mat.get_meta("tex_key", "")) if old_mat != null else ""
 		var rough: float = old_mat.roughness if old_mat != null else 0.68
+		var dedup_key: String = "%d|%s|%.3f" % [base_col.to_rgba64(), tex_key, rough]
+		if dedup_mats.has(dedup_key):
+			mi.material_override = dedup_mats[dedup_key] as ShaderMaterial
+			continue
 		var smat := ShaderMaterial.new()
 		smat.shader = shader
 		smat.set_shader_parameter("albedo_color", base_col)
@@ -1037,6 +1050,8 @@ func apply_character_shader(shader: Shader) -> void:
 		smat.set_shader_parameter("rim_color", Color(1.0, 0.96, 0.85))
 		smat.set_shader_parameter("rim_strength", 0.45)
 		smat.set_shader_parameter("cloak_amount", 0.0)
+		dedup_mats[dedup_key] = smat
+		_hero_shader_materials.append(smat)
 		mi.material_override = smat
 
 
@@ -1164,6 +1179,8 @@ func _input(event: InputEvent) -> void:
 		var kev := event as InputEventKey
 		if kev.keycode == KEY_ALT:
 			_sync_alt_cursor_mode()
+	if not _is_ui_cursor_locked_open():
+		_latch_transient_button_event(event)
 	if is_cursor_free_mode():
 		return
 	if event is InputEventMouseMotion:
@@ -1175,6 +1192,49 @@ func _input(event: InputEvent) -> void:
 			_cycle_weapon_slot_visual(-1)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_cycle_weapon_slot_visual(1)
+
+
+func _latch_transient_button_event(event: InputEvent) -> void:
+	var pressed_code: int = 0
+	if event is InputEventKey:
+		var kev := event as InputEventKey
+		if not kev.pressed or kev.echo:
+			return
+		pressed_code = int(kev.keycode)
+	elif event is InputEventMouseButton:
+		if is_cursor_free_mode():
+			return
+		var mb := event as InputEventMouseButton
+		if not mb.pressed:
+			return
+		pressed_code = InputCmd.encode_mouse_button(mb.button_index)
+	else:
+		return
+	if pressed_code == KEY_E:
+		_latched_transient_buttons |= InputCmd.BTN_INTERACT
+	elif pressed_code == KEY_R:
+		_latched_transient_buttons |= InputCmd.BTN_RELOAD
+	elif pressed_code == KEY_T:
+		_latched_transient_buttons |= InputCmd.BTN_EMOTE
+	var n_skills: int = skill_manager.skill_ranks.size() if skill_manager != null else (6 if class_id == NetworkManager.CLASS_COMMANDO else 5)
+	var skill_order: Array[int] = InputCmd.get_active_skill_order(n_skills)
+	for vis_s in range(mini(skill_order.size(), SkillManager.SKILL_BUTTON_FLAGS.size())):
+		var sk_bind: int = InputCmd.get_skill_key(vis_s)
+		var matches_skill: bool = (pressed_code == sk_bind)
+		if not matches_skill and vis_s == 0 and not InputCmd.is_key_assigned_anywhere(KEY_F) and pressed_code == KEY_F:
+			matches_skill = true
+		elif not matches_skill and vis_s == 1 and not InputCmd.is_key_assigned_anywhere(KEY_G) and pressed_code == KEY_G:
+			matches_skill = true
+		if matches_skill:
+			var logical_s: int = skill_order[vis_s]
+			if logical_s >= 0 and logical_s < SkillManager.SKILL_BUTTON_FLAGS.size():
+				_latched_transient_buttons |= SkillManager.SKILL_BUTTON_FLAGS[logical_s]
+	var widget_order: Array[int] = InputCmd.get_active_widget_order(4)
+	for vis_wd in range(mini(widget_order.size(), SkillManager.WIDGET_BUTTON_FLAGS.size())):
+		if pressed_code == InputCmd.get_widget_key(vis_wd):
+			var logical_wd: int = widget_order[vis_wd]
+			if logical_wd >= 0 and logical_wd < SkillManager.WIDGET_BUTTON_FLAGS.size():
+				_latched_transient_buttons |= SkillManager.WIDGET_BUTTON_FLAGS[logical_wd]
 
 
 func _process(delta: float) -> void:
@@ -1189,7 +1249,7 @@ func _process(delta: float) -> void:
 				sniper_scoped = true
 		hero_camera.set_scoped(sniper_scoped)
 
-	if is_local_player or is_bot or NetworkManager.is_server_authority():
+	if is_local_player or NetworkManager.is_server_authority():
 		_pred_error_offset = _pred_error_offset.lerp(Vector3.ZERO, minf(1.0, 14.0 * delta))
 		visual_error_offset = _pred_error_offset
 	else:
@@ -1212,7 +1272,7 @@ func _process(delta: float) -> void:
 	elif visual_root != null:
 		visual_root.rotation.x = 0.0
 		visual_root.rotation.z = 0.0
-		if is_local_player or is_bot or NetworkManager.is_server_authority():
+		if is_local_player or NetworkManager.is_server_authority():
 			var frac: float = Engine.get_physics_interpolation_fraction()
 			var interp_world: Vector3 = _prev_phys_pos.lerp(_curr_phys_pos, frac)
 			visual_root.global_position = interp_world + _pred_error_offset
@@ -2293,6 +2353,9 @@ func _sample_local_input() -> InputCmd:
 			cmd.set_button(SkillManager.WIDGET_BUTTON_FLAGS[logical_wd], pressed_wd)
 
 	cmd.set_button(InputCmd.BTN_EMOTE, Input.is_key_pressed(KEY_T))
+	if _latched_transient_buttons != 0:
+		cmd.buttons |= _latched_transient_buttons
+		_latched_transient_buttons = 0
 
 	cmd.selected_weapon_slot = selected_weapon_slot
 	cmd.view_interp_tick_delta = NetworkManager.get_view_interp_tick_delta()
@@ -2811,15 +2874,18 @@ func reconcile_with_server(state: Dictionary) -> void:
 				visual_root.visible = true
 	var was_defeated: bool = is_defeated
 	is_defeated = (auth_flags & NetSerializer.SNAP_DEFEATED) != 0
+	var respawn_transition: bool = (was_defeated and not is_defeated)
 	if is_defeated:
 		collision_layer = 0
-	elif was_defeated and not is_defeated:
+	elif respawn_transition:
 		collision_layer = 2
 		_reset_stand_rig_pose()
 		reset_weapons_full()
+		set_caber_spent_visual(false)
 	stats_changed.emit()
 
-	if current_vehicle_id >= 0 or prev_vid >= 0:
+	var needs_large_snap: bool = (not is_defeated and global_position.distance_to(auth_pos) > 12.0)
+	if current_vehicle_id >= 0 or prev_vid >= 0 or respawn_transition or needs_large_snap:
 		_pred_error_offset = Vector3.ZERO
 		visual_error_offset = Vector3.ZERO
 		_snap_authoritative_pos(auth_pos, auth_vel)

@@ -24,7 +24,24 @@ var heroes_by_id: Dictionary = {}
 var vehicles_by_id: Dictionary = {}
 var bot_brains: Dictionary = {}
 var _prev_interact_state: Dictionary = {}
+var _client_button_latch: Dictionary = {}
 var _last_flame_sfx_msec: Dictionary = {}
+
+const TRANSIENT_BTN_MASK: int = (
+	InputCmd.BTN_INTERACT
+	| InputCmd.BTN_RELOAD
+	| InputCmd.BTN_EMOTE
+	| InputCmd.BTN_SKILL_1
+	| InputCmd.BTN_SKILL_2
+	| InputCmd.BTN_SKILL_3
+	| InputCmd.BTN_SKILL_4
+	| InputCmd.BTN_SKILL_5
+	| InputCmd.BTN_SKILL_6
+	| InputCmd.BTN_WIDGET_1
+	| InputCmd.BTN_WIDGET_2
+	| InputCmd.BTN_WIDGET_3
+	| InputCmd.BTN_WIDGET_4
+)
 var _prev_local_parachuting: bool = false
 var _last_local_level: int = 5
 var _royal_spawn_idx: int = 0
@@ -45,6 +62,7 @@ func _ready() -> void:
 	if OS.has_feature("web"):
 		if get_viewport() != null:
 			get_viewport().msaa_3d = Viewport.MSAA_DISABLED
+			get_viewport().scaling_3d_scale = 0.85
 		RenderingServer.directional_shadow_atlas_set_size(1024, true)
 		RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_HARD)
 	heroes_root = Node3D.new()
@@ -130,8 +148,11 @@ func _on_connection_state_changed(connected: bool, is_srv: bool) -> void:
 	if connected and is_srv:
 		if NetworkManager.is_solo_bot_mode:
 			hud.add_killfeed("Modo Solo 14v14 com Bots pronto!")
+		elif NetworkManager.is_relay_mode:
+			var bots_lbl: String = "14v14 com Bots" if NetworkManager.online_fill_bots else "0 Bots"
+			hud.add_killfeed("Sala Online '%s' pronta (%s)!" % [NetworkManager.active_room_code, bots_lbl])
 		else:
-			hud.add_killfeed("Sala Online pronta (0 Bots, porta %d)" % NetworkManager.DEFAULT_PORT)
+			hud.add_killfeed("Sala Online pronta (porta %d)" % NetworkManager.DEFAULT_PORT)
 	elif connected:
 		hud.add_killfeed("Conectado ao servidor!")
 	elif not _switching_mode:
@@ -298,16 +319,16 @@ func _run_with_loading_screen(deploy_text: String, on_ready_call: Callable) -> v
 	await get_tree().process_frame
 
 	GameCache.warm_meshes()
-	set_loading_state(true, 75.0, "Compilando shaders e cachê da GPU...")
+	set_loading_state(true, 72.0, deploy_text)
+	on_ready_call.call()
+	await get_tree().process_frame
+
+	set_loading_state(true, 88.0, "Compilando shaders e cachê da GPU...")
 	var prewarm_node: Node3D = GameCache.prewarm_gpu_pipelines(self)
 	await get_tree().process_frame
 	if prewarm_node != null:
 		await get_tree().process_frame
 		GameCache.cleanup_prewarm(prewarm_node)
-
-	set_loading_state(true, 92.0, deploy_text)
-	on_ready_call.call()
-	await get_tree().process_frame
 
 	set_loading_state(true, 100.0, "Partida pronta!")
 	set_loading_state(false, 100.0, "")
@@ -395,6 +416,8 @@ func _start_host_sync(team: int, class_id: int, port: int) -> void:
 	NetworkManager.start_host(port, false)
 	_sync_vehicle_authority_freeze()
 	_switching_mode = false
+	if NetworkManager.online_fill_bots:
+		_spawn_14v14_bots(team)
 	SoundSynthesizer.start_whistle_theme()
 
 
@@ -445,6 +468,7 @@ func _clear_match_entities() -> void:
 	_royal_spawn_idx = 0
 	_national_spawn_idx = 0
 	_prev_interact_state.clear()
+	_client_button_latch.clear()
 	_last_flame_sfx_msec.clear()
 	StatusEffectContainer.clear_sixth_sense_cache()
 	StatusEffectContainer.clear_team_uav()
@@ -580,6 +604,16 @@ func _physics_process(delta: float) -> void:
 			if bhero != null:
 				bhero.latest_server_input = brain.step_ai(delta, cps, heroes_by_id, veh_arr)
 
+		var latch_restores: Array = []
+		for pid_key in _client_button_latch.keys():
+			var latch_bits: int = int(_client_button_latch[pid_key])
+			if latch_bits != 0:
+				var lh := heroes_by_id.get(pid_key, null) as HeroCharacter
+				if lh != null and is_instance_valid(lh) and lh.latest_server_input != null:
+					latch_restores.append([lh, lh.latest_server_input.buttons])
+					lh.latest_server_input.buttons |= latch_bits
+			_client_button_latch[pid_key] = 0
+
 		# 2. Step Heroes, Vehicle Interact, Skills, Weapons, Respawns
 		for id_key in heroes_by_id.keys():
 			var hero: HeroCharacter = heroes_by_id[id_key]
@@ -587,6 +621,8 @@ func _physics_process(delta: float) -> void:
 				if hero.defeat_timer <= 0.0:
 					var sp: Vector3 = _get_next_spawn_pos(hero.team)
 					hero.respawn_at(sp, -PI * 0.5 if hero.team == NetworkManager.TEAM_ROYAL else PI * 0.5)
+				if not hero.is_bot and hero.entity_id != 1:
+					_send_hero_auth_state(hero)
 				continue
 
 			_handle_vehicle_interact(hero)
@@ -615,33 +651,23 @@ func _physics_process(delta: float) -> void:
 						w.fire_server(hero.latest_server_input, combat_ctx)
 
 			if not hero.is_bot and hero.entity_id != 1:
-				var packed: PackedByteArray = NetSerializer.pack_authoritative_state(
-					hero.latest_server_input.tick,
-					hero.global_position,
-					hero.velocity,
-					hero.active_flags,
-					hero.hp,
-					hero.shield,
-					hero.current_vehicle_id,
-					hero.current_seat_index,
-					hero.knockback_seq,
-					hero.active_buffs,
-					hero.selected_weapon_slot,
-					hero.forced_weapon_seq,
-					hero.get_sprint_energy_byte()
-				)
-				NetworkManager.send_authoritative_state(hero.entity_id, packed)
+				_send_hero_auth_state(hero)
 
 		# 3. Step Vehicles & Conquest Flags
 		for v in veh_arr:
 			v.step_vehicle_server(delta, heroes_by_id, combat_ctx)
 
+		for restore_item in latch_restores:
+			var rh := restore_item[0] as HeroCharacter
+			if rh != null and is_instance_valid(rh) and rh.latest_server_input != null:
+				rh.latest_server_input.buttons = int(restore_item[1])
+
 		conquest_manager.step_server(delta, heroes_by_id)
 		lag_compensator.record_frame(NetworkManager.server_tick, heroes_by_id)
 
-		# 4. Broadcast WorldSnapshot @ 30 Hz (only when remote ENet peers are connected)
+		# 4. Broadcast WorldSnapshot @ 30 Hz (only when remote clients are connected)
 		if NetworkManager.should_broadcast_snapshot():
-			if NetworkManager.is_active_enet_connected() and not multiplayer.get_peers().is_empty():
+			if NetworkManager.has_connected_clients():
 				var hero_snaps: Array[Dictionary] = []
 				for id_key in heroes_by_id.keys():
 					hero_snaps.append((heroes_by_id[id_key] as HeroCharacter).build_snapshot_dict())
@@ -708,7 +734,76 @@ func _on_seat_switch_requested(peer_id: int, seat_idx: int) -> void:
 
 
 func _on_player_registered(peer_id: int, info: Dictionary) -> void:
+	var was_new: bool = not heroes_by_id.has(peer_id)
 	spawn_hero(peer_id, info)
+	if was_new and peer_id > 1 and not bool(info.get("is_bot", false)) and NetworkManager.is_server_authority():
+		_sync_active_deployables_on_join()
+
+
+func _sync_active_deployables_on_join() -> void:
+	if is_inside_tree():
+		for t_node in get_tree().get_nodes_in_group("trenches"):
+			if t_node is EngineerSkillsScript.TrenchEntity:
+				var t := t_node as EngineerSkillsScript.TrenchEntity
+				if not t.is_destroyed and not t._is_visual_only:
+					NetworkManager.broadcast_game_event("trench_spawn", {
+						"trench_id": t.trench_id,
+						"owner_id": t.owner_id,
+						"team": t.team,
+						"pos": t.position,
+						"yaw": t.rotation.y,
+					})
+	for v_val in vehicles_by_id.values():
+		var vb := v_val as VehicleBase
+		if vb == null or not is_instance_valid(vb) or vb.is_destroyed:
+			continue
+		if vb.is_deployable and vb.vehicle_type == VehicleBase.VehicleType.MOUNTED_MG:
+			var owner_peer: int = (vb as VehicleShieldedMG).owner_id if vb is VehicleShieldedMGScript else -1
+			NetworkManager.broadcast_game_event("eng_turret_spawn", {
+				"vehicle_id": vb.id,
+				"owner_id": owner_peer,
+				"team": vb.team,
+				"pos": vb.position,
+				"yaw": vb.rotation.y,
+			})
+		if vb.is_armored:
+			NetworkManager.broadcast_game_event("veh_armored", {
+				"vehicle_id": vb.id,
+				"max_hp": vb.max_hp,
+				"hp": vb.hp,
+				"hero_id": -1,
+			})
+	if projectiles_root != null:
+		for ch in projectiles_root.get_children():
+			if ch is DemolisherSkills.ArmorKitEntity and not ch.is_queued_for_deletion():
+				var kit := ch as DemolisherSkills.ArmorKitEntity
+				if kit.charges > 0:
+					NetworkManager.broadcast_game_event("armor_kit_spawn", {
+						"owner_id": kit.owner_id,
+						"team": kit.owner_team,
+						"kit_uid": kit.kit_uid,
+						"charges": kit.charges,
+						"pos": kit.position,
+					})
+
+
+func _send_hero_auth_state(hero: HeroCharacter) -> void:
+	var packed: PackedByteArray = NetSerializer.pack_authoritative_state(
+		hero.latest_server_input.tick,
+		hero.global_position,
+		hero.velocity,
+		hero.active_flags,
+		hero.hp,
+		hero.shield,
+		hero.current_vehicle_id,
+		hero.current_seat_index,
+		hero.knockback_seq,
+		hero.active_buffs,
+		hero.selected_weapon_slot,
+		hero.forced_weapon_seq,
+		hero.get_sprint_energy_byte()
+	)
+	NetworkManager.send_authoritative_state(hero.entity_id, packed)
 
 
 func _on_player_unregistered(peer_id: int) -> void:
@@ -734,20 +829,56 @@ func _get_next_spawn_pos(p_team: int) -> Vector3:
 	return map_instance.get_spawn_position(p_team, idx)
 
 
+func _bind_local_hero_ui_hooks(hero: HeroCharacter) -> void:
+	if hero.hero_camera != null:
+		hero.hero_camera.mouse_sensitivity = ClassSelectMenu.current_mouse_sensitivity
+		hero.hero_camera.sensitivity = ClassSelectMenu.current_mouse_sensitivity
+	_last_local_level = hero.skill_manager.level if hero.skill_manager != null else 5
+	_prev_local_parachuting = hero.is_parachuting
+	if hero.skill_manager != null and hero.skill_manager.has_signal("progression_changed"):
+		hero.skill_manager.progression_changed.connect(func(lvl: int, _xp: int, _xp_next: int, _pts: int) -> void:
+			if lvl > _last_local_level:
+				_last_local_level = lvl
+				SoundSynthesizer.play_sfx("level_up", 0.0, true)
+		)
+	if hud != null:
+		hud.set_local_hero(hero)
+
+
 func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
-	if heroes_by_id.has(entity_id):
-		return heroes_by_id[entity_id]
-	var hero := HeroCharacter.new()
 	var is_bot: bool = bool(info.get("is_bot", false))
 	var is_local: bool = (entity_id == NetworkManager.local_peer_id) and not is_bot and not NetworkManager.is_dedicated_server
 	var raw_slots: Variant = info.get("slot_archetypes", {})
 	var slot_map: Dictionary = raw_slots if raw_slots is Dictionary else {}
+	var p_name: String = str(info.get("name", "Hero"))
+	var p_team: int = int(info.get("team", 0))
+	var p_cls: int = int(info.get("class_id", 0))
+	var p_arch: int = int(info.get("archetype", 0))
+	if heroes_by_id.has(entity_id):
+		var existing := heroes_by_id[entity_id] as HeroCharacter
+		if existing != null and is_instance_valid(existing):
+			existing.hero_name = p_name
+			var needs_rebuild: bool = (
+				existing.team != p_team
+				or existing.class_id != p_cls
+				or existing.archetype != p_arch
+				or existing.weapon_slot_archetypes != slot_map
+			)
+			if needs_rebuild:
+				var prev_team: int = existing.team
+				existing.setup_identity(entity_id, p_name, p_team, p_cls, p_arch, is_local, is_bot, slot_map)
+				if existing.team != prev_team and NetworkManager.is_server_authority():
+					existing.position = _get_next_spawn_pos(existing.team)
+				if is_local:
+					_bind_local_hero_ui_hooks(existing)
+			return existing
+	var hero := HeroCharacter.new()
 	hero.setup_identity(
 		entity_id,
-		str(info.get("name", "Hero")),
-		int(info.get("team", 0)),
-		int(info.get("class_id", 0)),
-		int(info.get("archetype", 0)),
+		p_name,
+		p_team,
+		p_cls,
+		p_arch,
 		is_local,
 		is_bot,
 		slot_map
@@ -765,19 +896,7 @@ func spawn_hero(entity_id: int, info: Dictionary) -> HeroCharacter:
 	)
 
 	if is_local:
-		if hero.hero_camera != null:
-			hero.hero_camera.mouse_sensitivity = ClassSelectMenu.current_mouse_sensitivity
-			hero.hero_camera.sensitivity = ClassSelectMenu.current_mouse_sensitivity
-		_last_local_level = hero.skill_manager.level if hero.skill_manager != null else 5
-		_prev_local_parachuting = hero.is_parachuting
-		if hero.skill_manager != null and hero.skill_manager.has_signal("progression_changed"):
-			hero.skill_manager.progression_changed.connect(func(lvl: int, _xp: int, _xp_next: int, _pts: int) -> void:
-				if lvl > _last_local_level:
-					_last_local_level = lvl
-					SoundSynthesizer.play_sfx("level_up", 0.0, true)
-			)
-		if hud != null:
-			hud.set_local_hero(hero)
+		_bind_local_hero_ui_hooks(hero)
 
 	if is_bot and NetworkManager.is_server_authority():
 		var brain := BotController.new()
@@ -823,6 +942,7 @@ func _on_upgrade_skill_requested(slot_idx: int) -> void:
 func _on_client_input(peer_id: int, cmd: InputCmd) -> void:
 	if heroes_by_id.has(peer_id):
 		(heroes_by_id[peer_id] as HeroCharacter).latest_server_input = cmd
+	_client_button_latch[peer_id] = int(_client_button_latch.get(peer_id, 0)) | (cmd.buttons & TRANSIENT_BTN_MASK)
 
 
 func _on_auth_state(state: Dictionary) -> void:
@@ -860,6 +980,28 @@ func _on_world_snapshot(snapshot: Dictionary) -> void:
 		var v: VehicleBase = vehicles_by_id.get(vid, null)
 		if v != null:
 			v.push_remote_snapshot(srv_tick, srv_time_ms, v_dict)
+	_sync_client_vehicle_seats()
+
+
+func _sync_client_vehicle_seats() -> void:
+	for v_val in vehicles_by_id.values():
+		var vb := v_val as VehicleBase
+		if vb != null and is_instance_valid(vb):
+			for s in vb.seats:
+				s.occupant_id = -1
+	for h_val in heroes_by_id.values():
+		var h := h_val as HeroCharacter
+		if h == null or not is_instance_valid(h) or h.current_vehicle_id < 0:
+			continue
+		var vb := vehicles_by_id.get(h.current_vehicle_id, null) as VehicleBase
+		if vb == null or not is_instance_valid(vb):
+			continue
+		var seat := vb.get_seat(h.current_seat_index)
+		if seat != null:
+			seat.occupant_id = h.entity_id
+			h.current_seat_enclosed = seat.is_enclosed
+			h.current_seat_pose = seat.seat_pose
+			h.current_seat_can_shoot = seat.can_shoot
 
 
 func _process(delta: float) -> void:
@@ -1024,14 +1166,23 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 			StatusEffectsVFX.spawn_cartoon_burst(projectiles_root, payload.get("pos", Vector3.ZERO), "heal", 1.8)
 		"armor_kit_spawn":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
-				var kit := DemolisherSkills.ArmorKitEntity.new()
-				kit.set_meta("visual_only", true)
-				kit.owner_id = int(payload.get("owner_id", -1))
-				kit.owner_team = int(payload.get("team", 0))
-				kit.kit_uid = int(payload.get("kit_uid", 0))
-				kit.charges = int(payload.get("charges", 5))
-				kit.position = payload.get("pos", Vector3.ZERO)
-				projectiles_root.add_child(kit)
+				var spawn_uid: int = int(payload.get("kit_uid", 0))
+				var dup_kit: DemolisherSkills.ArmorKitEntity = null
+				for ch in projectiles_root.get_children():
+					if ch is DemolisherSkills.ArmorKitEntity and not ch.is_queued_for_deletion() and (ch as DemolisherSkills.ArmorKitEntity).kit_uid == spawn_uid:
+						dup_kit = ch as DemolisherSkills.ArmorKitEntity
+						break
+				if dup_kit != null:
+					dup_kit.set_charges_visual(int(payload.get("charges", dup_kit.charges)))
+				else:
+					var kit := DemolisherSkills.ArmorKitEntity.new()
+					kit.set_meta("visual_only", true)
+					kit.owner_id = int(payload.get("owner_id", -1))
+					kit.owner_team = int(payload.get("team", 0))
+					kit.kit_uid = spawn_uid
+					kit.charges = int(payload.get("charges", 5))
+					kit.position = payload.get("pos", Vector3.ZERO)
+					projectiles_root.add_child(kit)
 		"armor_kit_update":
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
 				var upd_uid: int = int(payload.get("kit_uid", 0))
@@ -1151,16 +1302,23 @@ func _on_game_event(event_type: String, payload: Dictionary) -> void:
 		"trench_spawn":
 			var ts_pos: Vector3 = payload.get("pos", Vector3.ZERO)
 			var ts_owner: int = int(payload.get("owner_id", -1))
+			var ts_tid: int = int(payload.get("trench_id", -1))
 			SoundSynthesizer.play_sfx("build_construct", 0.0, ts_owner == NetworkManager.local_peer_id, ts_pos)
 			if not NetworkManager.is_server_authority() and projectiles_root != null:
-				var vis_t := EngineerSkillsScript.TrenchEntity.new()
-				vis_t._is_visual_only = true
-				vis_t.trench_id = int(payload.get("trench_id", -1))
-				vis_t.owner_id = ts_owner
-				vis_t.team = int(payload.get("team", 0))
-				vis_t.position = ts_pos
-				vis_t.rotation.y = float(payload.get("yaw", 0.0))
-				projectiles_root.add_child(vis_t)
+				var already_has_trench: bool = false
+				for ch in projectiles_root.get_children():
+					if ch is EngineerSkillsScript.TrenchEntity and not ch.is_queued_for_deletion() and (ch as EngineerSkillsScript.TrenchEntity).trench_id == ts_tid:
+						already_has_trench = true
+						break
+				if not already_has_trench:
+					var vis_t := EngineerSkillsScript.TrenchEntity.new()
+					vis_t._is_visual_only = true
+					vis_t.trench_id = ts_tid
+					vis_t.owner_id = ts_owner
+					vis_t.team = int(payload.get("team", 0))
+					vis_t.position = ts_pos
+					vis_t.rotation.y = float(payload.get("yaw", 0.0))
+					projectiles_root.add_child(vis_t)
 		"trench_destroyed":
 			var td_pos: Vector3 = payload.get("pos", Vector3.ZERO)
 			var td_id: int = int(payload.get("trench_id", -1))
