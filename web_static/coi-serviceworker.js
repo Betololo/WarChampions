@@ -36,10 +36,12 @@ if (typeof window === "undefined") {
     navigator.serviceWorker.register(swUrl).then(
       (registration) => {
         if (registration.active && !navigator.serviceWorker.controller) {
+          window.__coiReloading = true;
           window.location.reload();
         } else if (registration.installing) {
           registration.installing.addEventListener("statechange", (e) => {
             if (e.target && e.target.state === "activated") {
+              window.__coiReloading = true;
               window.location.reload();
             }
           });
@@ -51,6 +53,7 @@ if (typeof window === "undefined") {
     );
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (!window.crossOriginIsolated) {
+        window.__coiReloading = true;
         window.location.reload();
       }
     });

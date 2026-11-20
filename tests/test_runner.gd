@@ -11619,6 +11619,8 @@ func _test_phase14_web_perf_and_multiplayer_relay() -> void:
 		and headers_exists
 		and preset_txt.contains("variant/thread_support=true")
 		and preset_txt.contains("coi-serviceworker.js")
+		and preset_txt.contains("navigator.keyboard.lock")
+		and preset_txt.contains("beforeunload")
 	)
 
 	arena.queue_free()
